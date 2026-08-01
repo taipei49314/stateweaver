@@ -1,0 +1,45 @@
+"""Deterministic, offline tiered search over typed synthetic security state."""
+
+from .controller import TieredSearchController
+from .models import (
+    BeamSearchPolicy,
+    BudgetLedger,
+    BudgetLimits,
+    BudgetReservation,
+    BudgetUsage,
+    DecisionDisposition,
+    PolicyGateOutcome,
+    PositiveScoreSignal,
+    PromotionCost,
+    PromotionGates,
+    ReasonCode,
+    ScoreSignal,
+    ScoreSource,
+    SearchBatch,
+    SearchCandidate,
+    SearchDecision,
+    SearchResult,
+    SearchScores,
+)
+
+__all__ = [
+    "BeamSearchPolicy",
+    "BudgetLedger",
+    "BudgetLimits",
+    "BudgetReservation",
+    "BudgetUsage",
+    "DecisionDisposition",
+    "PolicyGateOutcome",
+    "PositiveScoreSignal",
+    "PromotionCost",
+    "PromotionGates",
+    "ReasonCode",
+    "ScoreSignal",
+    "ScoreSource",
+    "SearchBatch",
+    "SearchCandidate",
+    "SearchDecision",
+    "SearchResult",
+    "SearchScores",
+    "TieredSearchController",
+]

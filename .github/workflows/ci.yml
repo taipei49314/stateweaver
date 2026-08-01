@@ -1,0 +1,207 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ANTHROPIC_API_KEY: ""
+      GOOGLE_API_KEY: ""
+      OPENAI_API_KEY: ""
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install locked workspace
+        run: uv sync --all-packages --group dev --locked
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type-check
+        run: uv run mypy packages adapters apps labs workflows benchmarks tests
+
+      - name: Test
+        run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
+
+      - name: Produce normative acceptance JUnit inputs
+        if: matrix.python-version == '3.13'
+        run: |
+          mkdir -p artifacts/acceptance/junit
+          date -u +%Y-%m-%dT%H:%M:%SZ > artifacts/acceptance/started-at.txt
+          uv run pytest packages/contracts/tests --junitxml=artifacts/acceptance/junit/contracts.xml
+          uv run pytest packages/policy/tests --junitxml=artifacts/acceptance/junit/policy.xml
+          uv run pytest labs/multitenant-saas/tests --junitxml=artifacts/acceptance/junit/lab.xml
+          uv run pytest packages/replay/tests adapters/environments/in_process_lab/tests apps/cli/tests packages/evidence/tests --junitxml=artifacts/acceptance/junit/replay.xml
+
+      - name: Collect and verify causal acceptance proof
+        if: matrix.python-version == '3.13'
+        run: |
+          uv run stateweaver foundation collect-evidence \
+            --output-root artifacts/acceptance/runs \
+            --run-id "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --repository-marker "${GITHUB_SHA}" \
+            --started-at "$(cat artifacts/acceptance/started-at.txt)" \
+            --junit-contracts artifacts/acceptance/junit/contracts.xml \
+            --junit-policy artifacts/acceptance/junit/policy.xml \
+            --junit-lab artifacts/acceptance/junit/lab.xml \
+            --junit-replay artifacts/acceptance/junit/replay.xml \
+            > artifacts/acceptance/collection.json
+          uv run stateweaver foundation verify-evidence \
+            "artifacts/acceptance/runs/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --repository-marker "${GITHUB_SHA}"
+
+      - name: Build every workspace distribution
+        if: matrix.python-version == '3.13'
+        run: uv build --all-packages --out-dir dist
+
+      - name: Smoke-test a clean wheel installation
+        if: matrix.python-version == '3.13'
+        run: |
+          rm -rf .packaging-smoke
+          mkdir -p .packaging-smoke
+          UV_OFFLINE=1 uv export --locked --no-dev --package stateweaver-cli --no-emit-local --no-editable \
+            --output-file dist/runtime-requirements.txt
+          uv venv .packaging-smoke
+          VIRTUAL_ENV="$PWD/.packaging-smoke" UV_OFFLINE=1 uv pip install --require-hashes --no-deps \
+            -r dist/runtime-requirements.txt
+          VIRTUAL_ENV="$PWD/.packaging-smoke" UV_OFFLINE=1 uv pip install --no-deps --no-index --find-links dist \
+            dist/stateweaver_cli-*.whl \
+            dist/stateweaver_adapter_in_process_lab-*.whl \
+            dist/stateweaver_contracts-*.whl \
+            dist/stateweaver_evidence-*.whl \
+            dist/stateweaver_lab_multitenant_saas-*.whl \
+            dist/stateweaver_policy-*.whl \
+            dist/stateweaver_replay-*.whl
+          VIRTUAL_ENV="$PWD/.packaging-smoke" UV_OFFLINE=1 uv pip check
+          .packaging-smoke/bin/stateweaver --json doctor
+          .packaging-smoke/bin/stateweaver --json foundation verify
+          .packaging-smoke/bin/stateweaver foundation verify-evidence \
+            "artifacts/acceptance/runs/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --repository-marker "${GITHUB_SHA}"
+
+      - name: Upload coverage artifact
+        if: matrix.python-version == '3.13'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload immutable acceptance proof
+        if: matrix.python-version == '3.13'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: acceptance-proof
+          path: artifacts/acceptance
+          if-no-files-found: error
+          retention-days: 90
+
+  web:
+    name: Web public experience
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install locked web dependencies
+        run: npm ci
+        working-directory: apps/web
+
+      - name: Check web formatting
+        run: npm run format:check
+        working-directory: apps/web
+
+      - name: Lint web client
+        run: npm run lint
+        working-directory: apps/web
+
+      - name: Type-check web client
+        run: npm run typecheck
+        working-directory: apps/web
+
+      - name: Test web client
+        run: npm test
+        working-directory: apps/web
+
+      - name: Build web client
+        run: npm run build
+        working-directory: apps/web
+
+      - name: Retain web distribution
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: stateweaver-web
+          path: apps/web/dist
+          if-no-files-found: error
+          retention-days: 30
+
+  attest-acceptance-proof:
+    name: Attest acceptance proof provenance
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [python, web]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Download accepted proof
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: acceptance-proof
+          path: artifacts/acceptance
+
+      - name: Attest the exact-file proof manifest
+        id: attest
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: artifacts/acceptance/runs/*/artifact-manifest.sha256
+
+      - name: Retain the Sigstore bundle for offline verification
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: acceptance-proof-attestation
+          path: ${{ steps.attest.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 90

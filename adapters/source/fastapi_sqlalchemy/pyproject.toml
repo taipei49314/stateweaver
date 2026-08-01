@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stateweaver-adapter-fastapi-sqlalchemy"
+version = "0.1.0"
+description = "Offline FastAPI and SQLAlchemy metadata extraction for StateWeaver twins."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+  "fastapi>=0.128,<0.129",
+  "pydantic>=2.12,<3",
+  "sqlalchemy>=2.0,<3",
+  "stateweaver-contracts==0.1.0",
+  "stateweaver-twin==0.1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stateweaver"]
+
+[tool.uv.sources]
+stateweaver-contracts = { workspace = true }
+stateweaver-twin = { workspace = true }
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers -ra"
+pythonpath = [
+  "src",
+  "../../../packages/contracts/src",
+  "../../../packages/twin/src",
+  "../../../labs/multitenant-saas",
+]
+testpaths = ["tests"]

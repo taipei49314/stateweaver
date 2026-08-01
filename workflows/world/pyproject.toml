@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stateweaver-world-workflow"
+version = "0.1.0"
+description = "Offline typed orchestration from search promotion decisions to abstract worlds."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+  "pydantic>=2.12,<3",
+  "stateweaver-contracts==0.1.0",
+  "stateweaver-search==0.1.0",
+]
+
+[dependency-groups]
+dev = [
+  "hypothesis>=6.130,<7",
+  "mypy>=1.15,<2",
+  "pytest>=8.3,<10",
+  "pytest-asyncio>=0.25,<2",
+  "ruff>=0.11,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stateweaver"]
+
+[tool.uv.sources]
+stateweaver-contracts = { workspace = true }
+stateweaver-search = { workspace = true }
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers -ra"
+asyncio_mode = "strict"
+pythonpath = [
+  "src",
+  "../../packages/contracts/src",
+  "../../packages/search/src",
+  "../../packages/search/tests",
+]
+testpaths = ["tests"]

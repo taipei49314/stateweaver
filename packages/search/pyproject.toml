@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stateweaver-search"
+version = "0.1.0"
+description = "Deterministic, budget-bounded tiered search for synthetic StateWeaver states."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = ["stateweaver-contracts==0.1.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stateweaver"]
+
+[tool.uv.sources]
+stateweaver-contracts = { workspace = true }
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+pythonpath = ["src"]
+testpaths = ["tests"]

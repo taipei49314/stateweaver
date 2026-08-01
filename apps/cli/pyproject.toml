@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stateweaver-cli"
+version = "0.1.0"
+description = "In-process verification CLI for the deterministic StateWeaver foundation."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+  "stateweaver-adapter-in-process-lab==0.1.0",
+  "stateweaver-contracts==0.1.0",
+  "stateweaver-evidence==0.1.0",
+  "stateweaver-policy==0.1.0",
+  "stateweaver-replay==0.1.0",
+]
+
+[project.scripts]
+stateweaver = "stateweaver.cli.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stateweaver"]
+
+[tool.uv.sources]
+stateweaver-adapter-in-process-lab = { workspace = true }
+stateweaver-contracts = { workspace = true }
+stateweaver-evidence = { workspace = true }
+stateweaver-policy = { workspace = true }
+stateweaver-replay = { workspace = true }
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers -ra"
+testpaths = ["tests"]
+pythonpath = [
+  "src",
+  "../../packages/contracts/src",
+  "../../packages/evidence/src",
+  "../../packages/policy/src",
+  "../../packages/replay/src",
+  "../../adapters/environments/in_process_lab/src",
+  "../../labs/multitenant-saas",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "C4", "DTZ", "PTH", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+pretty = true
+show_error_codes = true
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = [
+  "src",
+  "../../packages/contracts/src",
+  "../../packages/policy/src",
+  "../../packages/replay/src",
+  "../../adapters/environments/in_process_lab/src",
+  "../../labs/multitenant-saas",
+]

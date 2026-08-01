@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stateweaver-compiler"
+version = "0.1.0"
+description = "Closed, deterministic transition-chain compiler for StateWeaver synthetic labs."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+  "pydantic>=2.12,<3",
+  "stateweaver-contracts==0.1.0",
+  "stateweaver-replay==0.1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stateweaver"]
+
+[tool.uv.sources]
+stateweaver-contracts = { workspace = true }
+stateweaver-replay = { workspace = true }
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+pythonpath = ["src", "../contracts/src", "../replay/src"]
+testpaths = ["tests"]

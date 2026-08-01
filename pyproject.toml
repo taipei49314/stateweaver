@@ -1,0 +1,120 @@
+[project]
+name = "stateweaver"
+version = "0.1.0"
+description = "Reality-tethered, state-first security research for authorized synthetic labs."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [{ name = "StateWeaver contributors" }]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Security",
+]
+
+[dependency-groups]
+dev = [
+  "hypothesis>=6.130,<7",
+  "httpx>=0.28,<1",
+  "mypy>=1.15,<2",
+  "pytest>=8.3,<10",
+  "pytest-asyncio>=0.25,<2",
+  "pytest-cov>=6,<8",
+  "ruff>=0.11,<1",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+  "adapters/source/fastapi_sqlalchemy",
+  "adapters/telemetry/opentelemetry",
+  "adapters/environments/in_process_lab",
+  "adapters/environments/docker_compose",
+  "apps/api",
+  "apps/cli",
+  "benchmarks/statechainbench",
+  "packages/contracts",
+  "packages/compiler",
+  "packages/evidence",
+  "packages/policy",
+  "packages/replay",
+  "packages/search",
+  "packages/twin",
+  "packages/worlds",
+  "workflows/world",
+  "labs/multitenant-saas",
+]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers -ra"
+pythonpath = ["packages/search/tests"]
+testpaths = ["packages", "adapters", "apps", "labs", "workflows", "benchmarks", "tests"]
+xfail_strict = true
+
+[tool.coverage.run]
+branch = true
+source = ["stateweaver", "stateweaver_lab"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 85
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["ARCHITECTURE.md", "artifacts", "proof-bundles"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "C4", "DTZ", "PTH", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"labs/**/app.py" = ["B008"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+pretty = true
+show_error_codes = true
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = [
+  "adapters/source/fastapi_sqlalchemy/src",
+  "adapters/source/fastapi_sqlalchemy/tests",
+  "adapters/telemetry/opentelemetry/src",
+  "adapters/telemetry/opentelemetry/tests",
+  "packages/contracts/src",
+  "packages/compiler/src",
+  "packages/policy/src",
+  "packages/replay/src",
+  "packages/evidence/src",
+  "packages/evidence/tests",
+  "packages/search/src",
+  "packages/search/tests",
+  "packages/twin/src",
+  "packages/worlds/src",
+  "packages/worlds/tests",
+  "workflows/world/src",
+  "workflows/world/tests",
+  "labs/multitenant-saas",
+  "adapters/environments/in_process_lab/src",
+  "adapters/environments/docker_compose/src",
+  "apps/api/src",
+  "apps/api/tests",
+  "apps/cli/src",
+  "benchmarks/statechainbench/src",
+  "benchmarks/statechainbench/tests",
+]

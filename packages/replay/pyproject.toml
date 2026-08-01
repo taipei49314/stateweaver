@@ -1,0 +1,19 @@
+[project]
+name = "stateweaver-replay"
+version = "0.1.0"
+description = "Deterministic clean-root replay kernel for StateWeaver."
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.12,<3",
+  "stateweaver-contracts==0.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stateweaver"]
+
+[tool.uv.sources]
+stateweaver-contracts = { workspace = true }

@@ -1,0 +1,57 @@
+"""M2 world domain and ports; deliberately independent of Docker and web frameworks."""
+
+from .manager import WorldManager
+from .models import (
+    FORKABLE_PHASES,
+    LEGAL_TRANSITIONS,
+    M2_REQUIRED_CAPABILITIES,
+    AdapterPin,
+    AdapterPinError,
+    AdapterReturnError,
+    CapabilityError,
+    CapabilityLevel,
+    CapabilityManifest,
+    CleanupError,
+    EgressPolicy,
+    EnvironmentHandle,
+    LifecycleError,
+    OperationLimits,
+    OperationTimeout,
+    ResourceQuotas,
+    SnapshotManifest,
+    TargetSpec,
+    WorldError,
+    WorldNamespace,
+    WorldNode,
+    WorldPhase,
+)
+from .ports import EnvironmentAdapter
+from .store import WorldStore
+
+__all__ = [
+    "FORKABLE_PHASES",
+    "LEGAL_TRANSITIONS",
+    "M2_REQUIRED_CAPABILITIES",
+    "AdapterPin",
+    "AdapterPinError",
+    "AdapterReturnError",
+    "CapabilityError",
+    "CapabilityLevel",
+    "CapabilityManifest",
+    "CleanupError",
+    "EgressPolicy",
+    "EnvironmentAdapter",
+    "EnvironmentHandle",
+    "LifecycleError",
+    "OperationLimits",
+    "OperationTimeout",
+    "ResourceQuotas",
+    "SnapshotManifest",
+    "TargetSpec",
+    "WorldError",
+    "WorldManager",
+    "WorldNamespace",
+    "WorldNode",
+    "WorldPhase",
+    "WorldStore",
+]
