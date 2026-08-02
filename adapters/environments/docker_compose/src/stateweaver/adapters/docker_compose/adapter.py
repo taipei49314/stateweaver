@@ -7,9 +7,10 @@ import json
 import re
 import uuid
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
+from threading import Lock
 from typing import Final, cast
 
 from stateweaver.worlds import (
@@ -51,6 +52,10 @@ _STATE_BRIDGE: Final = (
 _QUOTAS: Final = ResourceQuotas(
     cpu_seconds=60, memory_mb=512, pids=64, requests=1_000, concurrent_actions=4
 )
+_IDENTITY_ALLOCATION_ATTEMPTS: Final = 32
+_MAX_ISSUED_ENVIRONMENTS: Final = 4_096
+_MAX_ISSUED_SNAPSHOTS: Final = 256
+_COMPENSATING_DOWN_SECONDS: Final = 2.0
 
 
 class DockerComposeEnvironmentAdapter:
@@ -60,7 +65,9 @@ class DockerComposeEnvironmentAdapter:
         self._runner = runner if runner is not None else SubprocessRunner()
         self._live: dict[str, _LiveWorld] = {}
         self._snapshots: dict[str, _StoredSnapshot] = {}
-        self._lock = asyncio.Lock()
+        self._issued_environment_ids: set[str] = set()
+        self._issued_snapshot_ids: set[str] = set()
+        self._registry_lock = Lock()
 
     def capabilities(self) -> CapabilityManifest:
         return CapabilityManifest(
@@ -78,69 +85,74 @@ class DockerComposeEnvironmentAdapter:
 
     async def prepare(self, target: TargetSpec) -> EnvironmentHandle:
         self._validate_target(target)
-        async with self._lock:
-            await self._require_docker()
-            image_id = await self._require_image()
-            return await self._create_world(
-                target=target,
-                root_snapshot_id=None,
-                image_id=image_id,
-            )
+        await self._require_docker()
+        image_id = await self._require_image()
+        return await self._create_world(
+            target=target,
+            root_snapshot_id=None,
+            image_id=image_id,
+        )
 
     async def snapshot(self, env: EnvironmentHandle) -> SnapshotManifest:
-        async with self._lock:
-            live = self._require_live(env)
+        live = self._require_live(env)
+        async with live.operation_lock:
+            live = self._require_same_live(env, live)
+            snapshot_id = self._allocate_snapshot_id()
             await self._health(live.project, expected_image_id=live.image_id)
             archive, hashes = await self._export_state(live)
             manifest = SnapshotManifest(
-                snapshot_id=f"snapshot:{uuid.uuid4().hex}",
+                snapshot_id=snapshot_id,
                 root_snapshot_id=live.root_snapshot_id,
-                source_environment_id=env.environment_id,
+                source_environment_id=live.handle.environment_id,
                 target=live.target,
                 adapter=ADAPTER_PIN,
                 content_hashes=hashes,
                 state_fingerprint=SnapshotManifest.derive_state_fingerprint(hashes),
             )
-            self._snapshots[manifest.snapshot_id] = _StoredSnapshot(
-                manifest=manifest,
-                archive=archive,
-                image_id=live.image_id,
+            self._store_snapshot(
+                _StoredSnapshot(
+                    manifest=manifest,
+                    archive=archive,
+                    image_id=live.image_id,
+                )
             )
             return manifest
 
     async def fork(self, snapshot: SnapshotManifest) -> EnvironmentHandle:
-        async with self._lock:
-            stored = self._require_stored_snapshot(snapshot)
-            await self._require_docker()
-            image_id = await self._require_image()
-            if image_id != stored.image_id:
-                raise ComposeAdapterError("fixed synthetic image identity changed after snapshot")
-            env = await self._create_world(
-                target=stored.manifest.target,
-                root_snapshot_id=stored.manifest.root_snapshot_id,
-                image_id=image_id,
-            )
-            live = self._require_live(env)
-            try:
-                await self._import_state(live, stored)
-            except BaseException:
-                self._live.pop(env.environment_id, None)
-                await self._compensating_down(live.project)
-                raise
-            return env
+        stored = self._require_stored_snapshot(snapshot)
+        await self._require_docker()
+        image_id = await self._require_image()
+        if image_id != stored.image_id:
+            raise ComposeAdapterError("fixed synthetic image identity changed after snapshot")
+        env = await self._create_world(
+            target=stored.manifest.target,
+            root_snapshot_id=stored.manifest.root_snapshot_id,
+            image_id=image_id,
+        )
+        live = self._require_live(env)
+        try:
+            await self._import_state(live, stored)
+        except BaseException:
+            self._discard_live(live)
+            await self._compensating_down(live.project)
+            raise
+        return env
 
     async def restore(self, env: EnvironmentHandle, snapshot: SnapshotManifest) -> None:
-        async with self._lock:
-            live = self._require_live(env)
+        live = self._require_live(env)
+        async with live.operation_lock:
+            live = self._require_same_live(env, live)
             stored = self._require_stored_snapshot(snapshot)
             if stored.manifest.target != live.target:
                 raise ComposeAdapterError("snapshot is not owned by this adapter")
             if stored.manifest.root_snapshot_id != live.root_snapshot_id:
                 raise ComposeAdapterError("snapshot root lineage differs from environment")
+            if stored.manifest.source_environment_id != live.handle.environment_id:
+                raise ComposeAdapterError("snapshot source environment differs from environment")
             if stored.image_id != live.image_id or await self._require_image() != live.image_id:
                 raise ComposeAdapterError("fixed synthetic image identity changed after snapshot")
-            await self._compose(live.project, "down", "--volumes", "--remove-orphans")
             try:
+                await self._compose(live.project, "down", "--volumes", "--remove-orphans")
                 await self._compose(live.project, "up", "--detach", "--wait", "--no-build")
                 await self._health(live.project, expected_image_id=live.image_id)
                 await self._import_state(live, stored)
@@ -151,17 +163,22 @@ class DockerComposeEnvironmentAdapter:
     async def destroy(self, env: EnvironmentHandle) -> None:
         if not isinstance(env, EnvironmentHandle) or env.adapter != ADAPTER_PIN:
             raise ComposeAdapterError("environment handle is invalid")
-        async with self._lock:
+        with self._registry_lock:
             live = self._live.get(env.environment_id)
-            if live is None:
+        if live is None:
+            return
+        if live.handle != env:
+            raise ComposeAdapterError("environment is not owned by this adapter")
+        async with live.operation_lock:
+            with self._registry_lock:
+                current = self._live.get(env.environment_id)
+            if current is None:
                 return
-            if live.handle != env:
+            if current is not live or current.handle != env:
                 raise ComposeAdapterError("environment is not owned by this adapter")
-            try:
-                await self._compose(live.project, "down", "--volumes", "--remove-orphans")
-            except BaseException:
-                raise
-            self._live.pop(env.environment_id, None)
+            await self._compose(live.project, "down", "--volumes", "--remove-orphans")
+            if not self._discard_live(live):
+                raise ComposeAdapterError("environment ownership changed during destroy")
 
     async def _create_world(
         self,
@@ -170,9 +187,7 @@ class DockerComposeEnvironmentAdapter:
         root_snapshot_id: str | None,
         image_id: str,
     ) -> EnvironmentHandle:
-        token = uuid.uuid4().hex
-        project = f"swm2{token}"
-        environment_id = f"environment:{token}"
+        project, environment_id = self._allocate_environment_identity()
         namespace = WorldNamespace(
             network=f"network:{project}",
             database=f"database:{project}",
@@ -188,19 +203,20 @@ class DockerComposeEnvironmentAdapter:
             namespace=namespace,
             quotas=_QUOTAS,
         )
-        try:
-            await self._compose(project, "up", "--detach", "--wait", "--no-build")
-            await self._health(project, expected_image_id=image_id)
-        except BaseException:
-            await self._compensating_down(project)
-            raise
-        self._live[environment_id] = _LiveWorld(
+        live = _LiveWorld(
             project=project,
             target=target,
             root_snapshot_id=root_snapshot_id or f"root:{environment_id}",
             handle=handle,
             image_id=image_id,
         )
+        try:
+            await self._compose(project, "up", "--detach", "--wait", "--no-build")
+            await self._health(project, expected_image_id=image_id)
+            self._register_live(live)
+        except BaseException:
+            await self._compensating_down(project)
+            raise
         return handle
 
     async def _require_docker(self) -> None:
@@ -309,7 +325,8 @@ class DockerComposeEnvironmentAdapter:
 
     def _require_stored_snapshot(self, snapshot: SnapshotManifest) -> _StoredSnapshot:
         self._validate_snapshot(snapshot)
-        stored = self._snapshots.get(snapshot.snapshot_id)
+        with self._registry_lock:
+            stored = self._snapshots.get(snapshot.snapshot_id)
         if stored is None or stored.manifest != snapshot:
             raise ComposeAdapterError("snapshot is not owned by this adapter")
         archive, hashes = _decode_archive(
@@ -324,7 +341,10 @@ class DockerComposeEnvironmentAdapter:
         # The original lifecycle failure remains the authoritative boundary. A later explicit
         # destroy remains possible for registered environments; failed creates never escape.
         with suppress(BaseException):
-            await self._compose(project, "down", "--volumes", "--remove-orphans")
+            await asyncio.wait_for(
+                self._compose(project, "down", "--volumes", "--remove-orphans"),
+                timeout=_COMPENSATING_DOWN_SECONDS,
+            )
 
     async def _run(
         self,
@@ -363,10 +383,73 @@ class DockerComposeEnvironmentAdapter:
     def _require_live(self, env: EnvironmentHandle) -> _LiveWorld:
         if not isinstance(env, EnvironmentHandle) or env.adapter != ADAPTER_PIN:
             raise ComposeAdapterError("environment handle is invalid")
-        live = self._live.get(env.environment_id)
+        with self._registry_lock:
+            live = self._live.get(env.environment_id)
         if live is None or live.handle != env:
             raise ComposeAdapterError("environment is not owned by this adapter")
         return live
+
+    def _require_same_live(
+        self,
+        env: EnvironmentHandle,
+        expected: _LiveWorld,
+    ) -> _LiveWorld:
+        live = self._require_live(env)
+        if live is not expected:
+            raise ComposeAdapterError("environment ownership changed while waiting")
+        return live
+
+    def _allocate_environment_identity(self) -> tuple[str, str]:
+        for _ in range(_IDENTITY_ALLOCATION_ATTEMPTS):
+            token = uuid.uuid4().hex
+            if not re.fullmatch(r"[0-9a-f]{32}", token):
+                continue
+            environment_id = f"environment:{token}"
+            with self._registry_lock:
+                if len(self._issued_environment_ids) >= _MAX_ISSUED_ENVIRONMENTS:
+                    raise ComposeAdapterError("environment identity capacity is exhausted")
+                if environment_id in self._issued_environment_ids:
+                    continue
+                self._issued_environment_ids.add(environment_id)
+            return f"swm2{token}", environment_id
+        raise ComposeAdapterError("unable to allocate a unique environment identity")
+
+    def _allocate_snapshot_id(self) -> str:
+        for _ in range(_IDENTITY_ALLOCATION_ATTEMPTS):
+            token = uuid.uuid4().hex
+            if not re.fullmatch(r"[0-9a-f]{32}", token):
+                continue
+            snapshot_id = f"snapshot:{token}"
+            with self._registry_lock:
+                if len(self._issued_snapshot_ids) >= _MAX_ISSUED_SNAPSHOTS:
+                    raise ComposeAdapterError("snapshot retention capacity is exhausted")
+                if snapshot_id in self._issued_snapshot_ids:
+                    continue
+                self._issued_snapshot_ids.add(snapshot_id)
+            return snapshot_id
+        raise ComposeAdapterError("unable to allocate a unique snapshot identity")
+
+    def _register_live(self, live: _LiveWorld) -> None:
+        environment_id = live.handle.environment_id
+        with self._registry_lock:
+            if environment_id in self._live:
+                raise ComposeAdapterError("environment identity is already registered")
+            self._live[environment_id] = live
+
+    def _discard_live(self, live: _LiveWorld) -> bool:
+        environment_id = live.handle.environment_id
+        with self._registry_lock:
+            if self._live.get(environment_id) is not live:
+                return False
+            self._live.pop(environment_id)
+            return True
+
+    def _store_snapshot(self, stored: _StoredSnapshot) -> None:
+        snapshot_id = stored.manifest.snapshot_id
+        with self._registry_lock:
+            if snapshot_id in self._snapshots:
+                raise ComposeAdapterError("snapshot identity is already registered")
+            self._snapshots[snapshot_id] = stored
 
     @staticmethod
     def _validate_snapshot(snapshot: SnapshotManifest) -> None:
@@ -385,6 +468,7 @@ class _LiveWorld:
     root_snapshot_id: str
     handle: EnvironmentHandle
     image_id: str
+    operation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, compare=False, repr=False)
 
 
 @dataclass(frozen=True)

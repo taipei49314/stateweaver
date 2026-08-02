@@ -31,15 +31,17 @@ Root state -> World DAG -> Local transitions -> Chain compiler
 Architecture baseline v1 is being implemented milestone-by-milestone. The proof-producing M0/M1
 foundation, M3 semantic-twin flow, and M4 offline search flow pass locally. M2 deliberately remains
 partial: its content-backed six-component synthetic archive protocol passes emulator tests, but no
-live Docker or real-provider snapshot proof exists. M5's synthetic authorization closure, M7's
-trusted-runner integrity, and M8's fixed API/browser contract have been adversarially hardened and
-pass their local gates. They remain synthetic prototypes, not release certification.
+live Docker or real-provider snapshot proof exists. Per-world lifecycle gates now prove four-way
+runner overlap without permitting same-world races; the opt-in live workflow remains unexecuted.
+M5's synthetic authorization closure, M7's trusted-runner integrity, and M8's fixed API/browser
+contract have been adversarially hardened and pass their local gates. They remain synthetic
+prototypes, not release certification.
 
 | Milestone | Auditable local status | Evidence |
 | --- | --- | --- |
 | M0 Contracts + Lab | Foundation proof passes; release audit pending | `packages/contracts/`, `labs/multitenant-saas/` |
 | M1 Deterministic Replay | Five-run clean-root differential passes | `packages/replay/`, `apps/cli/` |
-| M2 World Engine | Content-backed synthetic archive passes; live Docker/provider proof absent | `packages/worlds/`, Docker adapter marked `PARTIAL` |
+| M2 World Engine | Archive + per-world concurrency pass; live Docker/provider proof absent | `packages/worlds/`, `tests/integration/worlds/`, adapter `PARTIAL` |
 | M3 Semantic Twin | Source + OTLP + state-delta flow passes | `packages/twin/`, `tests/integration/twin/` |
 | M4 Search | Offline 24 → 4 → 2 → 1 flow passes | `packages/search/`, `workflows/world/` |
 | M5 Chain Compiler | Three-fragment synthetic E2E; action/auth/effect/root/expiry closure hardened | `packages/compiler/`, `tests/integration/compiler/` |

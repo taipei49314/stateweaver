@@ -53,10 +53,13 @@ members = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers -ra"
+addopts = '--strict-config --strict-markers -ra -m "not docker_integration"'
 pythonpath = ["packages/search/tests"]
 testpaths = ["packages", "adapters", "apps", "labs", "workflows", "benchmarks", "tests"]
 xfail_strict = true
+markers = [
+  "docker_integration: opt-in fixed synthetic Docker Compose observation; never acceptance proof",
+]
 
 [tool.coverage.run]
 branch = true

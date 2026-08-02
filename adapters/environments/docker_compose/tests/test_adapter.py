@@ -5,6 +5,7 @@ import json
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from stateweaver.adapters.docker_compose import (
@@ -25,6 +26,10 @@ _BRIDGE_SUFFIX = (
     "python",
     "/opt/stateweaver/state_bridge.py",
 )
+_UP = ("up", "--detach", "--wait", "--no-build")
+_DOWN = ("down", "--volumes", "--remove-orphans")
+_EXPORT = (*_BRIDGE_SUFFIX, "export")
+_IMPORT = (*_BRIDGE_SUFFIX, "import")
 
 
 def _seed_components() -> dict[str, dict[str, object]]:
@@ -54,6 +59,30 @@ def _archive(components: dict[str, dict[str, object]]) -> str:
 
 
 @dataclass
+class OperationBarrier:
+    parties: int
+    auto_release: bool = True
+    active: int = 0
+    max_active: int = 0
+    projects: set[str] = field(default_factory=set)
+    reached: asyncio.Event = field(default_factory=asyncio.Event)
+    release: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def wait(self, project: str) -> None:
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        self.projects.add(project)
+        if len(self.projects) >= self.parties:
+            self.reached.set()
+            if self.auto_release:
+                self.release.set()
+        try:
+            await self.release.wait()
+        finally:
+            self.active -= 1
+
+
+@dataclass
 class FakeRunner:
     calls: list[tuple[tuple[str, ...], bytes | None]] = field(default_factory=list)
     states: dict[str, dict[str, dict[str, object]]] = field(default_factory=dict)
@@ -68,7 +97,9 @@ class FakeRunner:
     ps_override: str | None = None
     import_ack_override: str | None = None
     failure_operations: set[tuple[str, ...]] = field(default_factory=set)
+    barriers: dict[tuple[str, ...], OperationBarrier] = field(default_factory=dict)
     block_down: bool = False
+    block_down_after_commit: bool = False
     down_started: asyncio.Event = field(default_factory=asyncio.Event)
     release_down: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -97,19 +128,25 @@ class FakeRunner:
         operation = argv[6:]
         if operation in self.failure_operations:
             return ProcessResult(returncode=1, stderr="fixed failure")
-        if operation == ("up", "--detach", "--wait", "--no-build"):
+        barrier = self.barriers.get(operation)
+        if barrier is not None:
+            await barrier.wait(project)
+        if operation == _UP:
             if self.retag_on_up:
                 self.image_id = f"sha256:{'2' * 64}"
                 self.retag_on_up = False
             self.states.setdefault(project, _seed_components())
             self.running_image_ids[project] = self.image_id
             return ProcessResult(returncode=0)
-        if operation == ("down", "--volumes", "--remove-orphans"):
+        if operation == _DOWN:
             if self.block_down:
                 self.down_started.set()
                 await self.release_down.wait()
             self.states.pop(project, None)
             self.running_image_ids.pop(project, None)
+            if self.block_down_after_commit:
+                self.down_started.set()
+                await self.release_down.wait()
             return ProcessResult(returncode=0)
         if operation == ("ps", "--format", "json"):
             if self.ps_override is not None:
@@ -130,10 +167,10 @@ class FakeRunner:
                     ]
                 ),
             )
-        if operation == (*_BRIDGE_SUFFIX, "export"):
+        if operation == _EXPORT:
             stdout = self.export_override or _archive(self.states[project])
             return ProcessResult(returncode=0, stdout=stdout)
-        if operation == (*_BRIDGE_SUFFIX, "import"):
+        if operation == _IMPORT:
             assert stdin is not None
             payload = json.loads(stdin)
             self.states[project] = deepcopy(payload["components"])
@@ -212,8 +249,8 @@ async def test_snapshot_fork_and_restore_are_bound_to_real_component_content() -
     assert (await adapter.snapshot(child)).state_fingerprint != clean.state_fingerprint
     assert (await adapter.snapshot(root)).content_hashes == mutated.content_hashes
 
-    await adapter.restore(child, clean)
-    assert (await adapter.snapshot(child)).content_hashes == clean.content_hashes
+    await adapter.restore(child, child_snapshot)
+    assert (await adapter.snapshot(child)).content_hashes == child_snapshot.content_hashes
     await adapter.destroy(root)
     descendant = await adapter.fork(clean)
     assert (await adapter.snapshot(descendant)).content_hashes == clean.content_hashes
@@ -227,12 +264,27 @@ async def test_four_siblings_share_one_snapshot_and_isolate_component_mutations(
     adapter = DockerComposeEnvironmentAdapter(runner=runner)
     root = await adapter.prepare(_target())
     clean = await adapter.snapshot(root)
-    siblings = await asyncio.gather(*(adapter.fork(clean) for _ in range(4)))
+    fork_barrier = OperationBarrier(parties=4)
+    runner.barriers[_UP] = fork_barrier
+    siblings = await asyncio.wait_for(
+        asyncio.gather(*(adapter.fork(clean) for _ in range(4))),
+        timeout=2.0,
+    )
+    runner.barriers.pop(_UP)
 
     for index, sibling in enumerate(siblings):
         runner.mutate(sibling, "session", {"sessions": [{"sibling": index}]})
-    sibling_snapshots = await asyncio.gather(*(adapter.snapshot(item) for item in siblings))
+    snapshot_barrier = OperationBarrier(parties=4)
+    runner.barriers[_EXPORT] = snapshot_barrier
+    sibling_snapshots = await asyncio.wait_for(
+        asyncio.gather(*(adapter.snapshot(item) for item in siblings)),
+        timeout=2.0,
+    )
+    runner.barriers.pop(_EXPORT)
 
+    assert fork_barrier.max_active == 4
+    assert len(fork_barrier.projects) == 4
+    assert snapshot_barrier.max_active == 4
     assert len({item.opaque_ref for item in siblings}) == 4
     assert len({item.namespace.network for item in siblings}) == 4
     assert len({item.namespace.database for item in siblings}) == 4
@@ -240,6 +292,137 @@ async def test_four_siblings_share_one_snapshot_and_isolate_component_mutations(
     assert (await adapter.snapshot(root)).content_hashes == clean.content_hashes
     await asyncio.gather(*(adapter.destroy(item) for item in siblings))
     await adapter.destroy(root)
+
+
+@pytest.mark.asyncio
+async def test_same_world_snapshots_serialize_while_waiting_for_the_lifecycle_gate() -> None:
+    runner = FakeRunner()
+    adapter = DockerComposeEnvironmentAdapter(runner=runner)
+    env = await adapter.prepare(_target())
+    barrier = OperationBarrier(parties=1, auto_release=False)
+    runner.barriers[_EXPORT] = barrier
+
+    first = asyncio.create_task(adapter.snapshot(env))
+    await asyncio.wait_for(barrier.reached.wait(), timeout=1.0)
+    second = asyncio.create_task(adapter.snapshot(env))
+    await asyncio.sleep(0)
+    export_calls = [call for call, _stdin in runner.calls if call[6:] == _EXPORT]
+    assert len(export_calls) == 1
+
+    barrier.release.set()
+    await asyncio.wait_for(asyncio.gather(first, second), timeout=2.0)
+    assert barrier.max_active == 1
+    await adapter.destroy(env)
+
+
+@pytest.mark.asyncio
+async def test_destroy_wins_before_a_waiting_snapshot_revalidates_ownership() -> None:
+    runner = FakeRunner(block_down=True)
+    adapter = DockerComposeEnvironmentAdapter(runner=runner)
+    env = await adapter.prepare(_target())
+
+    destroy = asyncio.create_task(adapter.destroy(env))
+    await asyncio.wait_for(runner.down_started.wait(), timeout=1.0)
+    waiting_snapshot = asyncio.create_task(adapter.snapshot(env))
+    await asyncio.sleep(0)
+    calls_before_release = len(runner.calls)
+    runner.release_down.set()
+    await asyncio.wait_for(destroy, timeout=1.0)
+    with pytest.raises(ComposeAdapterError, match="not owned"):
+        await asyncio.wait_for(waiting_snapshot, timeout=1.0)
+    assert len(runner.calls) == calls_before_release
+    await adapter.destroy(env)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_prepare_reserves_unique_project_identities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = FakeRunner()
+    barrier = OperationBarrier(parties=2)
+    runner.barriers[_UP] = barrier
+    adapter = DockerComposeEnvironmentAdapter(runner=runner)
+    first_token = "a" * 32
+    second_token = "b" * 32
+    tokens = iter((first_token, first_token, second_token))
+    monkeypatch.setattr(
+        "stateweaver.adapters.docker_compose.adapter.uuid.uuid4",
+        lambda: SimpleNamespace(hex=next(tokens)),
+    )
+
+    environments = await asyncio.wait_for(
+        asyncio.gather(adapter.prepare(_target()), adapter.prepare(_target())),
+        timeout=2.0,
+    )
+    assert {item.environment_id for item in environments} == {
+        f"environment:{first_token}",
+        f"environment:{second_token}",
+    }
+    assert barrier.max_active == 2
+    await asyncio.gather(*(adapter.destroy(item) for item in environments))
+
+
+@pytest.mark.asyncio
+async def test_snapshot_retention_capacity_fails_before_another_process_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "stateweaver.adapters.docker_compose.adapter._MAX_ISSUED_SNAPSHOTS",
+        1,
+    )
+    runner = FakeRunner()
+    adapter = DockerComposeEnvironmentAdapter(runner=runner)
+    env = await adapter.prepare(_target())
+    await adapter.snapshot(env)
+    calls_before = len(runner.calls)
+
+    with pytest.raises(ComposeAdapterError, match="retention capacity"):
+        await adapter.snapshot(env)
+    assert len(runner.calls) == calls_before
+    await adapter.destroy(env)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_fork_removes_unpublished_child_and_preserves_root() -> None:
+    runner = FakeRunner()
+    adapter = DockerComposeEnvironmentAdapter(runner=runner)
+    root = await adapter.prepare(_target())
+    clean = await adapter.snapshot(root)
+    barrier = OperationBarrier(parties=1, auto_release=False)
+    runner.barriers[_IMPORT] = barrier
+
+    fork = asyncio.create_task(adapter.fork(clean))
+    await asyncio.wait_for(barrier.reached.wait(), timeout=1.0)
+    child_project = next(iter(barrier.projects))
+    fork.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(fork, timeout=1.0)
+    runner.barriers.pop(_IMPORT)
+
+    assert child_project not in runner.states
+    assert (await adapter.snapshot(root)).content_hashes == clean.content_hashes
+    await adapter.destroy(root)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_destructive_restore_compensates_and_remains_retryable() -> None:
+    runner = FakeRunner(block_down_after_commit=True)
+    adapter = DockerComposeEnvironmentAdapter(runner=runner)
+    env = await adapter.prepare(_target())
+    clean = await adapter.snapshot(env)
+    runner.mutate(env, "database", {"rows": [{"value": "dirty"}]})
+
+    restore = asyncio.create_task(adapter.restore(env, clean))
+    await asyncio.wait_for(runner.down_started.wait(), timeout=1.0)
+    restore.cancel()
+    runner.release_down.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(restore, timeout=1.0)
+
+    runner.block_down_after_commit = False
+    await adapter.restore(env, clean)
+    assert (await adapter.snapshot(env)).content_hashes == clean.content_hashes
+    await adapter.destroy(env)
 
 
 @pytest.mark.asyncio
@@ -280,6 +463,21 @@ async def test_restore_rejects_a_snapshot_from_another_root_before_process_call(
 
     with pytest.raises(ComposeAdapterError, match="root lineage"):
         await adapter.restore(second, first_snapshot)
+    assert len(runner.calls) == calls_before
+
+
+@pytest.mark.asyncio
+async def test_restore_rejects_a_same_root_snapshot_from_another_source_world() -> None:
+    runner = FakeRunner()
+    adapter = DockerComposeEnvironmentAdapter(runner=runner)
+    root = await adapter.prepare(_target())
+    root_snapshot = await adapter.snapshot(root)
+    child = await adapter.fork(root_snapshot)
+    child_snapshot = await adapter.snapshot(child)
+    calls_before = len(runner.calls)
+
+    with pytest.raises(ComposeAdapterError, match="source environment"):
+        await adapter.restore(root, child_snapshot)
     assert len(runner.calls) == calls_before
 
 

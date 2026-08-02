@@ -1,0 +1,65 @@
+name: M2 Docker Compose observation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m2-docker-compose-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  live-synthetic-worlds:
+    name: Four live synthetic siblings
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install locked workspace
+        run: uv sync --all-packages --group dev --locked
+
+      - name: Record Docker runtime
+        run: |
+          mkdir -p artifacts/m2-live
+          git rev-parse HEAD > artifacts/m2-live/commit.txt
+          docker version > artifacts/m2-live/docker-version.txt
+          docker compose version > artifacts/m2-live/compose-version.txt
+
+      - name: Build the fixed digest-pinned fixture
+        run: |
+          docker build \
+            --tag stateweaver-synthetic-demo:local \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose
+          docker image inspect stateweaver-synthetic-demo:local \
+            > artifacts/m2-live/image-inspect.json
+
+      - name: Run the explicit live observation
+        env:
+          STATEWEAVER_RUN_DOCKER_INTEGRATION: "1"
+        run: |
+          uv run pytest \
+            -o 'addopts=--strict-config --strict-markers -ra' \
+            tests/integration/worlds/test_live_docker_compose.py \
+            -m docker_integration \
+            --junitxml=artifacts/m2-live/junit.xml \
+            -q
+
+      - name: Retain the observation inputs and result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: docker-compose-live-observation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/m2-live
+          if-no-files-found: error
+          retention-days: 30

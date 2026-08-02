@@ -14,7 +14,7 @@ acceptance commands are intentionally local and do not require network access.
 |---|---|---|
 | M0 — Contracts + Lab | Proof-producing foundation passes locally; formal exit audit pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/policy/`, `packages/evidence/` |
 | M1 — Deterministic Replay Kernel | Proof-producing foundation passes locally; formal exit audit pending | `packages/replay/`, `adapters/environments/in_process_lab/`, `apps/cli/` |
-| M2 — Materialized World Engine | Content-backed synthetic archive protocol implemented; live Docker and real-provider proof pending | `packages/worlds/`, `adapters/environments/docker_compose/` |
+| M2 — Materialized World Engine | Synthetic archive + per-world concurrency implemented; live Docker and real-provider proof pending | `packages/worlds/`, `adapters/environments/docker_compose/`, `tests/integration/worlds/` |
 | M3 — Security Semantic Twin | Exit flow passes locally; release certification pending | `packages/twin/`, source/OTel adapters, `tests/integration/twin/` |
 | M4 — Tiered Search Controller | Offline exit flow passes locally; materialized certification pending | `packages/search/`, `workflows/world/` |
 | M5 — Chain Compiler | Synthetic action/auth/effect/root/expiry closure hardened; release evidence pending | `packages/compiler/`, `tests/integration/compiler/` |
@@ -91,6 +91,8 @@ namespace, fingerprints, and sibling-isolation tests.
 
 - `adapters/environments/docker_compose/`
 - `packages/worlds/`
+- `tests/integration/worlds/` — explicit live gate; excluded from default tests and not yet run
+- `.github/workflows/docker-compose-live.yml` — manual observation workflow; not acceptance proof
 
 **Local protocol gate**
 
@@ -98,9 +100,17 @@ namespace, fingerprints, and sibling-isolation tests.
 uv run pytest packages/worlds/tests adapters/environments/docker_compose/tests -q
 ```
 
-The architecture-required live integration suite does not exist yet. A future gate must build the
-repository fixture on a Docker-equipped clean host and exercise four parallel Compose siblings; no
-skipped or emulated test is counted as that evidence.
+**Explicit live observation command**
+
+```powershell
+docker build --tag stateweaver-synthetic-demo:local adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose
+$env:STATEWEAVER_RUN_DOCKER_INTEGRATION = "1"
+uv run pytest -o 'addopts=--strict-config --strict-markers -ra' tests/integration/worlds/test_live_docker_compose.py -m docker_integration -q
+```
+
+This command has not been run in the retained local verification because Docker is unavailable. The
+test fails rather than skips when explicitly selected without the opt-in. Its code, default
+deselection, or an unrun manual workflow is not a live observation, acceptance artifact, or proof.
 
 **Exit criterion:** at least four sibling worlds run in parallel without contamination. The strict
 world lifecycle manager, immutable snapshots, namespace uniqueness, timeout/cleanup behavior,
@@ -112,10 +122,12 @@ handles, lineage, process replies, and cancellation leaks in its stateful emulat
 
 Those capabilities remain `PARTIAL`: the bridge models JSON components rather than live PostgreSQL,
 Redis, queue, browser-session, filesystem-provider, and controlled-clock capture. The four-sibling
-test proves logical namespace and state isolation under the emulator, while the adapter's single
-lock serializes lifecycle operations. No Docker host was available, so image build/run, genuinely
-parallel Compose siblings, and live cross-world contamination checks remain unproved. M2 is
-therefore **not certified**.
+test now uses four-way barriers to prove that separate world creation and snapshot operations overlap
+at the runner boundary, while each world's lifecycle gate prevents snapshot/restore/destroy races.
+It also covers identity-reservation collisions, destroy-versus-waiter revalidation, fork cancellation,
+cross-source restore rejection, and cancellation after destructive restore commits. No Docker host
+was available, so image build/run, genuinely parallel Compose subprocesses, and live cross-world
+contamination checks remain unproved. M2 is therefore **not certified**.
 
 ## M3 — Security Semantic Twin
 
