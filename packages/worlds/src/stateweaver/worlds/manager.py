@@ -226,6 +226,7 @@ class WorldManager:
         node = self.store.get(world_id)
         if node.destroyed or node.environment is None or node.phase is WorldPhase.PRUNED:
             raise LifecycleError("world is unavailable for restore")
+        snapshot = self._as_snapshot(snapshot)
         self._check_pin(node.adapter)
         self._validate_snapshot(snapshot, node.target, node.environment, node.root_snapshot_id)
         try:

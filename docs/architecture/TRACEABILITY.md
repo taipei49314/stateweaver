@@ -14,7 +14,7 @@ acceptance commands are intentionally local and do not require network access.
 |---|---|---|
 | M0 — Contracts + Lab | Proof-producing foundation passes locally; formal exit audit pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/policy/`, `packages/evidence/` |
 | M1 — Deterministic Replay Kernel | Proof-producing foundation passes locally; formal exit audit pending | `packages/replay/`, `adapters/environments/in_process_lab/`, `apps/cli/` |
-| M2 — Materialized World Engine | Lifecycle and fixed Docker adapter implemented; real Docker proof pending | `packages/worlds/`, `adapters/environments/docker_compose/` |
+| M2 — Materialized World Engine | Content-backed synthetic archive protocol implemented; live Docker and real-provider proof pending | `packages/worlds/`, `adapters/environments/docker_compose/` |
 | M3 — Security Semantic Twin | Exit flow passes locally; release certification pending | `packages/twin/`, source/OTel adapters, `tests/integration/twin/` |
 | M4 — Tiered Search Controller | Offline exit flow passes locally; materialized certification pending | `packages/search/`, `workflows/world/` |
 | M5 — Chain Compiler | Synthetic action/auth/effect/root/expiry closure hardened; release evidence pending | `packages/compiler/`, `tests/integration/compiler/` |
@@ -87,25 +87,35 @@ pending, so M1 is **not certified**.
 **Architecture deliverables:** Docker Compose adapter, world fork/restore/destroy, per-world
 namespace, fingerprints, and sibling-isolation tests.
 
-**Current and planned paths**
+**Current paths**
 
 - `adapters/environments/docker_compose/`
 - `packages/worlds/`
-- `tests/integration/worlds/`
 
-**Planned acceptance command**
+**Local protocol gate**
 
 ```powershell
-uv run pytest packages/worlds/tests adapters/environments/docker_compose/tests tests/integration/worlds -q
+uv run pytest packages/worlds/tests adapters/environments/docker_compose/tests -q
 ```
+
+The architecture-required live integration suite does not exist yet. A future gate must build the
+repository fixture on a Docker-equipped clean host and exercise four parallel Compose siblings; no
+skipped or emulated test is counted as that evidence.
 
 **Exit criterion:** at least four sibling worlds run in parallel without contamination. The strict
 world lifecycle manager, immutable snapshots, namespace uniqueness, timeout/cleanup behavior,
-deduplication, and malicious-adapter conformance tests exist in `packages/worlds/`. The fixed
-synthetic Docker Compose lifecycle boundary and fake-runner four-sibling namespace proof are
-present. Its data-layer snapshot capabilities remain honestly marked `PARTIAL`: the repository
-does not yet contain a materialized database/cache/queue/session capture proof. Docker integration
-on a clean host is also pending, so M2 remains **not certified**.
+deduplication, restore-manifest revalidation, live-environment source binding, and malicious-adapter
+conformance tests exist in `packages/worlds/`. The fixed synthetic adapter canonicalizes a
+six-component archive, hashes content with the exact running image identity, switches restored
+generations through one commit pointer, re-exports after fork/restore, and rejects forged manifests,
+handles, lineage, process replies, and cancellation leaks in its stateful emulator.
+
+Those capabilities remain `PARTIAL`: the bridge models JSON components rather than live PostgreSQL,
+Redis, queue, browser-session, filesystem-provider, and controlled-clock capture. The four-sibling
+test proves logical namespace and state isolation under the emulator, while the adapter's single
+lock serializes lifecycle operations. No Docker host was available, so image build/run, genuinely
+parallel Compose siblings, and live cross-world contamination checks remain unproved. M2 is
+therefore **not certified**.
 
 ## M3 — Security Semantic Twin
 

@@ -86,6 +86,33 @@ async def test_snapshot_restore_identity_and_fingerprint_dedup_preserves_lineage
 
 
 @pytest.mark.asyncio
+async def test_restore_revalidates_manifest_before_adapter_call_without_destroying_world() -> None:
+    adapter = InMemoryConformanceAdapter()
+    manager = WorldManager(adapter)
+    root = await manager.prepare(_target(), world_id="world:root")
+    assert root.snapshot is not None
+    forged = root.snapshot.model_copy(update={"state_fingerprint": "sha256:" + "0" * 64})
+
+    with pytest.raises(AdapterReturnError, match="invalid snapshot manifest"):
+        await manager.restore(root.world_id, forged)
+
+    assert manager.store.get(root.world_id).destroyed is False
+    assert root.environment is not None
+    assert root.environment.environment_id not in adapter.destroyed
+
+
+@pytest.mark.asyncio
+async def test_world_node_binds_snapshot_source_to_live_environment() -> None:
+    adapter = InMemoryConformanceAdapter()
+    manager = WorldManager(adapter)
+    root = await manager.prepare(_target(), world_id="world:root")
+    assert root.snapshot is not None
+    forged_snapshot = root.snapshot.model_copy(update={"source_environment_id": "env:forged"})
+    with pytest.raises(ValidationError, match="source environment"):
+        WorldNode(**(root.model_dump() | {"snapshot": forged_snapshot}))
+
+
+@pytest.mark.asyncio
 async def test_cleanup_after_failure_and_idempotent_destroy() -> None:
     adapter = InMemoryConformanceAdapter()
     manager = WorldManager(adapter)

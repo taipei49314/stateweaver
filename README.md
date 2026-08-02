@@ -30,7 +30,8 @@ Root state -> World DAG -> Local transitions -> Chain compiler
 
 Architecture baseline v1 is being implemented milestone-by-milestone. The proof-producing M0/M1
 foundation, M3 semantic-twin flow, and M4 offline search flow pass locally. M2 deliberately remains
-partial until a real data-layer snapshot is captured. M5's synthetic authorization closure, M7's
+partial: its content-backed six-component synthetic archive protocol passes emulator tests, but no
+live Docker or real-provider snapshot proof exists. M5's synthetic authorization closure, M7's
 trusted-runner integrity, and M8's fixed API/browser contract have been adversarially hardened and
 pass their local gates. They remain synthetic prototypes, not release certification.
 
@@ -38,7 +39,7 @@ pass their local gates. They remain synthetic prototypes, not release certificat
 | --- | --- | --- |
 | M0 Contracts + Lab | Foundation proof passes; release audit pending | `packages/contracts/`, `labs/multitenant-saas/` |
 | M1 Deterministic Replay | Five-run clean-root differential passes | `packages/replay/`, `apps/cli/` |
-| M2 World Engine | Lifecycle complete; materialized data snapshot absent | `packages/worlds/`, Docker adapter marked `PARTIAL` |
+| M2 World Engine | Content-backed synthetic archive passes; live Docker/provider proof absent | `packages/worlds/`, Docker adapter marked `PARTIAL` |
 | M3 Semantic Twin | Source + OTLP + state-delta flow passes | `packages/twin/`, `tests/integration/twin/` |
 | M4 Search | Offline 24 → 4 → 2 → 1 flow passes | `packages/search/`, `workflows/world/` |
 | M5 Chain Compiler | Three-fragment synthetic E2E; action/auth/effect/root/expiry closure hardened | `packages/compiler/`, `tests/integration/compiler/` |

@@ -1,16 +1,30 @@
 services:
   synthetic-demo:
     image: stateweaver-synthetic-demo:local
+    build:
+      context: .
+      dockerfile: Dockerfile
     pull_policy: never
+    read_only: true
+    init: true
+    user: "65532:65532"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 512m
+    cpus: 1.0
     networks: [internal]
+    tmpfs:
+      - /tmp:size=16m,mode=1777
     volumes:
       - database:/state/database
       - cache:/state/cache
       - queue:/state/queue
       - session:/state/session
       - storage:/state/storage
+      - clock:/state/clock
     healthcheck:
-      test: ["CMD", "true"]
+      test: ["CMD", "python", "/opt/stateweaver/state_bridge.py", "health"]
       interval: 2s
       timeout: 1s
       retries: 3
@@ -25,3 +39,4 @@ volumes:
   queue: {}
   session: {}
   storage: {}
+  clock: {}

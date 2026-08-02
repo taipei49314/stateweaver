@@ -281,6 +281,12 @@ class WorldNode(FrozenModel):
             raise ValueError("active materialized worlds require a live environment and snapshot")
         if self.environment is not None and self.environment.adapter != self.adapter:
             raise ValueError("environment adapter must match world adapter pin")
+        if (
+            self.environment is not None
+            and self.snapshot is not None
+            and self.snapshot.source_environment_id != self.environment.environment_id
+        ):
+            raise ValueError("snapshot source environment must match the live world")
         if self.snapshot is not None and (
             self.snapshot.adapter != self.adapter
             or self.snapshot.target != self.target
