@@ -5,8 +5,10 @@ a `Finding` can cross from a candidate or synthetic result into a reality-confir
 replaces the former weak shape in which any caller-supplied replay ID plus `REPRODUCED` could claim
 confirmation.
 
-This is a typed causal-coherence boundary. It is not a signature, an issuer identity, a retained
-artifact resolver, or a completed Reality Replay Broker.
+This is a typed causal-coherence boundary. The evidence package now includes one narrow
+`source-backed-synthetic-v1` immutable-byte resolver for this candidate record. It is not a
+signature, an issuer identity, an authenticated retained-artifact store, or a completed Reality
+Replay Broker.
 
 ## Finding state machine
 
@@ -35,7 +37,8 @@ The receipt closes seven substitution boundaries:
 3. Determinism: at least two unique replay runs must bind the exact scope, target/build, adapter,
    plan, and root. Each run binds a distinct raw replay-result digest because the serialized result
    contains its run ID; all runs share one action-log digest, semantic signature, and trace hash and
-   reproduce the violation.
+   reproduce the violation. Each trace artifact is separately raw-byte-bound by the manifest and
+   carries the logical `replay_trace_hash` that must equal the replay result and receipt value.
 4. Reality Oracle: every promoted Oracle result must be deterministic, `OBSERVED`, `VIOLATED`,
    evidence-backed, and part of the receipt's canonical Oracle-definition hash.
 5. Negative controls: at least one typed control kind must produce deterministic, `OBSERVED`,
@@ -63,14 +66,26 @@ revalidate serialized JSON/dict input. The future broker API must do the same. T
 rejects confirmed promotion because no trusted broker attestation exists yet; a self-issued, fully
 rehashed receipt remains only a candidate record.
 
+`verify_reality_pre_receipt_bundle` accepts only canonical serialized receipt/manifest bytes and an
+in-memory `Mapping[str, bytes]`. It snapshots every mapping value once and uses the same bytes for
+digest verification and typed parsing. It enforces exact role/path coverage and rejects receipt,
+Finding, report, publication-manifest, and attestation paths from the pre-receipt projection. The
+profile uses compact sorted-key contracts JSON with no trailing line feed. Its result exposes a
+domain-separated snapshot hash, but its `authoritative` and `promotable` properties are permanently
+false; it is not accepted by the `Finding` promotion gate.
+
 ## Trust boundary still open
 
 An actor can recompute an internally coherent receipt hash. Therefore the hash detects inconsistent
-substitution; it does not authenticate who executed a replay or prove that referenced artifacts
-exist. A complete M6 broker must still:
+substitution; it does not authenticate who executed a replay. The current in-memory resolver proves
+that the supplied candidate bytes exist and agree within one snapshot, but it does not prove where
+those bytes came from. A complete M6 broker must still:
 
-- resolve every digest against immutable retained artifacts and verify the pre-receipt manifest
-  contains only the evidence projection defined above;
+- acquire the bytes from an immutable authenticated store without a mutable-path race;
+- resolve target/adapter source digests against retained source bytes rather than trust the values
+  recorded inside their lock artifacts;
+- independently reconstruct event-level trace semantics; current event rows are content-bound but
+  only their logical replay trace hash is cross-checked against the replay result;
 - construct the receipt from typed replay results rather than caller claims;
 - enforce scope, approval, identity, rate, write, and cleanup gates;
 - bind trusted issuance or CI provenance to the receipt and proof bundle;
@@ -83,8 +98,11 @@ a hardened promotion contract, not M6 certification.
 
 Focused contract tests cover legacy-field rejection, plan/root/target substitution, deterministic
 run vectors, Oracle provenance/outcome, negative controls, patch comparison, content-addressed
-identity, status shape, and constructed-instance revalidation:
+identity, status shape, and constructed-instance revalidation. Evidence resolver tests additionally
+cover single-read snapshots, exact coverage/role closure, digest and logical-trace substitution,
+canonical encoding, unsafe paths, controls, and patch replay:
 
 ```powershell
 uv run pytest packages/contracts/tests/test_reality_receipts.py -q
+uv run pytest packages/evidence/tests/test_reality_bundle.py -q
 ```

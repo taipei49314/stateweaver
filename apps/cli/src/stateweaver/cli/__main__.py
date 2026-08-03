@@ -101,7 +101,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(
             json.dumps(
-                {"errors": list(verification.errors), "valid": verification.valid},
+                {
+                    "errors": list(verification.errors),
+                    "snapshot_sha256": verification.snapshot_sha256,
+                    "valid": verification.valid,
+                },
                 sort_keys=True,
                 separators=(",", ":"),
             )

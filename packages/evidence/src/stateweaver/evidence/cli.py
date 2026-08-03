@@ -26,7 +26,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     if arguments.command == "verify":
         verification = verify_acceptance_evidence(arguments.run_directory)
-        response = {"valid": verification.valid, "errors": list(verification.errors)}
+        response = {
+            "valid": verification.valid,
+            "errors": list(verification.errors),
+            "snapshot_sha256": verification.snapshot_sha256,
+        }
         print(json.dumps(response, sort_keys=True))
         return 0 if verification.valid else 1
     try:

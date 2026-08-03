@@ -48,8 +48,12 @@ observed Oracle violations, negative controls, patch comparison, and the evidenc
 an internal-coherence contract, not a Reality Broker signature or producer attestation. Its
 pre-receipt manifest excludes the Finding, receipt, final publication report, and attestation to
 avoid recursive identity. All consumers must revalidate serialized input rather than trust
-unchecked in-memory model instances. Until a trusted resolver exists, the contract rejects both
-reserved confirmed statuses even when a receipt is internally coherent.
+unchecked in-memory model instances. Until a trusted broker/store resolver exists, the contract
+rejects both reserved confirmed statuses even when a receipt is internally coherent. A narrow
+synthetic-profile resolver now snapshots caller-supplied artifact bytes exactly once and closes manifest, role,
+digest, result/logical-trace, Oracle, control, patch, and evidence-index substitutions. It accepts no
+filesystem path or issuer assertion and always returns a non-authoritative, non-promotable
+candidate; authenticated retention and source/issuer trust remain open.
 
 | Milestone | Auditable local status | Evidence |
 | --- | --- | --- |
@@ -59,7 +63,7 @@ reserved confirmed statuses even when a receipt is internally coherent.
 | M3 Semantic Twin | Source + OTLP + state-delta flow passes | `packages/twin/`, `tests/integration/twin/` |
 | M4 Search | Offline 24 → 4 → 2 → 1 flow passes | `packages/search/`, `workflows/world/` |
 | M5 Chain Compiler | Three-fragment synthetic E2E; action/auth/effect/root/expiry closure hardened | `packages/compiler/`, `tests/integration/compiler/` |
-| M6 Reality + Proof | Foundation verifier + typed Finding receipt gate pass; general broker absent | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
+| M6 Reality + Proof | Finding gate + immutable-byte candidate resolver pass; trusted broker absent | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
 | M7 StateChainBench | Trusted built-in synthetic runner hardened; not equal-work or public-certified | `benchmarks/statechainbench/` |
 | M8 Public UX | Read-only fixed API + four-workspace client pass local contract/browser QA | `apps/api/`, `apps/web/` |
 
@@ -96,7 +100,9 @@ The CI path also retains a canonical proof bundle containing the exact five runs
 negative controls, full typed action log, policy bindings, Oracle evidence, four JUnit reports, and
 an exact-file SHA-256 manifest. `stateweaver foundation verify-evidence <run-directory>` validates
 file integrity and causal coherence, then independently re-executes the installed fixed foundation
-without executing bundle contents. Main-branch CI is configured to sign the exact-file manifest
+without executing bundle contents. The verifier hashes and parses one captured read of every file
+and returns its `snapshot_sha256`; consumers must not reopen mutable paths and assume they are the
+same snapshot. Main-branch CI is configured to sign the exact-file manifest
 with GitHub OIDC provenance; see [proof verification](docs/PROOF_VERIFICATION.md).
 
 For repository development:

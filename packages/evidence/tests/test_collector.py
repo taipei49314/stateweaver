@@ -203,7 +203,9 @@ def test_collects_exact_complete_and_verifiable_tree(tmp_path: Path) -> None:
     run = result.run_directory
 
     assert result.redacted_values == 0
-    assert verify_acceptance_evidence(run).valid
+    verification = verify_acceptance_evidence(run)
+    assert verification.valid
+    assert verification.snapshot_sha256 is not None
     assert {path.relative_to(run).as_posix() for path in run.rglob("*") if path.is_file()} == {
         "artifact-manifest.sha256",
         "foundation/source.json",
@@ -332,6 +334,36 @@ def test_rejects_junit_substitution_even_after_manifest_rehash(tmp_path: Path) -
     result = verify_acceptance_evidence(run)
     assert not result.valid
     assert any("coher" in error.lower() for error in result.errors)
+
+
+def test_verifier_hashes_and_parses_each_artifact_from_one_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = _collect(tmp_path, "single-read-snapshot")
+    target = run / "replay" / "plan.json"
+    original_read_bytes = Path.read_bytes
+    target_reads = 0
+
+    def mutate_after_first_read(path: Path) -> bytes:
+        nonlocal target_reads
+        content = original_read_bytes(path)
+        if path == target:
+            target_reads += 1
+            if target_reads == 1:
+                path.write_bytes(canonical_json_bytes({"substituted": "after-snapshot"}))
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", mutate_after_first_read)
+    result = verify_acceptance_evidence(run)
+
+    assert result.valid
+    assert result.snapshot_sha256 is not None
+    assert target_reads == 1
+
+    monkeypatch.undo()
+    current = verify_acceptance_evidence(run)
+    assert not current.valid
+    assert current.snapshot_sha256 is None
 
 
 def test_verifier_detects_tampering_extra_and_missing_artifacts(tmp_path: Path) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -22,7 +23,7 @@ from .collector import (
     _JunitSummary,
     _metadata_datetime,
     _proof_artifact_payloads,
-    _read_junit_sources,
+    _read_junit_payloads,
     _validate_foundation,
     _validate_supporting_inputs,
 )
@@ -49,6 +50,7 @@ _INVALID = object()
 class VerificationResult:
     valid: bool
     errors: tuple[str, ...]
+    snapshot_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -68,30 +70,39 @@ def verify_acceptance_evidence(
     """Verify hashes, canonical encoding, required coverage, and all causal bindings."""
 
     errors: list[str] = []
+    if run_directory.is_symlink():
+        return VerificationResult(False, ("artifact run directory must not be a symlink",))
     manifest = run_directory / "artifact-manifest.sha256"
     if manifest.is_symlink():
         return VerificationResult(False, ("artifact manifest must not be a symlink",))
     if not manifest.is_file():
         return VerificationResult(False, ("artifact manifest is missing",))
 
-    expected = _parse_manifest(manifest, errors)
-    required = set(_REQUIRED_RELATIVE)
     try:
         paths = tuple(run_directory.rglob("*"))
     except OSError:
         return VerificationResult(False, ("artifact tree is unreadable",))
     if any(path.is_symlink() for path in paths):
         errors.append("artifact tree must not contain symlinks")
+    required = set(_REQUIRED_RELATIVE)
     actual = {
         path.relative_to(run_directory).as_posix()
         for path in paths
         if path.is_file() and path != manifest
     }
-    if set(expected) != required:
-        errors.append("artifact manifest does not cover exactly the required artifacts")
     if actual != required:
         errors.append("artifact tree contains missing or untracked artifacts")
 
+    try:
+        manifest_bytes = manifest.read_bytes()
+    except OSError:
+        errors.append("artifact manifest is unreadable")
+        manifest_bytes = b""
+    expected = _parse_manifest(manifest_bytes, errors)
+    if set(expected) != required:
+        errors.append("artifact manifest does not cover exactly the required artifacts")
+
+    snapshot: dict[str, bytes] = {}
     for relative in _REQUIRED_RELATIVE:
         target = run_directory / relative
         expected_hash = expected.get(relative)
@@ -105,23 +116,35 @@ def verify_acceptance_evidence(
             except OSError:
                 errors.append("artifact listed by manifest is unreadable")
             else:
+                snapshot[relative] = content
                 if sha256_bytes(content) != expected_hash:
                     errors.append("artifact digest does not match manifest")
 
     parsed: dict[str, object] = {}
     for relative in _REQUIRED_RELATIVE:
-        if relative.endswith(".json"):
-            value = _read_canonical_json(run_directory / relative, errors)
+        if relative.endswith(".json") and relative in snapshot:
+            value = _read_canonical_json(snapshot[relative], errors)
             if value is not _INVALID:
                 parsed[relative] = value
     if all(relative in parsed for relative in _REQUIRED_RELATIVE if relative.endswith(".json")):
-        _verify_coherence(run_directory, parsed, errors, expected_provenance)
-    return VerificationResult(not errors, tuple(dict.fromkeys(errors)))
+        _verify_coherence(
+            run_directory,
+            parsed,
+            snapshot,
+            errors,
+            expected_provenance,
+        )
+    unique_errors = tuple(dict.fromkeys(errors))
+    snapshot_sha256 = (
+        _snapshot_sha256(run_directory.name, manifest_bytes, snapshot)
+        if not unique_errors and set(snapshot) == required
+        else None
+    )
+    return VerificationResult(not unique_errors, unique_errors, snapshot_sha256)
 
 
-def _read_canonical_json(path: Path, errors: list[str]) -> object:
+def _read_canonical_json(content: bytes, errors: list[str]) -> object:
     try:
-        content = path.read_bytes()
         parsed: object = json.loads(content.decode("utf-8"))
         canonical = canonical_json_bytes(parsed)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, EvidenceInputError, ValueError):
@@ -136,6 +159,7 @@ def _read_canonical_json(path: Path, errors: list[str]) -> object:
 def _verify_coherence(
     run_directory: Path,
     parsed: Mapping[str, object],
+    snapshot: Mapping[str, bytes],
     errors: list[str],
     expected_provenance: ExpectedProvenance | None,
 ) -> None:
@@ -154,18 +178,17 @@ def _verify_coherence(
             ) != canonical_json_bytes(expected_payload):
                 raise AcceptanceEvidenceError("derived proof artifact does not match its source")
 
-        junit_sources = {
-            name: run_directory / "junit" / f"{name}.xml"
-            for name in ("contracts", "policy", "lab", "replay")
+        junit_payloads = {
+            name: snapshot[f"junit/{name}.xml"] for name in ("contracts", "policy", "lab", "replay")
         }
-        _, junit_results = _read_junit_sources(junit_sources)
+        junit_results = _read_junit_payloads(junit_payloads)
         metadata = run_manifest.get("metadata")
         if not _string_mapping(metadata):
             raise AcceptanceEvidenceError("run manifest metadata is invalid")
         _validate_supporting_inputs(
             CollectionInput(
                 foundation=source,
-                junit_sources=junit_sources,
+                junit_sources={},
                 run_metadata=metadata,
             ),
             foundation,
@@ -247,10 +270,10 @@ def _string_mapping(value: object) -> TypeGuard[Mapping[str, Any]]:
     return isinstance(value, Mapping) and all(isinstance(key, str) for key in value)
 
 
-def _parse_manifest(manifest: Path, errors: list[str]) -> dict[str, str]:
+def _parse_manifest(content: bytes, errors: list[str]) -> dict[str, str]:
     try:
-        lines = manifest.read_text(encoding="ascii").splitlines()
-    except (OSError, UnicodeDecodeError):
+        lines = content.decode("ascii").splitlines()
+    except UnicodeDecodeError:
         errors.append("artifact manifest is unreadable")
         return {}
     entries: dict[str, str] = {}
@@ -277,3 +300,19 @@ def _parse_manifest(manifest: Path, errors: list[str]) -> dict[str, str]:
             errors.append("artifact manifest has duplicate entries")
         entries[relative] = digest
     return entries
+
+
+def _snapshot_sha256(
+    run_id: str,
+    manifest: bytes,
+    artifacts: Mapping[str, bytes],
+) -> str:
+    digest = hashlib.sha256()
+    components = (("@run-id", run_id.encode("utf-8")), ("@manifest", manifest))
+    for relative, content in (*components, *sorted(artifacts.items())):
+        encoded = relative.encode("utf-8")
+        digest.update(len(encoded).to_bytes(4, "big"))
+        digest.update(encoded)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    return f"sha256:{digest.hexdigest()}"

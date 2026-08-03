@@ -18,7 +18,7 @@ acceptance commands are intentionally local and do not require network access.
 | M3 — Security Semantic Twin | Exit flow passes locally; release certification pending | `packages/twin/`, source/OTel adapters, `tests/integration/twin/` |
 | M4 — Tiered Search Controller | Offline exit flow passes locally; materialized certification pending | `packages/search/`, `workflows/world/` |
 | M5 — Chain Compiler | Synthetic action/auth/effect/root/expiry closure hardened; release evidence pending | `packages/compiler/`, `tests/integration/compiler/` |
-| M6 — Reality Anchor + Proof Bundle | Typed Finding receipt gate + foundation collector implemented; general broker pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
+| M6 — Reality Anchor + Proof Bundle | Typed Finding gate + immutable-byte candidate resolver implemented; trusted broker pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
 | M7 — StateChainBench | Trusted built-in synthetic runner hardened; equal-work/public audit pending | `benchmarks/statechainbench/` |
 | M8 — Web UI + Public Release | Fixed synthetic API/client and local browser QA pass; public release pending | `apps/api/`, `apps/web/` |
 
@@ -262,13 +262,17 @@ scope, target and adapter locks; chain, plan and clean root; at least two unique
 semantic signature and trace hash; deterministic `OBSERVED + VIOLATED` Oracle results; non-vacuous
 `OBSERVED + SATISFIED` negative controls; and an evidence-manifest digest. All nested receipt
 objects are revalidated at the Finding promotion boundary, including Pydantic instances created
-without normal validation. `SYNTHETIC_REPRODUCED` is explicitly non-confirmed. Because the current
-repository has no trusted digest resolver or issuer, a self-issued receipt remains insufficient:
-the Finding validator rejects both reserved confirmed statuses after checking receipt coherence.
+without normal validation. `SYNTHETIC_REPRODUCED` is explicitly non-confirmed. The evidence package
+now resolves the synthetic profile from one immutable in-memory byte mapping: it enforces exact
+pre-receipt coverage, hashes and parses the same bytes, and binds scope, locks, plan/root/chain,
+results, action logs, logical traces, Oracles, controls, patch replay, and evidence index. The result
+is permanently non-authoritative and non-promotable.
 
-This content hash proves internal coherence, not issuer identity or artifact existence. The general
-Reality Replay Broker, digest resolver, reporting layer, trusted issuance/attestation, and portable
-M6 reproduction workflow remain absent. M6 is therefore **partially implemented and not
+This content hash and candidate resolver prove one supplied snapshot's internal coherence, not
+issuer identity, authenticated retention, target/adapter source provenance, or independent
+execution. The general Reality Replay Broker, trusted store acquisition, reporting layer, trusted
+issuance/attestation, and portable M6 reproduction workflow remain absent. The Finding validator
+therefore rejects both reserved confirmed statuses. M6 is **partially implemented and not
 certified**. See `docs/architecture/M6_REALITY_RECEIPT.md` for the exact boundary.
 
 ## M7 — StateChainBench

@@ -1086,12 +1086,28 @@ def _read_junit_sources(
     if set(sources) != set(_JUNIT_NAMES):
         raise AcceptanceEvidenceError("all required JUnit inputs must be supplied")
     content_by_name: dict[str, bytes] = {}
-    summaries: dict[str, _JunitSummary] = {}
     for name in _JUNIT_NAMES:
         try:
             content = sources[name].read_bytes()
+        except OSError as error:
+            raise AcceptanceEvidenceError("JUnit input is missing or invalid") from error
+        content_by_name[name] = content
+    return content_by_name, _read_junit_payloads(content_by_name)
+
+
+def _read_junit_payloads(sources: Mapping[str, bytes]) -> dict[str, _JunitSummary]:
+    """Validate JUnit from caller-captured bytes without reopening a source path."""
+
+    if set(sources) != set(_JUNIT_NAMES):
+        raise AcceptanceEvidenceError("all required JUnit inputs must be supplied")
+    summaries: dict[str, _JunitSummary] = {}
+    for name in _JUNIT_NAMES:
+        content = sources[name]
+        if type(content) is not bytes:
+            raise AcceptanceEvidenceError("JUnit input is missing or invalid")
+        try:
             root = ElementTree.fromstring(content)
-        except (OSError, ElementTree.ParseError) as error:
+        except ElementTree.ParseError as error:
             raise AcceptanceEvidenceError("JUnit input is missing or invalid") from error
         if root.tag not in {"testsuite", "testsuites"}:
             raise AcceptanceEvidenceError("JUnit input is missing or invalid")
@@ -1103,8 +1119,7 @@ def _read_junit_sources(
             raise AcceptanceEvidenceError("secret-like JUnit input was rejected") from error
         suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
         summaries[name] = _junit_summary(name, suites)
-        content_by_name[name] = content
-    return content_by_name, summaries
+    return summaries
 
 
 def _junit_summary(name: str, suites: list[ElementTree.Element]) -> _JunitSummary:

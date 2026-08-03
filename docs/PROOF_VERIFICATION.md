@@ -23,7 +23,15 @@ stateweaver foundation verify-evidence \
 
 The command does not execute content from the bundle. It runs only StateWeaver's fixed local
 synthetic foundation under the process-local network guard, then compares the independently
-derived semantic and installed-byte fingerprints.
+derived semantic and installed-byte fingerprints. The verifier reads the manifest and every
+required artifact once; hashing, canonical parsing, causal checks, and JUnit parsing use those same
+captured bytes. A successful JSON response includes `snapshot_sha256`, which identifies the run ID,
+manifest, and complete captured artifact set with length-delimited domain separation.
+
+That result describes the captured bytes, not the future contents of the directory path. Do not
+reopen files from a mutable directory and treat them as verified. The local path adapter is not a
+race-free no-follow acquisition service; first obtain a trusted immutable archive/snapshot when the
+producer can concurrently replace paths, then retain or consume exactly the verified bytes.
 
 ## GitHub workflow provenance
 

@@ -179,7 +179,9 @@ def test_console_collects_and_rechecks_causally_bound_evidence(
     run_directory = output_root / run_id
     assert main(["foundation", "verify-evidence", str(run_directory)]) == 0
     verification = json.loads(capsys.readouterr().out)
-    assert verification == {"errors": [], "valid": True}
+    assert verification["errors"] == []
+    assert verification["valid"] is True
+    assert verification["snapshot_sha256"].startswith("sha256:")
 
 
 def test_network_guard_denies_connect_bind_and_restores_socket_class() -> None:
