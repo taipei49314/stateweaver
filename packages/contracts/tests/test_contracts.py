@@ -25,8 +25,6 @@ from stateweaver.contracts import (
     Fact,
     FidelityLevel,
     FidelityProfile,
-    Finding,
-    FindingStatus,
     HttpMethod,
     HttpRequestAction,
     Hypothesis,
@@ -41,7 +39,6 @@ from stateweaver.contracts import (
     QueueReorderAction,
     Relation,
     RelationKind,
-    ReplayOutcome,
     RequestedBy,
     RequesterType,
     RiskClass,
@@ -496,40 +493,6 @@ def test_evidence_requires_digest_and_rejects_traversal() -> None:
     payload["artifact_uri"] = "s3://artifacts/world/../secret"
     with pytest.raises(ValidationError, match="traversal"):
         EvidenceRecord.model_validate(payload)
-
-
-def test_confirmed_finding_requires_successful_replay() -> None:
-    oracle = OracleResult(
-        oracle_result_id="oracle_77",
-        oracle_type=OracleType.TENANT_ISOLATION,
-        world_id="world_23",
-        invariant="actor.tenant == resource.tenant",
-        result=OracleOutcome.VIOLATED,
-        observed={"actor_tenant": "tenant_a", "resource_tenant": "tenant_b"},
-        evidence_ids=("ev_http_812",),
-        deterministic=True,
-    )
-    with pytest.raises(ValidationError, match="successful pinned replay"):
-        Finding(
-            finding_id="finding_01",
-            title="stale authorization cache enables cross-tenant document read",
-            status=FindingStatus.VERIFIED,
-            chain_id="chain_09",
-            oracle_result_ids=(oracle.oracle_result_id,),
-            fidelity=fidelity(),
-        )
-
-    finding = Finding(
-        finding_id="finding_01",
-        title="stale authorization cache enables cross-tenant document read",
-        status=FindingStatus.VERIFIED,
-        chain_id="chain_09",
-        oracle_result_ids=(oracle.oracle_result_id,),
-        fidelity=fidelity(),
-        replay_run_id="replay_42",
-        replay_outcome=ReplayOutcome.REPRODUCED,
-    )
-    assert finding.replay_run_id == "replay_42"
 
 
 def test_event_payload_hash_is_verified() -> None:

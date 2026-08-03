@@ -41,7 +41,15 @@ lifecycle commits; the public world catalog is read-only, rejects metadata-only 
 and binds asynchronous commands to one event loop. The opt-in live workflow remains unexecuted.
 M5's synthetic authorization closure, M7's trusted-runner integrity, and M8's fixed API/browser
 contract have been adversarially hardened and pass their local gates. They remain synthetic
-prototypes, not release certification.
+prototypes, not release certification. M6 now has a fail-closed, content-addressed
+`RealityReplayReceipt`: bare replay IDs and claimed outcomes can no longer promote a `Finding`.
+The receipt binds scope/target/adapter locks, plan/root identity, repeated replay semantics,
+observed Oracle violations, negative controls, patch comparison, and the evidence manifest. It is
+an internal-coherence contract, not a Reality Broker signature or producer attestation. Its
+pre-receipt manifest excludes the Finding, receipt, final publication report, and attestation to
+avoid recursive identity. All consumers must revalidate serialized input rather than trust
+unchecked in-memory model instances. Until a trusted resolver exists, the contract rejects both
+reserved confirmed statuses even when a receipt is internally coherent.
 
 | Milestone | Auditable local status | Evidence |
 | --- | --- | --- |
@@ -51,7 +59,7 @@ prototypes, not release certification.
 | M3 Semantic Twin | Source + OTLP + state-delta flow passes | `packages/twin/`, `tests/integration/twin/` |
 | M4 Search | Offline 24 → 4 → 2 → 1 flow passes | `packages/search/`, `workflows/world/` |
 | M5 Chain Compiler | Three-fragment synthetic E2E; action/auth/effect/root/expiry closure hardened | `packages/compiler/`, `tests/integration/compiler/` |
-| M6 Proof Bundle | Foundation bundle and clean-install verifier pass | `packages/evidence/`, `apps/cli/` |
+| M6 Reality + Proof | Foundation verifier + typed Finding receipt gate pass; general broker absent | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
 | M7 StateChainBench | Trusted built-in synthetic runner hardened; not equal-work or public-certified | `benchmarks/statechainbench/` |
 | M8 Public UX | Read-only fixed API + four-workspace client pass local contract/browser QA | `apps/api/`, `apps/web/` |
 
@@ -108,6 +116,10 @@ execution path. Read [AGENTS.md](AGENTS.md), [SECURITY.md](SECURITY.md), and
 
 A StateWeaver finding is publishable only when the vulnerable build reproduces from a clean root,
 the deterministic oracle reports the invariant violation, negative controls do not violate it,
-and the same replay is blocked by the patched build. Every claim must link back to raw evidence.
+and the same replay is blocked by the patched build. A revalidated `RealityReplayReceipt` is
+necessary but deliberately insufficient for confirmed status; local synthetic results remain
+`SYNTHETIC_REPRODUCED`. Every claim must link back to raw evidence. Until a Reality Replay Broker
+resolves the receipt's digests against retained artifacts and authenticates its issuer,
+`REALITY_REPLAYED` and `PATCH_VERIFIED` remain fail-closed and M6 is not certified.
 
 Licensed under Apache-2.0.

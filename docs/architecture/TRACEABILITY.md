@@ -18,7 +18,7 @@ acceptance commands are intentionally local and do not require network access.
 | M3 — Security Semantic Twin | Exit flow passes locally; release certification pending | `packages/twin/`, source/OTel adapters, `tests/integration/twin/` |
 | M4 — Tiered Search Controller | Offline exit flow passes locally; materialized certification pending | `packages/search/`, `workflows/world/` |
 | M5 — Chain Compiler | Synthetic action/auth/effect/root/expiry closure hardened; release evidence pending | `packages/compiler/`, `tests/integration/compiler/` |
-| M6 — Reality Anchor + Proof Bundle | Foundation proof collector implemented; general broker pending | `packages/evidence/`, `apps/cli/` |
+| M6 — Reality Anchor + Proof Bundle | Typed Finding receipt gate + foundation collector implemented; general broker pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
 | M7 — StateChainBench | Trusted built-in synthetic runner hardened; equal-work/public audit pending | `benchmarks/statechainbench/` |
 | M8 — Web UI + Public Release | Fixed synthetic API/client and local browser QA pass; public release pending | `apps/api/`, `apps/web/` |
 
@@ -234,6 +234,7 @@ finding status machine, and Reality Proof Bundle.
 
 **Planned paths**
 
+- `packages/contracts/` (implemented receipt and finding status gate)
 - `packages/replay/` (extension)
 - `packages/evidence/`
 - `packages/reporting/`
@@ -242,7 +243,7 @@ finding status machine, and Reality Proof Bundle.
 **Planned acceptance command**
 
 ```powershell
-uv run pytest packages/replay/tests packages/evidence/tests packages/reporting/tests tests/e2e/proof_bundle -q
+uv run pytest packages/contracts/tests packages/replay/tests packages/evidence/tests packages/reporting/tests tests/e2e/proof_bundle -q
 ```
 
 **Exit criterion:** a separate clean machine can reproduce the finding from the bundle. The M0/M1
@@ -252,9 +253,23 @@ also re-executes the installed deterministic foundation and binds its exact sema
 installed source and Oracle bytes, and stable locked runtime dependency bytes. It still does not
 authenticate a producer or prove execution of producer-supplied JUnit by itself. Main-branch CI is
 configured to attest the exact proof manifest with GitHub Actions OIDC, but that trust root is not
-evidence until a public run succeeds and its attestation is retained. The general Reality Replay
-Broker, reporting layer, and portable M6 reproduction workflow remain absent, so M6 is
-**unimplemented beyond this foundation**.
+evidence until a public run succeeds and its attestation is retained.
+
+The core contract now rejects the former bare `replay_run_id + REPRODUCED` promotion path. A
+content-addressed `RealityReplayReceipt` models the necessary input for `REALITY_REPLAYED`, and
+`PATCH_VERIFIED` additionally models an exact `BLOCKED_BY_FIX` patched receipt. It binds the
+scope, target and adapter locks; chain, plan and clean root; at least two unique attempts with one
+semantic signature and trace hash; deterministic `OBSERVED + VIOLATED` Oracle results; non-vacuous
+`OBSERVED + SATISFIED` negative controls; and an evidence-manifest digest. All nested receipt
+objects are revalidated at the Finding promotion boundary, including Pydantic instances created
+without normal validation. `SYNTHETIC_REPRODUCED` is explicitly non-confirmed. Because the current
+repository has no trusted digest resolver or issuer, a self-issued receipt remains insufficient:
+the Finding validator rejects both reserved confirmed statuses after checking receipt coherence.
+
+This content hash proves internal coherence, not issuer identity or artifact existence. The general
+Reality Replay Broker, digest resolver, reporting layer, trusted issuance/attestation, and portable
+M6 reproduction workflow remain absent. M6 is therefore **partially implemented and not
+certified**. See `docs/architecture/M6_REALITY_RECEIPT.md` for the exact boundary.
 
 ## M7 — StateChainBench
 

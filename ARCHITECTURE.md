@@ -773,10 +773,14 @@ deterministic: true
 
 ## 5.5 Finding
 
+The YAML below is a conceptual projection, not a directly parseable payload; required receipt
+artifact bindings are intentionally elided and are defined by the versioned contracts.
+
 ```yaml
 finding_id: finding_01
 title: stale authorization cache enables cross-tenant document read
-status: REALITY_REPLAYED
+schema_version: "2.0"
+status: PATCH_VERIFIED
 chain_id: chain_09
 oracle_result_ids: [oracle_77]
 fidelity:
@@ -785,11 +789,38 @@ fidelity:
   cache: exact
   queue: partial
   timing: observed
-negative_controls:
-  - fresh_session_after_downgrade: blocked
-  - same_tenant_resource: expected_access
-patched_version:
-  replay_result: BLOCKED_BY_FIX
+reality_replay:
+  receipt_id: receipt.reality:0123456789abcdef01234567
+  receipt_hash: sha256:...
+  anchor_mode: source-backed
+  scope_id: scope_local_lab
+  scope_manifest_sha256: sha256:...
+  target_id: target_demo
+  target_version: vulnerable
+  target_lock_sha256: sha256:...
+  adapter_lock_sha256: sha256:...
+  chain_id: chain_09
+  plan_id: plan_09
+  plan_hash: sha256:...
+  root_seed_id: root_01
+  root_fingerprint: sha256:...
+  attempts:
+    - replay_run_id: replay_42
+      replay_outcome: REPRODUCED
+      semantic_signature: sha256:...
+      trace_hash: sha256:...
+    - replay_run_id: replay_43
+      replay_outcome: REPRODUCED
+      semantic_signature: sha256:...
+      trace_hash: sha256:...
+  oracle_results: [oracle_77_typed_result]
+  negative_controls: [fresh_session_control, same_tenant_control]
+  patched_version:
+    target_version: patched
+    replay_result: BLOCKED_BY_FIX
+    failed_step_id: step.07
+    failure_code: ORACLE_EXPECTATION_MISMATCH
+  pre_receipt_evidence_manifest_sha256: sha256:...
 ```
 
 ---
@@ -1274,7 +1305,9 @@ approvals
 ```text
 world_nodes.state_fingerprint + experiment_run_id unique
 all action execution requires policy_decision_id
-all confirmed findings require successful replay_run_id
+all confirmed findings require a valid content-addressed RealityReplayReceipt
+PATCH_VERIFIED findings require the same-plan patched replay to be BLOCKED_BY_FIX
+receipt digests must be resolved and attested by the Reality Replay Broker before promotion
 all artifacts require sha256
 all snapshots pin target version and adapter versions
 ```

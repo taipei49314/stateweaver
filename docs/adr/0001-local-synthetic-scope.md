@@ -195,7 +195,7 @@ Repository、fixtures、logs 與 evidence bundle 必須執行 secret scanning。
 | AGENT-01 | agent proposal 不能改 scope 或自行批准 | scope-escalation / approval-bypass tests |
 | LAB-01 | vulnerable mode 非預設且只使用合成 fixture | configuration + seed provenance test |
 | LAB-02 | patched 與 negative controls 阻擋同一安全違反 | Oracle differential E2E |
-| EVID-01 | mock/LLM text 不能產生 OBSERVED 或 confirmed finding | provenance/status-machine tests |
+| EVID-01 | mock/LLM text、裸 replay ID 或自稱成功的布林值不能產生 OBSERVED 或 confirmed finding | provenance/typed-receipt/status-machine tests |
 | CLEAN-01 | failure cleanup 後無跨 world／跨 run 污染 | contamination + idempotent cleanup tests |
 
 上述任一 Required invariant 失敗時，公開 Demo、release artifact 與 benchmark publication 均停止。

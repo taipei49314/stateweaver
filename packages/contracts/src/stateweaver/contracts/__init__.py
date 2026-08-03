@@ -46,10 +46,12 @@ from .enums import (
     FindingStatus,
     HttpMethod,
     HypothesisStatus,
+    NegativeControlKind,
     OracleOutcome,
     OracleType,
     ProvenanceKind,
     QueueOrder,
+    RealityAnchorMode,
     RelationKind,
     ReplayOutcome,
     RequesterType,
@@ -62,7 +64,14 @@ from .enums import (
 from .events import EventEnvelope
 from .evidence import EvidenceProducer, EvidenceRecord, TraceContext
 from .hypotheses import EstimatedCost, Hypothesis, PredictedBoundary
-from .oracles import Finding, NegativeControl, OracleResult, PatchedVersionReplay
+from .oracles import (
+    Finding,
+    NegativeControl,
+    OracleResult,
+    PatchedVersionReplay,
+    RealityReplayAttempt,
+    RealityReplayReceipt,
+)
 from .scope import (
     ScopeActions,
     ScopeIdentities,
@@ -143,6 +152,7 @@ __all__ = [
     "HypothesisStatus",
     "IdentityHandle",
     "NegativeControl",
+    "NegativeControlKind",
     "OracleOutcome",
     "OracleResult",
     "OracleType",
@@ -153,6 +163,9 @@ __all__ = [
     "QueueOrder",
     "QueueReleaseAction",
     "QueueReorderAction",
+    "RealityAnchorMode",
+    "RealityReplayAttempt",
+    "RealityReplayReceipt",
     "Relation",
     "RelationKind",
     "ReplayOutcome",

@@ -194,11 +194,25 @@ class HypothesisStatus(StrEnum):
     EXHAUSTED = "EXHAUSTED"
 
 
+class RealityAnchorMode(StrEnum):
+    URL_ONLY = "url-only"
+    CONNECTED_STAGING = "connected-staging"
+    SOURCE_BACKED = "source-backed"
+
+
+class NegativeControlKind(StrEnum):
+    FRESH_SESSION = "fresh-session"
+    SAME_TENANT = "same-tenant"
+    REMOVED_PRECONDITION = "removed-precondition"
+    ALTERNATE_ORDER = "alternate-order"
+
+
 class FindingStatus(StrEnum):
     CANDIDATE = "CANDIDATE"
     CHAIN_COMPILED = "CHAIN_COMPILED"
+    SYNTHETIC_REPRODUCED = "SYNTHETIC_REPRODUCED"
     REALITY_REPLAYED = "REALITY_REPLAYED"
-    VERIFIED = "VERIFIED"
+    PATCH_VERIFIED = "PATCH_VERIFIED"
     REJECTED = "REJECTED"
 
 
