@@ -27,7 +27,7 @@ from .models import (
     WorldPhase,
 )
 from .ports import EnvironmentAdapter
-from .store import WorldStore
+from .store import ReadOnlyWorldStore
 
 __all__ = [
     "FORKABLE_PHASES",
@@ -46,6 +46,7 @@ __all__ = [
     "LifecycleError",
     "OperationLimits",
     "OperationTimeout",
+    "ReadOnlyWorldStore",
     "ResourceQuotas",
     "RevisionConflict",
     "SnapshotManifest",
@@ -55,5 +56,4 @@ __all__ = [
     "WorldNamespace",
     "WorldNode",
     "WorldPhase",
-    "WorldStore",
 ]

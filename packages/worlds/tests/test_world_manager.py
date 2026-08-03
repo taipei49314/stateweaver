@@ -148,16 +148,11 @@ async def test_version_pinning_pruned_unschedulable_and_default_egress_denied() 
         await manager.fork(root.world_id, lineage_transition="transition:pin")
     # Lifecycle still observes its original pin and explicitly prohibits scheduling pruned worlds.
     adapter.pin = root.adapter
-    ghost = root.model_copy(
-        update={
-            "phase": WorldPhase.GHOST,
-            "world_id": "world:ghost",
-            "parent_world_id": root.world_id,
-            "lineage": ("transition:ghost",),
-            "environment": None,
-        }
+    ghost = await manager.create_ghost(
+        root.world_id,
+        lineage_transition="transition:ghost",
+        world_id="world:ghost",
     )
-    manager.store.add(ghost)
     await manager.transition(ghost.world_id, WorldPhase.PRUNED)
     assert not manager.schedulable(ghost.world_id)
     with pytest.raises(LifecycleError):
@@ -302,26 +297,23 @@ def test_models_are_frozen_closed_and_secret_values_do_not_serialize() -> None:
 
 
 @pytest.mark.asyncio
-async def test_store_revalidates_models_and_enforces_complete_lineage_prefix() -> None:
+async def test_manager_derives_complete_ghost_lineage_and_models_revalidate() -> None:
     adapter = InMemoryConformanceAdapter()
     manager = WorldManager(adapter)
     root = await manager.prepare(_target(), world_id="world:root")
     child = await manager.fork(
         root.world_id, lineage_transition="transition:child", world_id="world:child"
     )
-    forged = child.validated_copy(
-        world_id="world:forged",
-        parent_world_id=child.world_id,
-        phase=WorldPhase.GHOST,
-        lineage=("transition:forged",),
-        environment=None,
-        snapshot=None,
+    ghost = await manager.create_ghost(
+        child.world_id,
+        lineage_transition="transition:ghost",
+        world_id="world:derived-ghost",
     )
 
-    with pytest.raises(LifecycleError, match="complete parent transition prefix"):
-        manager.store.add(forged)
+    assert ghost.parent_world_id == child.world_id
+    assert ghost.lineage == (*child.lineage, "transition:ghost")
     with pytest.raises(ValidationError, match="active materialized"):
-        manager.store.replace(child.model_copy(update={"environment": None}))
+        child.model_copy(update={"environment": None}).revalidated()
 
 
 @pytest.mark.asyncio

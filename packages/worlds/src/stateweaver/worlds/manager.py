@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable
+from threading import Lock
 from uuid import uuid4
 
 from .models import (
@@ -28,7 +29,7 @@ from .models import (
     WorldPhase,
 )
 from .ports import EnvironmentAdapter
-from .store import WorldStore, _WorldReservation
+from .store import ReadOnlyWorldStore, _validated_world_id, _WorldReservation, _WorldStore
 
 
 class WorldManager:
@@ -39,14 +40,38 @@ class WorldManager:
     ) -> None:
         self._adapter = adapter
         self._limits = limits or OperationLimits()
-        self.store = WorldStore()
+        self._store = _WorldStore()
+        self._store_writer = self._store._open_manager_writer()
+        self._worlds = ReadOnlyWorldStore(self._store)
         self._capabilities = self._validated_capabilities(adapter.capabilities())
         self._world_gates: dict[str, asyncio.Lock] = {}
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._event_loop_guard = Lock()
+
+    @property
+    def worlds(self) -> ReadOnlyWorldStore:
+        """Return the live immutable query catalog for retained worlds."""
+
+        return self._worlds
+
+    @property
+    def store(self) -> ReadOnlyWorldStore:
+        """Compatibility alias for the read-only world catalog."""
+
+        return self._worlds
+
+    def _bind_running_loop(self) -> None:
+        current = asyncio.get_running_loop()
+        with self._event_loop_guard:
+            if self._event_loop is None:
+                self._event_loop = current
+            elif self._event_loop is not current:
+                raise LifecycleError("world manager is bound to a different event loop")
 
     def _world_gate(self, world_id: str) -> asyncio.Lock:
         """Return the stable admission gate for one retained world identity."""
 
-        self.store.get(world_id)
+        self._store.get(world_id)
         gate = self._world_gates.get(world_id)
         if gate is None:
             gate = asyncio.Lock()
@@ -123,7 +148,7 @@ class WorldManager:
             await self._cleanup(environment)
         except BaseException as cleanup_error:
             raise CleanupError(primary, cleanup_error) from primary
-        self.store._release_world(reservation)
+        self._store_writer.release_world(reservation)
 
     def _validate_snapshot(
         self,
@@ -142,8 +167,11 @@ class WorldManager:
 
     async def prepare(self, target: TargetSpec, *, world_id: str | None = None) -> WorldNode:
         """Prepare and snapshot a clean root; no node escapes a failed setup."""
-        resolved_world_id = world_id or f"world:{uuid4().hex}"
-        reservation = self.store._reserve_world(resolved_world_id)
+        resolved_world_id = f"world:{uuid4().hex}" if world_id is None else world_id
+        resolved_world_id = _validated_world_id(resolved_world_id)
+        self._bind_running_loop()
+        reservation = self._store_writer.reserve_world(resolved_world_id)
+        resolved_world_id = reservation.world_id
         environment: EnvironmentHandle | None = None
         environment_reserved = False
         try:
@@ -152,9 +180,9 @@ class WorldManager:
             )
             environment = self._as_handle(raw_environment)
             self._check_pin(environment.adapter)
-            self.store._claim_environment(reservation, environment)
+            self._store_writer.claim_environment(reservation, environment)
             environment_reserved = True
-            self.store._validate_reserved_namespace(reservation)
+            self._store_writer.validate_reserved_namespace(reservation)
             raw_snapshot = await self._bounded(
                 self._adapter.snapshot(environment), self._limits.snapshot_seconds
             )
@@ -173,17 +201,56 @@ class WorldManager:
                 environment=environment,
                 snapshot=snapshot,
             )
-            return self.store.add(node, reservation=reservation)
+            return self._store_writer.add(node, reservation=reservation)
         except BaseException as primary:
             if environment_reserved and environment is not None:
                 await self._cleanup_reserved_or_raise(reservation, environment, primary)
             else:
-                self.store._release_world(reservation)
+                self._store_writer.release_world(reservation)
+            raise
+
+    async def create_ghost(
+        self,
+        parent_world_id: str,
+        *,
+        lineage_transition: str,
+        world_id: str | None = None,
+    ) -> WorldNode:
+        """Create a non-materialized child through the same world-ID admission path."""
+
+        parent_world_id = _validated_world_id(parent_world_id)
+        resolved_world_id = f"world:{uuid4().hex}" if world_id is None else world_id
+        resolved_world_id = _validated_world_id(resolved_world_id)
+        self._store.get(parent_world_id)
+        self._bind_running_loop()
+        reservation = self._store_writer.reserve_world(resolved_world_id)
+        resolved_world_id = reservation.world_id
+        try:
+            async with self._world_gate(parent_world_id):
+                parent = self._store.get(parent_world_id)
+                self._check_pin(parent.adapter)
+                node = WorldNode(
+                    world_id=resolved_world_id,
+                    parent_world_id=parent.world_id,
+                    root_snapshot_id=parent.root_snapshot_id,
+                    target=parent.target,
+                    adapter=parent.adapter,
+                    capability_manifest=parent.capability_manifest,
+                    phase=WorldPhase.GHOST,
+                    state_fingerprint=parent.state_fingerprint,
+                    lineage=(*parent.lineage, lineage_transition),
+                )
+                return self._store_writer.add(node, reservation=reservation)
+        except BaseException:
+            self._store_writer.release_world(reservation)
             raise
 
     async def snapshot(self, world_id: str) -> SnapshotManifest:
+        world_id = _validated_world_id(world_id)
+        self._store.get(world_id)
+        self._bind_running_loop()
         async with self._world_gate(world_id):
-            node = self.store.get(world_id)
+            node = self._store.get(world_id)
             if node.destroyed or node.environment is None:
                 raise LifecycleError("world has no live environment")
             self._check_pin(node.adapter)
@@ -199,17 +266,17 @@ class WorldManager:
                 try:
                     await self._cleanup(node.environment)
                 except BaseException as cleanup_error:
-                    self.store.replace(
+                    self._store_writer.replace(
                         node.validated_copy(phase=WorldPhase.BLOCKED),
                         expected_revision=node.revision,
                     )
                     raise CleanupError(primary, cleanup_error) from primary
-                self.store.replace(
+                self._store_writer.replace(
                     node.validated_copy(destroyed=True, environment=None),
                     expected_revision=node.revision,
                 )
                 raise
-            self.store.replace(
+            self._store_writer.replace(
                 node.validated_copy(
                     snapshot=snapshot, state_fingerprint=snapshot.state_fingerprint
                 ),
@@ -220,13 +287,18 @@ class WorldManager:
     async def fork(
         self, parent_world_id: str, *, lineage_transition: str, world_id: str | None = None
     ) -> WorldNode:
-        resolved_world_id = world_id or f"world:{uuid4().hex}"
-        reservation = self.store._reserve_world(resolved_world_id)
+        parent_world_id = _validated_world_id(parent_world_id)
+        resolved_world_id = f"world:{uuid4().hex}" if world_id is None else world_id
+        resolved_world_id = _validated_world_id(resolved_world_id)
+        self._store.get(parent_world_id)
+        self._bind_running_loop()
+        reservation = self._store_writer.reserve_world(resolved_world_id)
+        resolved_world_id = reservation.world_id
         environment: EnvironmentHandle | None = None
         environment_reserved = False
         try:
             async with self._world_gate(parent_world_id):
-                parent = self.store.get(parent_world_id)
+                parent = self._store.get(parent_world_id)
                 if (
                     parent.destroyed
                     or parent.snapshot is None
@@ -239,9 +311,9 @@ class WorldManager:
                 )
                 environment = self._as_handle(raw_environment)
                 self._check_pin(environment.adapter)
-                self.store._claim_environment(reservation, environment)
+                self._store_writer.claim_environment(reservation, environment)
                 environment_reserved = True
-                self.store._validate_reserved_namespace(reservation)
+                self._store_writer.validate_reserved_namespace(reservation)
                 raw_snapshot = await self._bounded(
                     self._adapter.snapshot(environment), self._limits.snapshot_seconds
                 )
@@ -262,20 +334,23 @@ class WorldManager:
                     environment=environment,
                     snapshot=snapshot,
                 )
-                return self.store.add(node, reservation=reservation)
+                return self._store_writer.add(node, reservation=reservation)
         except BaseException as primary:
             if environment_reserved and environment is not None:
                 await self._cleanup_reserved_or_raise(reservation, environment, primary)
             else:
-                self.store._release_world(reservation)
+                self._store_writer.release_world(reservation)
             raise
 
     async def restore(self, world_id: str, snapshot: SnapshotManifest) -> WorldNode:
+        world_id = _validated_world_id(world_id)
+        self._store.get(world_id)
+        snapshot = self._as_snapshot(snapshot)
+        self._bind_running_loop()
         async with self._world_gate(world_id):
-            node = self.store.get(world_id)
+            node = self._store.get(world_id)
             if node.destroyed or node.environment is None or node.phase is WorldPhase.PRUNED:
                 raise LifecycleError("world is unavailable for restore")
-            snapshot = self._as_snapshot(snapshot)
             self._check_pin(node.adapter)
             self._validate_snapshot(snapshot, node.target, node.environment, node.root_snapshot_id)
             try:
@@ -296,17 +371,17 @@ class WorldManager:
                 try:
                     await self._cleanup(node.environment)
                 except BaseException as cleanup_error:
-                    self.store.replace(
+                    self._store_writer.replace(
                         node.validated_copy(phase=WorldPhase.BLOCKED),
                         expected_revision=node.revision,
                     )
                     raise CleanupError(primary, cleanup_error) from primary
-                self.store.replace(
+                self._store_writer.replace(
                     node.validated_copy(destroyed=True, environment=None),
                     expected_revision=node.revision,
                 )
                 raise
-            return self.store.replace(
+            return self._store_writer.replace(
                 node.validated_copy(
                     snapshot=restored, state_fingerprint=restored.state_fingerprint
                 ),
@@ -314,17 +389,20 @@ class WorldManager:
             )
 
     async def destroy(self, world_id: str) -> WorldNode:
+        world_id = _validated_world_id(world_id)
+        self._store.get(world_id)
+        self._bind_running_loop()
         async with self._world_gate(world_id):
-            node = self.store.get(world_id)
+            node = self._store.get(world_id)
             if node.destroyed:
                 return node
             if node.environment is None:
-                return self.store.replace(
+                return self._store_writer.replace(
                     node.validated_copy(destroyed=True), expected_revision=node.revision
                 )
             self._check_pin(node.adapter)
             await self._cleanup(node.environment)
-            return self.store.replace(
+            return self._store_writer.replace(
                 node.validated_copy(destroyed=True, environment=None),
                 expected_revision=node.revision,
             )
@@ -332,18 +410,21 @@ class WorldManager:
     async def transition(self, world_id: str, destination: WorldPhase) -> WorldNode:
         """Apply one legal phase change after prior operations on this world finish."""
 
+        world_id = _validated_world_id(world_id)
+        self._store.get(world_id)
+        self._bind_running_loop()
         async with self._world_gate(world_id):
-            node = self.store.get(world_id)
+            node = self._store.get(world_id)
             if node.destroyed:
                 raise LifecycleError("destroyed worlds cannot transition")
             if destination not in LEGAL_TRANSITIONS[node.phase]:
                 raise LifecycleError("illegal world lifecycle transition")
-            return self.store.replace(
+            return self._store_writer.replace(
                 node.validated_copy(phase=destination), expected_revision=node.revision
             )
 
     def schedulable(self, world_id: str) -> bool:
-        node = self.store.get(world_id)
+        node = self._store.get(world_id)
         return not node.destroyed and node.phase in {
             WorldPhase.GHOST,
             WorldPhase.REPLAY,

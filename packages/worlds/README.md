@@ -16,6 +16,18 @@ through a stable per-world gate and commit against a monotonic node revision, wh
 different worlds remain independent. This prevents an adapter call that resumes late from
 overwriting a newer lifecycle phase.
 
+`WorldManager` is the sole lifecycle writer. Its private store issues one opaque writer capability;
+callers receive the live `ReadOnlyWorldStore` catalog through `manager.worlds` (and the compatible
+`manager.store` alias), with only `get`, `all`, and `canonical_world_id`. Direct phase writes and
+metadata-only destruction therefore cannot bypass manager admission or adapter cleanup. Ghost
+children enter through `create_ghost`, which derives parent identity and lineage without touching an
+adapter. Every asynchronous command binds the manager to one event loop, and caller-supplied world
+IDs are fully validated before any adapter call.
+
+API boundary change: the former mutable `WorldStore` export and `manager.store.add/replace` surface
+were removed in this pre-alpha contract. Use `manager.worlds` for queries and `WorldManager`
+lifecycle commands for every write; `manager.store` remains only as a read-compatible alias.
+
 Root preparation and child forks reserve their world identity before the first adapter call. A
 returned environment must first claim a unique identifier and opaque ownership reference, then pass
 isolation checks across all six namespace components before it can be snapshotted or published.

@@ -351,31 +351,19 @@ async def test_distinct_prepare_reservations_do_not_serialize_snapshot_operation
 
 
 @pytest.mark.asyncio
-async def test_store_replace_cannot_materialize_a_ghost_without_reservation_authority() -> None:
+async def test_read_only_world_store_has_no_materialization_authority() -> None:
     adapter = _ReservationAdversarialAdapter()
     manager = WorldManager(adapter)
     root = await manager.prepare(_target(), world_id="world:bypass-root")
-    unreserved_environment = await adapter.prepare(_target())
-    unreserved_snapshot = await adapter.snapshot(unreserved_environment)
-    ghost = WorldNode(
+    ghost = await manager.create_ghost(
+        root.world_id,
+        lineage_transition="transition:bypass-ghost",
         world_id="world:bypass-ghost",
-        parent_world_id=None,
-        root_snapshot_id=unreserved_snapshot.root_snapshot_id,
-        target=root.target,
-        adapter=root.adapter,
-        capability_manifest=root.capability_manifest,
-        phase=WorldPhase.GHOST,
-        state_fingerprint=unreserved_snapshot.state_fingerprint,
-        lineage=(),
-    )
-    stored = manager.store.add(ghost)
-    materialized = stored.validated_copy(
-        phase=WorldPhase.ACTIVE,
-        environment=unreserved_environment,
-        snapshot=unreserved_snapshot,
     )
 
-    with pytest.raises(LifecycleError):
-        manager.store.replace(materialized, expected_revision=stored.revision)
-
-    assert manager.store.get(stored.world_id) == stored
+    assert manager.store is manager.worlds
+    assert manager.worlds.get(ghost.world_id) == ghost
+    assert ghost.environment is None
+    assert ghost.snapshot is None
+    assert not hasattr(manager.worlds, "add")
+    assert not hasattr(manager.worlds, "replace")

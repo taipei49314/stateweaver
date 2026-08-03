@@ -4,7 +4,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import EnvironmentHandle, LifecycleError, RevisionConflict, WorldNode
+from pydantic import TypeAdapter, ValidationError
+
+from .models import (
+    EnvironmentHandle,
+    LifecycleError,
+    NonEmpty,
+    RevisionConflict,
+    WorldNode,
+)
+
+_WORLD_ID_ADAPTER = TypeAdapter(NonEmpty)
+
+
+def _validated_world_id(world_id: object) -> str:
+    try:
+        return _WORLD_ID_ADAPTER.validate_python(world_id, strict=True)
+    except ValidationError as error:
+        raise LifecycleError("world identifier is invalid") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,13 +37,25 @@ class _PendingWorld:
     environment: EnvironmentHandle | None = None
 
 
-class WorldStore:
-    """Store immutable nodes while deriving indexes from their current live shape."""
+class _WorldStore:
+    """Manager-owned storage; mutation is available only through its issued writer."""
 
     def __init__(self) -> None:
         self._nodes: dict[str, WorldNode] = {}
         self._fingerprints: dict[tuple[str, str, str, str, str, str], str] = {}
         self._pending_worlds: dict[str, _PendingWorld] = {}
+        self.__writer_authority = object()
+        self.__writer_issued = False
+
+    def _open_manager_writer(self) -> _WorldStoreWriter:
+        if self.__writer_issued:
+            raise LifecycleError("world store writer was already issued")
+        self.__writer_issued = True
+        return _WorldStoreWriter(self, self.__writer_authority)
+
+    def _require_writer(self, authority: object) -> None:
+        if authority is not self.__writer_authority:
+            raise LifecycleError("world store mutation authority is invalid")
 
     @staticmethod
     def _fingerprint_key(node: WorldNode) -> tuple[str, str, str, str, str, str]:
@@ -62,7 +91,7 @@ class WorldStore:
     ) -> None:
         if node.destroyed or node.environment is None:
             return
-        self.assert_environment_unassigned(node.environment, excluding=excluding)
+        self._assert_environment_unassigned(node.environment, excluding=excluding)
 
     @staticmethod
     def _assert_environment_identity_disjoint(
@@ -89,7 +118,7 @@ class WorldStore:
         cls._assert_environment_identity_disjoint(candidate, existing)
         cls._assert_environment_namespace_disjoint(candidate, existing)
 
-    def assert_environment_unassigned(
+    def _assert_environment_unassigned(
         self, candidate: EnvironmentHandle, *, excluding: str | None = None
     ) -> None:
         for existing_id, existing in self._nodes.items():
@@ -101,11 +130,11 @@ class WorldStore:
                 continue
             self._assert_environment_disjoint(candidate, pending.environment)
 
-    def _reserve_world(self, world_id: str) -> _WorldReservation:
+    def _reserve_world(self, world_id: object, *, authority: object) -> _WorldReservation:
         """Atomically reserve an unpublished identity before invoking an adapter."""
 
-        if not isinstance(world_id, str) or not world_id.strip():
-            raise LifecycleError("world identifier must be non-empty")
+        self._require_writer(authority)
+        world_id = _validated_world_id(world_id)
         if world_id in self._nodes or world_id in self._pending_worlds:
             raise LifecycleError("world identifier already exists or is reserved")
         reservation = _WorldReservation(world_id=world_id)
@@ -119,10 +148,15 @@ class WorldStore:
         return pending
 
     def _claim_environment(
-        self, reservation: _WorldReservation, environment: EnvironmentHandle
+        self,
+        reservation: _WorldReservation,
+        environment: EnvironmentHandle,
+        *,
+        authority: object,
     ) -> None:
         """Claim unique adapter ownership before any cleanup authority is granted."""
 
+        self._require_writer(authority)
         pending = self._pending_for(reservation)
         if pending.environment is not None:
             raise LifecycleError("world reservation already owns an environment")
@@ -136,9 +170,12 @@ class WorldStore:
             self._assert_environment_identity_disjoint(environment, other.environment)
         pending.environment = environment
 
-    def _validate_reserved_namespace(self, reservation: _WorldReservation) -> None:
+    def _validate_reserved_namespace(
+        self, reservation: _WorldReservation, *, authority: object
+    ) -> None:
         """Reject namespace overlap after the candidate has safe cleanup ownership."""
 
+        self._require_writer(authority)
         pending = self._pending_for(reservation)
         if pending.environment is None:
             raise LifecycleError("world reservation has no environment")
@@ -152,9 +189,10 @@ class WorldStore:
                 continue
             self._assert_environment_namespace_disjoint(candidate, other.environment)
 
-    def _release_world(self, reservation: _WorldReservation) -> None:
+    def _release_world(self, reservation: _WorldReservation, *, authority: object) -> None:
         """Release after no handle was bound or after its cleanup succeeded."""
 
+        self._require_writer(authority)
         self._pending_for(reservation)
         del self._pending_worlds[reservation.world_id]
 
@@ -187,22 +225,24 @@ class WorldStore:
         self._nodes = rebuilt
         self._fingerprints = fingerprints
 
-    def add(self, node: WorldNode, *, reservation: _WorldReservation | None = None) -> WorldNode:
+    def _add(
+        self,
+        node: WorldNode,
+        *,
+        reservation: _WorldReservation,
+        authority: object,
+    ) -> WorldNode:
+        self._require_writer(authority)
         node = node.revalidated()
         if node.world_id in self._nodes:
             raise LifecycleError("world identifier already exists")
-        pending = self._pending_worlds.get(node.world_id)
+        pending = self._pending_for(reservation)
+        if reservation.world_id != node.world_id:
+            raise LifecycleError("world reservation does not match the published world")
         if node.environment is None:
-            if reservation is not None:
-                raise LifecycleError("an environment reservation cannot publish a ghost world")
-            if pending is not None:
-                raise LifecycleError("world identifier is reserved")
+            if pending.environment is not None:
+                raise LifecycleError("a ghost world cannot consume an environment reservation")
         else:
-            if reservation is None:
-                raise LifecycleError("materialized worlds require an active reservation")
-            pending = self._pending_for(reservation)
-            if reservation.world_id != node.world_id:
-                raise LifecycleError("world reservation does not match the published world")
             if pending.environment != node.environment:
                 raise LifecycleError("world reservation does not own the published environment")
         if node.revision != 0:
@@ -211,11 +251,17 @@ class WorldStore:
         self._assert_unique_live_environment(node, excluding=node.world_id)
         self._nodes[node.world_id] = node
         self._rebuild_indexes()
-        if reservation is not None:
-            del self._pending_worlds[reservation.world_id]
+        del self._pending_worlds[reservation.world_id]
         return self._nodes[node.world_id]
 
-    def replace(self, node: WorldNode, *, expected_revision: int | None = None) -> WorldNode:
+    def _replace(
+        self,
+        node: WorldNode,
+        *,
+        expected_revision: int | None = None,
+        authority: object,
+    ) -> WorldNode:
+        self._require_writer(authority)
         node = node.revalidated()
         if node.world_id not in self._nodes:
             raise LifecycleError("unknown world")
@@ -262,3 +308,53 @@ class WorldStore:
 
     def all(self) -> tuple[WorldNode, ...]:
         return tuple(self._nodes.values())
+
+
+class _WorldStoreWriter:
+    """Opaque manager capability for all mutable store operations."""
+
+    __slots__ = ("__authority", "__store")
+
+    def __init__(self, store: _WorldStore, authority: object) -> None:
+        self.__store = store
+        self.__authority = authority
+
+    def reserve_world(self, world_id: object) -> _WorldReservation:
+        return self.__store._reserve_world(world_id, authority=self.__authority)
+
+    def claim_environment(
+        self, reservation: _WorldReservation, environment: EnvironmentHandle
+    ) -> None:
+        self.__store._claim_environment(reservation, environment, authority=self.__authority)
+
+    def validate_reserved_namespace(self, reservation: _WorldReservation) -> None:
+        self.__store._validate_reserved_namespace(reservation, authority=self.__authority)
+
+    def release_world(self, reservation: _WorldReservation) -> None:
+        self.__store._release_world(reservation, authority=self.__authority)
+
+    def add(self, node: WorldNode, *, reservation: _WorldReservation) -> WorldNode:
+        return self.__store._add(node, reservation=reservation, authority=self.__authority)
+
+    def replace(self, node: WorldNode, *, expected_revision: int | None = None) -> WorldNode:
+        return self.__store._replace(
+            node, expected_revision=expected_revision, authority=self.__authority
+        )
+
+
+class ReadOnlyWorldStore:
+    """Live query facade that deliberately exposes no lifecycle mutation methods."""
+
+    __slots__ = ("__store",)
+
+    def __init__(self, store: _WorldStore) -> None:
+        self.__store = store
+
+    def get(self, world_id: str) -> WorldNode:
+        return self.__store.get(world_id)
+
+    def canonical_world_id(self, fingerprint: str) -> str | None:
+        return self.__store.canonical_world_id(fingerprint)
+
+    def all(self) -> tuple[WorldNode, ...]:
+        return self.__store.all()

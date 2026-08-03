@@ -8,7 +8,6 @@ import pytest
 from stateweaver.worlds import (
     EnvironmentHandle,
     LifecycleError,
-    RevisionConflict,
     SnapshotManifest,
     TargetSpec,
     WorldError,
@@ -319,20 +318,15 @@ async def test_failed_or_cancelled_lifecycle_operation_releases_world_admission(
 
 
 @pytest.mark.asyncio
-async def test_store_rejects_a_stale_revision_without_overwriting_the_current_node() -> None:
+async def test_manager_commands_commit_monotonic_world_revisions() -> None:
     adapter = _AdversarialAdapter()
     manager = WorldManager(adapter)
     original = await manager.prepare(_target(), world_id="world:cas")
 
-    committed = manager.store.replace(
-        original.validated_copy(phase=WorldPhase.FROZEN),
-        expected_revision=original.revision,
-    )
-    assert committed.revision == original.revision + 1
+    await manager.snapshot(original.world_id)
+    snapshotted = manager.worlds.get(original.world_id)
+    committed = await manager.transition(original.world_id, WorldPhase.FROZEN)
 
-    with pytest.raises(RevisionConflict, match="revision"):
-        manager.store.replace(original, expected_revision=original.revision)
-
-    current = manager.store.get(original.world_id)
-    assert current == committed
-    assert current.phase is WorldPhase.FROZEN
+    assert snapshotted.revision == original.revision + 1
+    assert committed.revision == snapshotted.revision + 1
+    assert manager.worlds.get(original.world_id) == committed

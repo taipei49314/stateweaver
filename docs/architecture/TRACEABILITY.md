@@ -126,19 +126,23 @@ test now uses four-way barriers to prove that separate world creation and snapsh
 at the runner boundary. `WorldManager` holds one stable asynchronous admission gate per retained
 world: snapshot, restore, destroy, transition, and parent-fork operations read and commit entirely
 inside that gate, while distinct worlds continue to enter adapters concurrently. Each immutable
-`WorldNode` also carries a monotonic revision, and `WorldStore` rejects compare-and-swap commits
-based on an older revision. Before any prepare/fork adapter call, `WorldStore` now reserves the new
-world identity; before snapshot or publication, it claims a unique returned environment ID/opaque
-ownership reference and then validates all six namespace components against both live and pending
-worlds. Identity collisions are rejected without ambiguous cleanup; uniquely owned namespace losers
-are cleaned up. Successful cleanup releases the reservation, while cleanup failure retains a
-quarantine entry. Deterministic adversarial tests cover the former phase-regression race, same-world
-serialization, different-world
-overlap, snapshot/restore versus destroy ordering, duplicate IDs before adapter entry, pending
-handle/namespace collisions, winner commits during loser cleanup, cross-parent child collisions,
-cleanup quarantine, unreserved ghost-materialization rejection, disjoint prepare parallelism,
-failure/cancellation gate release, and stale-revision rejection. Adapter tests add
-identity-reservation collisions, destroy-versus-waiter revalidation, fork cancellation,
+`WorldNode` also carries a monotonic revision, and the manager-owned store rejects compare-and-swap
+commits based on an older revision. The store issues exactly one opaque writer capability to its
+manager; callers receive a `ReadOnlyWorldStore` query facade, so phase changes and destruction cannot
+bypass lifecycle admission or adapter cleanup. All asynchronous manager commands bind to one event
+loop, and caller-supplied world IDs are fully validated before adapter entry. Before any
+prepare/fork/create-ghost operation, the writer reserves the new world identity; before materialized
+snapshot or publication, it claims a unique returned environment ID/opaque ownership reference and
+then validates all six namespace components against both live and pending worlds. Identity
+collisions are rejected without ambiguous cleanup; uniquely owned namespace losers are cleaned up.
+Successful cleanup releases the reservation, while cleanup failure retains a quarantine entry.
+Deterministic adversarial tests cover the former phase-regression race, same-world serialization,
+different-world overlap, snapshot/restore versus destroy ordering, duplicate and malformed IDs
+before adapter entry, read-only mutation denial, metadata-only destroy denial, cross-loop rejection,
+pending handle/namespace collisions, winner commits during loser cleanup, cross-parent child
+collisions, cleanup quarantine, typed ghost creation, disjoint prepare parallelism,
+failure/cancellation gate release, writer capability checks, and stale-revision rejection. Adapter
+tests add identity-reservation collisions, destroy-versus-waiter revalidation, fork cancellation,
 cross-source restore rejection, and cancellation after destructive restore commits. No Docker host
 was available, so image build/run, genuinely parallel Compose subprocesses, and live cross-world
 contamination checks remain unproved. M2 is therefore **not certified**.

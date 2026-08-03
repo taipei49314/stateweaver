@@ -36,7 +36,9 @@ runner overlap without permitting same-world races. `WorldManager` linearizes sn
 destroy, transition, and parent-fork admission per world, while monotonic revisions reject stale
 commits. Pending world/environment reservations also close the pre-publication admission race:
 duplicate or overlapping handles cannot reach snapshot or let a losing operation destroy the
-winner, while cleanup failures remain quarantined. The opt-in live workflow remains unexecuted.
+winner, while cleanup failures remain quarantined. A single private store writer now owns all
+lifecycle commits; the public world catalog is read-only, rejects metadata-only cleanup bypasses,
+and binds asynchronous commands to one event loop. The opt-in live workflow remains unexecuted.
 M5's synthetic authorization closure, M7's trusted-runner integrity, and M8's fixed API/browser
 contract have been adversarially hardened and pass their local gates. They remain synthetic
 prototypes, not release certification.
@@ -45,7 +47,7 @@ prototypes, not release certification.
 | --- | --- | --- |
 | M0 Contracts + Lab | Foundation proof passes; release audit pending | `packages/contracts/`, `labs/multitenant-saas/` |
 | M1 Deterministic Replay | Five-run clean-root differential passes | `packages/replay/`, `apps/cli/` |
-| M2 World Engine | Archive + per-world concurrency pass; live Docker/provider proof absent | `packages/worlds/`, `tests/integration/worlds/`, adapter `PARTIAL` |
+| M2 World Engine | Archive + lifecycle authority/concurrency pass; live Docker/provider proof absent | `packages/worlds/`, `tests/integration/worlds/`, adapter `PARTIAL` |
 | M3 Semantic Twin | Source + OTLP + state-delta flow passes | `packages/twin/`, `tests/integration/twin/` |
 | M4 Search | Offline 24 → 4 → 2 → 1 flow passes | `packages/search/`, `workflows/world/` |
 | M5 Chain Compiler | Three-fragment synthetic E2E; action/auth/effect/root/expiry closure hardened | `packages/compiler/`, `tests/integration/compiler/` |
