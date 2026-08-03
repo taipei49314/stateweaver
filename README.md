@@ -34,7 +34,9 @@ partial: its content-backed six-component synthetic archive protocol passes emul
 live Docker or real-provider snapshot proof exists. Per-world lifecycle gates now prove four-way
 runner overlap without permitting same-world races. `WorldManager` linearizes snapshot, restore,
 destroy, transition, and parent-fork admission per world, while monotonic revisions reject stale
-commits; the opt-in live workflow remains unexecuted.
+commits. Pending world/environment reservations also close the pre-publication admission race:
+duplicate or overlapping handles cannot reach snapshot or let a losing operation destroy the
+winner, while cleanup failures remain quarantined. The opt-in live workflow remains unexecuted.
 M5's synthetic authorization closure, M7's trusted-runner integrity, and M8's fixed API/browser
 contract have been adversarially hardened and pass their local gates. They remain synthetic
 prototypes, not release certification.

@@ -16,4 +16,14 @@ through a stable per-world gate and commit against a monotonic node revision, wh
 different worlds remain independent. This prevents an adapter call that resumes late from
 overwriting a newer lifecycle phase.
 
+Root preparation and child forks reserve their world identity before the first adapter call. A
+returned environment must first claim a unique identifier and opaque ownership reference, then pass
+isolation checks across all six namespace components before it can be snapshotted or published.
+Cleanup releases that reservation only after destruction succeeds; cleanup failure retains a
+quarantine entry so an uncertain environment cannot be reassigned. An ID/opaque collision is
+rejected without destroying the ambiguous handle, while a uniquely owned namespace-overlap loser is
+cleaned up without touching or blocking winner commits. Once published, a world cannot attach or
+switch environments through a store replacement. Disjoint reservations still execute snapshots
+concurrently.
+
 Run the focused suite from this directory with `pytest`.

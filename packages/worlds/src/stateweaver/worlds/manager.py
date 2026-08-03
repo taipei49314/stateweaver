@@ -28,7 +28,7 @@ from .models import (
     WorldPhase,
 )
 from .ports import EnvironmentAdapter
-from .store import WorldStore
+from .store import WorldStore, _WorldReservation
 
 
 class WorldManager:
@@ -111,11 +111,19 @@ class WorldManager:
     async def _cleanup(self, env: EnvironmentHandle) -> None:
         await self._bounded(self._adapter.destroy(env), self._limits.destroy_seconds)
 
-    async def _cleanup_or_raise(self, env: EnvironmentHandle, primary: BaseException) -> None:
+    async def _cleanup_reserved_or_raise(
+        self,
+        reservation: _WorldReservation,
+        environment: EnvironmentHandle,
+        primary: BaseException,
+    ) -> None:
+        """Release admission only after cleanup; failed cleanup stays quarantined."""
+
         try:
-            await self._cleanup(env)
+            await self._cleanup(environment)
         except BaseException as cleanup_error:
             raise CleanupError(primary, cleanup_error) from primary
+        self.store._release_world(reservation)
 
     def _validate_snapshot(
         self,
@@ -134,23 +142,26 @@ class WorldManager:
 
     async def prepare(self, target: TargetSpec, *, world_id: str | None = None) -> WorldNode:
         """Prepare and snapshot a clean root; no node escapes a failed setup."""
-        raw_environment = await self._bounded(
-            self._adapter.prepare(target), self._limits.prepare_seconds
-        )
+        resolved_world_id = world_id or f"world:{uuid4().hex}"
+        reservation = self.store._reserve_world(resolved_world_id)
         environment: EnvironmentHandle | None = None
-        admitted = False
+        environment_reserved = False
         try:
+            raw_environment = await self._bounded(
+                self._adapter.prepare(target), self._limits.prepare_seconds
+            )
             environment = self._as_handle(raw_environment)
             self._check_pin(environment.adapter)
-            self.store.assert_environment_unassigned(environment)
-            admitted = True
+            self.store._claim_environment(reservation, environment)
+            environment_reserved = True
+            self.store._validate_reserved_namespace(reservation)
             raw_snapshot = await self._bounded(
                 self._adapter.snapshot(environment), self._limits.snapshot_seconds
             )
             snapshot = self._as_snapshot(raw_snapshot)
             self._validate_snapshot(snapshot, target, environment)
             node = WorldNode(
-                world_id=world_id or f"world:{uuid4().hex}",
+                world_id=resolved_world_id,
                 parent_world_id=None,
                 root_snapshot_id=snapshot.root_snapshot_id,
                 target=target,
@@ -162,10 +173,12 @@ class WorldManager:
                 environment=environment,
                 snapshot=snapshot,
             )
-            return self.store.add(node)
+            return self.store.add(node, reservation=reservation)
         except BaseException as primary:
-            if admitted and environment is not None:
-                await self._cleanup_or_raise(environment, primary)
+            if environment_reserved and environment is not None:
+                await self._cleanup_reserved_or_raise(reservation, environment, primary)
+            else:
+                self.store._release_world(reservation)
             raise
 
     async def snapshot(self, world_id: str) -> SnapshotManifest:
@@ -207,21 +220,28 @@ class WorldManager:
     async def fork(
         self, parent_world_id: str, *, lineage_transition: str, world_id: str | None = None
     ) -> WorldNode:
-        async with self._world_gate(parent_world_id):
-            parent = self.store.get(parent_world_id)
-            if parent.destroyed or parent.snapshot is None or parent.phase not in FORKABLE_PHASES:
-                raise LifecycleError("parent lifecycle state cannot be forked")
-            self._check_pin(parent.adapter)
-            raw_environment = await self._bounded(
-                self._adapter.fork(parent.snapshot), self._limits.fork_seconds
-            )
-            environment: EnvironmentHandle | None = None
-            admitted = False
-            try:
+        resolved_world_id = world_id or f"world:{uuid4().hex}"
+        reservation = self.store._reserve_world(resolved_world_id)
+        environment: EnvironmentHandle | None = None
+        environment_reserved = False
+        try:
+            async with self._world_gate(parent_world_id):
+                parent = self.store.get(parent_world_id)
+                if (
+                    parent.destroyed
+                    or parent.snapshot is None
+                    or parent.phase not in FORKABLE_PHASES
+                ):
+                    raise LifecycleError("parent lifecycle state cannot be forked")
+                self._check_pin(parent.adapter)
+                raw_environment = await self._bounded(
+                    self._adapter.fork(parent.snapshot), self._limits.fork_seconds
+                )
                 environment = self._as_handle(raw_environment)
                 self._check_pin(environment.adapter)
-                self.store.assert_environment_unassigned(environment)
-                admitted = True
+                self.store._claim_environment(reservation, environment)
+                environment_reserved = True
+                self.store._validate_reserved_namespace(reservation)
                 raw_snapshot = await self._bounded(
                     self._adapter.snapshot(environment), self._limits.snapshot_seconds
                 )
@@ -230,7 +250,7 @@ class WorldManager:
                     snapshot, parent.target, environment, parent.root_snapshot_id
                 )
                 node = WorldNode(
-                    world_id=world_id or f"world:{uuid4().hex}",
+                    world_id=resolved_world_id,
                     parent_world_id=parent.world_id,
                     root_snapshot_id=parent.root_snapshot_id,
                     target=parent.target,
@@ -242,11 +262,13 @@ class WorldManager:
                     environment=environment,
                     snapshot=snapshot,
                 )
-                return self.store.add(node)
-            except BaseException as primary:
-                if admitted and environment is not None:
-                    await self._cleanup_or_raise(environment, primary)
-                raise
+                return self.store.add(node, reservation=reservation)
+        except BaseException as primary:
+            if environment_reserved and environment is not None:
+                await self._cleanup_reserved_or_raise(reservation, environment, primary)
+            else:
+                self.store._release_world(reservation)
+            raise
 
     async def restore(self, world_id: str, snapshot: SnapshotManifest) -> WorldNode:
         async with self._world_gate(world_id):
