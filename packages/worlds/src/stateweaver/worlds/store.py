@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .models import EnvironmentHandle, LifecycleError, WorldNode
+from .models import EnvironmentHandle, LifecycleError, RevisionConflict, WorldNode
 
 
 class WorldStore:
@@ -99,17 +99,22 @@ class WorldStore:
         node = node.revalidated()
         if node.world_id in self._nodes:
             raise LifecycleError("world identifier already exists")
+        if node.revision != 0:
+            raise LifecycleError("new worlds must start at revision zero")
         self._validate_parent(node, require_live=True)
         self._assert_unique_live_environment(node)
         self._nodes[node.world_id] = node
         self._rebuild_indexes()
         return self._nodes[node.world_id]
 
-    def replace(self, node: WorldNode) -> WorldNode:
+    def replace(self, node: WorldNode, *, expected_revision: int | None = None) -> WorldNode:
         node = node.revalidated()
         if node.world_id not in self._nodes:
             raise LifecycleError("unknown world")
         existing = self._nodes[node.world_id]
+        expected_revision = node.revision if expected_revision is None else expected_revision
+        if node.revision != expected_revision or existing.revision != expected_revision:
+            raise RevisionConflict("world revision changed before commit")
         immutable_identity = (
             "parent_world_id",
             "root_snapshot_id",
@@ -130,7 +135,7 @@ class WorldStore:
             raise LifecycleError("a world cannot switch environment identity")
         self._validate_parent(node, require_live=False)
         self._assert_unique_live_environment(node, excluding=node.world_id)
-        self._nodes[node.world_id] = node
+        self._nodes[node.world_id] = node.validated_copy(revision=expected_revision + 1)
         self._rebuild_indexes()
         return self._nodes[node.world_id]
 

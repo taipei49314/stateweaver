@@ -257,6 +257,7 @@ class WorldNode(FrozenModel):
     snapshot: SnapshotManifest | None = None
     deduplicated_to: NonEmpty | None = None
     destroyed: bool = False
+    revision: Annotated[int, Field(ge=0)] = 0
 
     @field_validator("lineage")
     @classmethod
@@ -311,6 +312,10 @@ class WorldError(RuntimeError):
 
 class LifecycleError(WorldError):
     pass
+
+
+class RevisionConflict(LifecycleError):
+    """A world commit was based on a stale store revision."""
 
 
 class AdapterPinError(WorldError):

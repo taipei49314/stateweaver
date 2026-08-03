@@ -11,4 +11,9 @@ secret values in a snapshot manifest. Restore revalidates copied manifests befor
 crossing the adapter boundary, and every materialized `WorldNode` binds its snapshot
 source to its exact live environment.
 
+Every mutating lifecycle method is awaitable. Operations targeting the same world are admitted
+through a stable per-world gate and commit against a monotonic node revision, while operations on
+different worlds remain independent. This prevents an adapter call that resumes late from
+overwriting a newer lifecycle phase.
+
 Run the focused suite from this directory with `pytest`.

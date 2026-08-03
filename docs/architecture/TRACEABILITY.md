@@ -123,8 +123,14 @@ handles, lineage, process replies, and cancellation leaks in its stateful emulat
 Those capabilities remain `PARTIAL`: the bridge models JSON components rather than live PostgreSQL,
 Redis, queue, browser-session, filesystem-provider, and controlled-clock capture. The four-sibling
 test now uses four-way barriers to prove that separate world creation and snapshot operations overlap
-at the runner boundary, while each world's lifecycle gate prevents snapshot/restore/destroy races.
-It also covers identity-reservation collisions, destroy-versus-waiter revalidation, fork cancellation,
+at the runner boundary. `WorldManager` holds one stable asynchronous admission gate per retained
+world: snapshot, restore, destroy, transition, and parent-fork operations read and commit entirely
+inside that gate, while distinct worlds continue to enter adapters concurrently. Each immutable
+`WorldNode` also carries a monotonic revision, and `WorldStore` rejects compare-and-swap commits
+based on an older revision. Deterministic adversarial tests cover the former phase-regression race,
+same-world serialization, different-world overlap, snapshot/restore versus destroy ordering,
+idempotent cleanup, failure/cancellation gate release, and stale-revision rejection. Adapter tests
+add identity-reservation collisions, destroy-versus-waiter revalidation, fork cancellation,
 cross-source restore rejection, and cancellation after destructive restore commits. No Docker host
 was available, so image build/run, genuinely parallel Compose subprocesses, and live cross-world
 contamination checks remain unproved. M2 is therefore **not certified**.

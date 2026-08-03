@@ -158,10 +158,10 @@ async def test_version_pinning_pruned_unschedulable_and_default_egress_denied() 
         }
     )
     manager.store.add(ghost)
-    manager.transition(ghost.world_id, WorldPhase.PRUNED)
+    await manager.transition(ghost.world_id, WorldPhase.PRUNED)
     assert not manager.schedulable(ghost.world_id)
     with pytest.raises(LifecycleError):
-        manager.transition(ghost.world_id, WorldPhase.ACTIVE)
+        await manager.transition(ghost.world_id, WorldPhase.ACTIVE)
 
 
 @pytest.mark.asyncio

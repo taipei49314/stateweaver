@@ -41,6 +41,17 @@ class WorldManager:
         self._limits = limits or OperationLimits()
         self.store = WorldStore()
         self._capabilities = self._validated_capabilities(adapter.capabilities())
+        self._world_gates: dict[str, asyncio.Lock] = {}
+
+    def _world_gate(self, world_id: str) -> asyncio.Lock:
+        """Return the stable admission gate for one retained world identity."""
+
+        self.store.get(world_id)
+        gate = self._world_gates.get(world_id)
+        if gate is None:
+            gate = asyncio.Lock()
+            self._world_gates[world_id] = gate
+        return gate
 
     @staticmethod
     def _validated_capabilities(manifest: object) -> CapabilityManifest:
@@ -158,118 +169,156 @@ class WorldManager:
             raise
 
     async def snapshot(self, world_id: str) -> SnapshotManifest:
-        node = self.store.get(world_id)
-        if node.destroyed or node.environment is None:
-            raise LifecycleError("world has no live environment")
-        self._check_pin(node.adapter)
-        try:
-            raw_snapshot = await self._bounded(
-                self._adapter.snapshot(node.environment), self._limits.snapshot_seconds
-            )
-            snapshot = self._as_snapshot(raw_snapshot)
-            self._validate_snapshot(snapshot, node.target, node.environment, node.root_snapshot_id)
+        async with self._world_gate(world_id):
+            node = self.store.get(world_id)
+            if node.destroyed or node.environment is None:
+                raise LifecycleError("world has no live environment")
+            self._check_pin(node.adapter)
+            try:
+                raw_snapshot = await self._bounded(
+                    self._adapter.snapshot(node.environment), self._limits.snapshot_seconds
+                )
+                snapshot = self._as_snapshot(raw_snapshot)
+                self._validate_snapshot(
+                    snapshot, node.target, node.environment, node.root_snapshot_id
+                )
+            except BaseException as primary:
+                try:
+                    await self._cleanup(node.environment)
+                except BaseException as cleanup_error:
+                    self.store.replace(
+                        node.validated_copy(phase=WorldPhase.BLOCKED),
+                        expected_revision=node.revision,
+                    )
+                    raise CleanupError(primary, cleanup_error) from primary
+                self.store.replace(
+                    node.validated_copy(destroyed=True, environment=None),
+                    expected_revision=node.revision,
+                )
+                raise
             self.store.replace(
-                node.validated_copy(snapshot=snapshot, state_fingerprint=snapshot.state_fingerprint)
+                node.validated_copy(
+                    snapshot=snapshot, state_fingerprint=snapshot.state_fingerprint
+                ),
+                expected_revision=node.revision,
             )
             return snapshot
-        except BaseException as primary:
-            try:
-                await self._cleanup(node.environment)
-            except BaseException as cleanup_error:
-                self.store.replace(node.validated_copy(phase=WorldPhase.BLOCKED))
-                raise CleanupError(primary, cleanup_error) from primary
-            self.store.replace(node.validated_copy(destroyed=True, environment=None))
-            raise
 
     async def fork(
         self, parent_world_id: str, *, lineage_transition: str, world_id: str | None = None
     ) -> WorldNode:
-        parent = self.store.get(parent_world_id)
-        if parent.destroyed or parent.snapshot is None or parent.phase not in FORKABLE_PHASES:
-            raise LifecycleError("parent lifecycle state cannot be forked")
-        self._check_pin(parent.adapter)
-        raw_environment = await self._bounded(
-            self._adapter.fork(parent.snapshot), self._limits.fork_seconds
-        )
-        environment: EnvironmentHandle | None = None
-        admitted = False
-        try:
-            environment = self._as_handle(raw_environment)
-            self._check_pin(environment.adapter)
-            self.store.assert_environment_unassigned(environment)
-            admitted = True
-            raw_snapshot = await self._bounded(
-                self._adapter.snapshot(environment), self._limits.snapshot_seconds
+        async with self._world_gate(parent_world_id):
+            parent = self.store.get(parent_world_id)
+            if parent.destroyed or parent.snapshot is None or parent.phase not in FORKABLE_PHASES:
+                raise LifecycleError("parent lifecycle state cannot be forked")
+            self._check_pin(parent.adapter)
+            raw_environment = await self._bounded(
+                self._adapter.fork(parent.snapshot), self._limits.fork_seconds
             )
-            snapshot = self._as_snapshot(raw_snapshot)
-            self._validate_snapshot(snapshot, parent.target, environment, parent.root_snapshot_id)
-            node = WorldNode(
-                world_id=world_id or f"world:{uuid4().hex}",
-                parent_world_id=parent.world_id,
-                root_snapshot_id=parent.root_snapshot_id,
-                target=parent.target,
-                adapter=parent.adapter,
-                capability_manifest=parent.capability_manifest,
-                phase=WorldPhase.ACTIVE,
-                state_fingerprint=snapshot.state_fingerprint,
-                lineage=(*parent.lineage, lineage_transition),
-                environment=environment,
-                snapshot=snapshot,
-            )
-            return self.store.add(node)
-        except BaseException as primary:
-            if admitted and environment is not None:
-                await self._cleanup_or_raise(environment, primary)
-            raise
+            environment: EnvironmentHandle | None = None
+            admitted = False
+            try:
+                environment = self._as_handle(raw_environment)
+                self._check_pin(environment.adapter)
+                self.store.assert_environment_unassigned(environment)
+                admitted = True
+                raw_snapshot = await self._bounded(
+                    self._adapter.snapshot(environment), self._limits.snapshot_seconds
+                )
+                snapshot = self._as_snapshot(raw_snapshot)
+                self._validate_snapshot(
+                    snapshot, parent.target, environment, parent.root_snapshot_id
+                )
+                node = WorldNode(
+                    world_id=world_id or f"world:{uuid4().hex}",
+                    parent_world_id=parent.world_id,
+                    root_snapshot_id=parent.root_snapshot_id,
+                    target=parent.target,
+                    adapter=parent.adapter,
+                    capability_manifest=parent.capability_manifest,
+                    phase=WorldPhase.ACTIVE,
+                    state_fingerprint=snapshot.state_fingerprint,
+                    lineage=(*parent.lineage, lineage_transition),
+                    environment=environment,
+                    snapshot=snapshot,
+                )
+                return self.store.add(node)
+            except BaseException as primary:
+                if admitted and environment is not None:
+                    await self._cleanup_or_raise(environment, primary)
+                raise
 
     async def restore(self, world_id: str, snapshot: SnapshotManifest) -> WorldNode:
-        node = self.store.get(world_id)
-        if node.destroyed or node.environment is None or node.phase is WorldPhase.PRUNED:
-            raise LifecycleError("world is unavailable for restore")
-        snapshot = self._as_snapshot(snapshot)
-        self._check_pin(node.adapter)
-        self._validate_snapshot(snapshot, node.target, node.environment, node.root_snapshot_id)
-        try:
-            restore_result = await self._bounded(
-                self._adapter.restore(node.environment, snapshot), self._limits.restore_seconds
-            )
-            self._require_none(restore_result)
-            raw_restored = await self._bounded(
-                self._adapter.snapshot(node.environment), self._limits.snapshot_seconds
-            )
-            restored = self._as_snapshot(raw_restored)
-            self._validate_snapshot(restored, node.target, node.environment, node.root_snapshot_id)
-            if restored.content_hashes != snapshot.content_hashes:
-                raise LifecycleError("restore identity verification failed")
-            return self.store.replace(
-                node.validated_copy(snapshot=restored, state_fingerprint=restored.state_fingerprint)
-            )
-        except BaseException as primary:
+        async with self._world_gate(world_id):
+            node = self.store.get(world_id)
+            if node.destroyed or node.environment is None or node.phase is WorldPhase.PRUNED:
+                raise LifecycleError("world is unavailable for restore")
+            snapshot = self._as_snapshot(snapshot)
+            self._check_pin(node.adapter)
+            self._validate_snapshot(snapshot, node.target, node.environment, node.root_snapshot_id)
             try:
-                await self._cleanup(node.environment)
-            except BaseException as cleanup_error:
-                self.store.replace(node.validated_copy(phase=WorldPhase.BLOCKED))
-                raise CleanupError(primary, cleanup_error) from primary
-            self.store.replace(node.validated_copy(destroyed=True, environment=None))
-            raise
+                restore_result = await self._bounded(
+                    self._adapter.restore(node.environment, snapshot), self._limits.restore_seconds
+                )
+                self._require_none(restore_result)
+                raw_restored = await self._bounded(
+                    self._adapter.snapshot(node.environment), self._limits.snapshot_seconds
+                )
+                restored = self._as_snapshot(raw_restored)
+                self._validate_snapshot(
+                    restored, node.target, node.environment, node.root_snapshot_id
+                )
+                if restored.content_hashes != snapshot.content_hashes:
+                    raise LifecycleError("restore identity verification failed")
+            except BaseException as primary:
+                try:
+                    await self._cleanup(node.environment)
+                except BaseException as cleanup_error:
+                    self.store.replace(
+                        node.validated_copy(phase=WorldPhase.BLOCKED),
+                        expected_revision=node.revision,
+                    )
+                    raise CleanupError(primary, cleanup_error) from primary
+                self.store.replace(
+                    node.validated_copy(destroyed=True, environment=None),
+                    expected_revision=node.revision,
+                )
+                raise
+            return self.store.replace(
+                node.validated_copy(
+                    snapshot=restored, state_fingerprint=restored.state_fingerprint
+                ),
+                expected_revision=node.revision,
+            )
 
     async def destroy(self, world_id: str) -> WorldNode:
-        node = self.store.get(world_id)
-        if node.destroyed:
-            return node
-        if node.environment is None:
-            return self.store.replace(node.validated_copy(destroyed=True))
-        self._check_pin(node.adapter)
-        await self._cleanup(node.environment)
-        return self.store.replace(node.validated_copy(destroyed=True, environment=None))
+        async with self._world_gate(world_id):
+            node = self.store.get(world_id)
+            if node.destroyed:
+                return node
+            if node.environment is None:
+                return self.store.replace(
+                    node.validated_copy(destroyed=True), expected_revision=node.revision
+                )
+            self._check_pin(node.adapter)
+            await self._cleanup(node.environment)
+            return self.store.replace(
+                node.validated_copy(destroyed=True, environment=None),
+                expected_revision=node.revision,
+            )
 
-    def transition(self, world_id: str, destination: WorldPhase) -> WorldNode:
-        node = self.store.get(world_id)
-        if node.destroyed:
-            raise LifecycleError("destroyed worlds cannot transition")
-        if destination not in LEGAL_TRANSITIONS[node.phase]:
-            raise LifecycleError("illegal world lifecycle transition")
-        return self.store.replace(node.validated_copy(phase=destination))
+    async def transition(self, world_id: str, destination: WorldPhase) -> WorldNode:
+        """Apply one legal phase change after prior operations on this world finish."""
+
+        async with self._world_gate(world_id):
+            node = self.store.get(world_id)
+            if node.destroyed:
+                raise LifecycleError("destroyed worlds cannot transition")
+            if destination not in LEGAL_TRANSITIONS[node.phase]:
+                raise LifecycleError("illegal world lifecycle transition")
+            return self.store.replace(
+                node.validated_copy(phase=destination), expected_revision=node.revision
+            )
 
     def schedulable(self, world_id: str) -> bool:
         node = self.store.get(world_id)
