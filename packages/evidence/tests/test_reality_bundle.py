@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import pytest
 from evidence_test_fixtures import foundation, scenario
+from evidence_test_fixtures import plan as fixture_plan
 from pydantic import BaseModel, ValidationError
 from stateweaver.contracts import (
     FidelityLevel,
@@ -41,22 +42,23 @@ from stateweaver.evidence import (
     RealityEvidenceFact,
     RealityEvidenceIndex,
     RealityEvidenceItem,
-    RealityEvidenceManifestV1,
+    RealityEvidenceManifestV2,
     RealityManifestEntry,
     RealityScopeArtifact,
     RealityTargetLock,
     RealityTraceArtifact,
-    RealityTraceEvent,
+    RealityTraceFact,
+    RealityTraceLane,
     verify_reality_pre_receipt_bundle,
 )
-from stateweaver.replay import ReplayPlan, ReplayRunResult, RootSeed
+from stateweaver.replay import ReplayPlan, ReplayRunResult, RootSeed, canonical_sha256
 
 
 @dataclass(frozen=True)
 class _Bundle:
     receipt: RealityReplayReceipt
     receipt_json: bytes
-    manifest: RealityEvidenceManifestV1
+    manifest: RealityEvidenceManifestV2
     manifest_json: bytes
     artifacts: dict[str, bytes]
 
@@ -97,17 +99,8 @@ def _evidence_ids(oracles: tuple[OracleResult, ...]) -> tuple[str, ...]:
     return tuple(sorted({evidence_id for oracle in oracles for evidence_id in oracle.evidence_ids}))
 
 
-def _trace(result: ReplayRunResult, *, event_id: str) -> RealityTraceArtifact:
-    return RealityTraceArtifact(
-        replay_trace_hash=result.trace_hash,
-        events=(
-            RealityTraceEvent(
-                event_id=event_id,
-                kind="synthetic.replay",
-                attributes_sha256=result.trace_hash,
-            ),
-        ),
-    )
+def _trace(result: ReplayRunResult, *, lane: RealityTraceLane) -> RealityTraceArtifact:
+    return RealityTraceArtifact.from_replay_result(result, lane=lane)
 
 
 def _entry(
@@ -183,7 +176,7 @@ def _remint_bundle(
             key=lambda entry: entry.path,
         )
     )
-    manifest = RealityEvidenceManifestV1(entries=next_entries)
+    manifest = RealityEvidenceManifestV2(entries=next_entries)
     manifest_json = manifest.canonical_bytes()
     receipt = _reissue_receipt(
         bundle.receipt,
@@ -307,7 +300,7 @@ def _build_bundle() -> _Bundle:
         add(
             f"{run_path}/trace.json",
             RealityArtifactRole.PRIMARY_TRACE,
-            _trace(result, event_id=f"event.primary.{index}"),
+            _trace(result, lane=RealityTraceLane.PRIMARY),
             run_id=result.run_id,
         )
         attempts.append(
@@ -358,7 +351,7 @@ def _build_bundle() -> _Bundle:
     add(
         f"{control_path}/trace.json",
         RealityArtifactRole.CONTROL_TRACE,
-        _trace(control_result, event_id="event.control.1"),
+        _trace(control_result, lane=RealityTraceLane.CONTROL),
         run_id=control_result.run_id,
         control_name=control_name,
     )
@@ -441,7 +434,7 @@ def _build_bundle() -> _Bundle:
     add(
         "patch/trace.json",
         RealityArtifactRole.PATCH_TRACE,
-        _trace(patch_result, event_id="event.patch.1"),
+        _trace(patch_result, lane=RealityTraceLane.PATCH),
         run_id=patch_result.run_id,
     )
     patch_oracle_hash = add(
@@ -501,7 +494,7 @@ def _build_bundle() -> _Bundle:
         RealityEvidenceIndex(items=tuple(evidence_items)),
     )
 
-    manifest = RealityEvidenceManifestV1(entries=tuple(sorted(entries, key=lambda item: item.path)))
+    manifest = RealityEvidenceManifestV2(entries=tuple(sorted(entries, key=lambda item: item.path)))
     manifest_json = manifest.canonical_bytes()
     receipt = RealityReplayReceipt.create(
         anchor_mode=RealityAnchorMode.SOURCE_BACKED,
@@ -565,6 +558,9 @@ def test_valid_synthetic_bundle_is_a_non_promotable_candidate(bundle: _Bundle) -
     assert result.receipt_hash == bundle.receipt.receipt_hash
     assert result.pre_receipt_manifest_sha256 == _tagged_sha256(bundle.manifest_json)
     assert result.snapshot_sha256 is not None
+    assert result.profile == "source-backed-synthetic-v2"
+    assert result.event_semantics_verified is True
+    assert result.primary_semantic_trace_hash is not None
     assert result.promotable is False
     assert result.authoritative is False
 
@@ -624,7 +620,10 @@ def test_logical_trace_hash_substitution_is_rejected_after_coherent_rehash(
 ) -> None:
     trace_entry = next(entry for entry in bundle.manifest.entries if entry.role is role)
     trace = RealityTraceArtifact.model_validate_json(bundle.artifacts[trace_entry.path])
-    substitute = RealityTraceArtifact(
+    substitute = RealityTraceArtifact.create(
+        lane=trace.lane,
+        run_id=trace.run_id,
+        plan_id=trace.plan_id,
         replay_trace_hash=sha256_digest({"substituted_role": role.value}),
         events=trace.events,
     )
@@ -638,6 +637,204 @@ def test_logical_trace_hash_substitution_is_rejected_after_coherent_rehash(
 
     assert not result.valid
     assert result.errors == ("replay-causal-binding-mismatch",)
+
+
+@pytest.mark.parametrize(
+    ("role", "lane"),
+    (
+        (RealityArtifactRole.PRIMARY_TRACE, RealityTraceLane.PRIMARY),
+        (RealityArtifactRole.CONTROL_TRACE, RealityTraceLane.CONTROL),
+        (RealityArtifactRole.PATCH_TRACE, RealityTraceLane.PATCH),
+    ),
+)
+def test_trace_events_are_exact_replay_semantic_reconstructions(
+    bundle: _Bundle,
+    role: RealityArtifactRole,
+    lane: RealityTraceLane,
+) -> None:
+    trace_entry = next(entry for entry in bundle.manifest.entries if entry.role is role)
+    result_roles = {
+        RealityArtifactRole.PRIMARY_TRACE: RealityArtifactRole.PRIMARY_RESULT,
+        RealityArtifactRole.CONTROL_TRACE: RealityArtifactRole.CONTROL_RESULT,
+        RealityArtifactRole.PATCH_TRACE: RealityArtifactRole.PATCH_RESULT,
+    }
+    result_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is result_roles[role] and entry.run_id == trace_entry.run_id
+    )
+    trace = RealityTraceArtifact.model_validate_json(bundle.artifacts[trace_entry.path])
+    replay_result = ReplayRunResult.model_validate_json(bundle.artifacts[result_entry.path])
+
+    assert trace.schema_version == "2.0"
+    assert trace.lane is lane
+    assert trace == RealityTraceArtifact.from_replay_result(replay_result, lane=lane)
+    assert trace.events[0].event_type.value == "replay.started"
+    assert trace.events[-1].event_type.value == (
+        "patch.replay.completed" if lane is RealityTraceLane.PATCH else "replay.completed"
+    )
+    assert tuple(event.sequence for event in trace.events) == tuple(range(len(trace.events)))
+
+
+@pytest.mark.parametrize(
+    "role",
+    (
+        RealityArtifactRole.PRIMARY_TRACE,
+        RealityArtifactRole.CONTROL_TRACE,
+        RealityArtifactRole.PATCH_TRACE,
+    ),
+)
+def test_trace_event_payload_substitution_is_rejected_after_full_rehash(
+    bundle: _Bundle, role: RealityArtifactRole
+) -> None:
+    trace_entry = next(entry for entry in bundle.manifest.entries if entry.role is role)
+    trace = RealityTraceArtifact.model_validate_json(bundle.artifacts[trace_entry.path])
+    event = trace.events[0]
+    facts = tuple(
+        RealityTraceFact(
+            name=fact.name,
+            value="sha256:" + "f" * 64 if fact.name == "root_fingerprint" else fact.value,
+        )
+        for fact in event.payload
+    )
+    forged_event = event.create(
+        event_type=event.event_type,
+        run_id=event.run_id,
+        plan_id=event.plan_id,
+        sequence=event.sequence,
+        trace_id=event.trace_id,
+        step_id=event.step_id,
+        payload=facts,
+    )
+    events = (forged_event, *trace.events[1:])
+    forged_trace = RealityTraceArtifact.create(
+        lane=trace.lane,
+        run_id=trace.run_id,
+        plan_id=trace.plan_id,
+        replay_trace_hash=trace.replay_trace_hash,
+        events=events,
+    )
+    artifacts = {
+        **bundle.artifacts,
+        trace_entry.path: canonical_json_bytes(forged_trace),
+    }
+    substituted = _remint_bundle(bundle, artifacts=artifacts)
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("replay-trace-semantics-mismatch",)
+
+
+def test_primary_trace_cannot_be_relabeled_as_a_control_lane_after_full_rehash(
+    bundle: _Bundle,
+) -> None:
+    trace_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.PRIMARY_TRACE
+    )
+    trace = RealityTraceArtifact.model_validate_json(bundle.artifacts[trace_entry.path])
+    forged_trace = RealityTraceArtifact.create(
+        lane=RealityTraceLane.CONTROL,
+        run_id=trace.run_id,
+        plan_id=trace.plan_id,
+        replay_trace_hash=trace.replay_trace_hash,
+        events=trace.events,
+    )
+    artifacts = {
+        **bundle.artifacts,
+        trace_entry.path: canonical_json_bytes(forged_trace),
+    }
+    substituted = _remint_bundle(bundle, artifacts=artifacts)
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("replay-trace-semantics-mismatch",)
+
+
+def test_trace_event_omission_fails_closed_before_bundle_remint(bundle: _Bundle) -> None:
+    trace_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.PRIMARY_TRACE
+    )
+    trace = RealityTraceArtifact.model_validate_json(bundle.artifacts[trace_entry.path])
+    events = tuple(
+        event.model_copy(update={"sequence": sequence})
+        for sequence, event in enumerate((*trace.events[:1], *trace.events[2:]))
+    )
+    reminted_events = tuple(
+        event.create(
+            event_type=event.event_type,
+            run_id=event.run_id,
+            plan_id=event.plan_id,
+            sequence=event.sequence,
+            trace_id=event.trace_id,
+            step_id=event.step_id,
+            payload=event.payload,
+        )
+        for event in events
+    )
+    with pytest.raises(ValidationError, match="at least 3 items"):
+        RealityTraceArtifact.create(
+            lane=trace.lane,
+            run_id=trace.run_id,
+            plan_id=trace.plan_id,
+            replay_trace_hash=trace.replay_trace_hash,
+            events=reminted_events,
+        )
+
+
+def test_legacy_v1_trace_profile_is_rejected_even_when_manifest_is_reminted(
+    bundle: _Bundle,
+) -> None:
+    trace_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.PRIMARY_TRACE
+    )
+    trace = RealityTraceArtifact.model_validate_json(bundle.artifacts[trace_entry.path])
+    legacy_trace = canonical_json_bytes(
+        {
+            "schema_version": "1.0",
+            "replay_trace_hash": trace.replay_trace_hash,
+            "events": [
+                {
+                    "event_id": "event.legacy.1",
+                    "kind": "synthetic.replay",
+                    "attributes_sha256": trace.replay_trace_hash,
+                }
+            ],
+        }
+    )
+    artifacts = {**bundle.artifacts, trace_entry.path: legacy_trace}
+    substituted = _remint_bundle(bundle, artifacts=artifacts)
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("artifact-schema-invalid",)
+
+
+def test_manifest_profile_downgrade_is_rejected_with_a_reissued_receipt(
+    bundle: _Bundle,
+) -> None:
+    manifest_payload = bundle.manifest.model_dump(mode="json")
+    manifest_payload["schema_version"] = "reality-pre-receipt-v1"
+    manifest_payload["profile"] = "source-backed-synthetic-v1"
+    manifest_json = canonical_json_bytes(manifest_payload)
+    receipt = _reissue_receipt(bundle.receipt, manifest_json=manifest_json)
+
+    result = verify_reality_pre_receipt_bundle(
+        receipt_json=receipt.canonical_bytes(),
+        manifest_json=manifest_json,
+        artifacts=bundle.artifacts,
+    )
+
+    assert not result.valid
+    assert result.errors == ("artifact-schema-invalid",)
 
 
 def test_adapter_lock_substitution_is_rejected_after_manifest_rehash(bundle: _Bundle) -> None:
@@ -961,6 +1158,159 @@ def test_artifact_model_instance_is_rejected_instead_of_trusted(bundle: _Bundle)
     assert result.errors == ("artifact-snapshot-invalid",)
 
 
+def test_control_result_must_execute_the_retained_plan_envelope_exactly(
+    bundle: _Bundle,
+) -> None:
+    control = bundle.receipt.negative_controls[0]
+    plan_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.CONTROL_PLAN
+    )
+    result_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.CONTROL_RESULT
+    )
+    log_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.CONTROL_ACTION_LOG
+    )
+    trace_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.CONTROL_TRACE
+    )
+    root_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.ROOT
+    )
+    retained_plan = ReplayPlan.model_validate_json(bundle.artifacts[plan_entry.path])
+    retained_action = retained_plan.steps[0].action
+    substituted_plan = fixture_plan(
+        plan_id=retained_plan.plan_id,
+        action_id=retained_action.action_id,
+        decision_ref=retained_action.policy_decision_ref,
+        outcome=OracleOutcome.SATISFIED,
+        path="/v1/lab/substituted-plan-envelope",
+        expected_statuses=(200, 403),
+    )
+    primary_root = RootSeed.model_validate_json(bundle.artifacts[root_entry.path])
+    raw_substitute = scenario(
+        name="substituted_control",
+        run_id=control.replay_run_id,
+        replay_plan=substituted_plan,
+        root_seed=primary_root,
+        oracle_outcome=OracleOutcome.SATISFIED,
+        response_status=403,
+    )
+    substitute = _model_from_json(ReplayRunResult, raw_substitute["replay_result"])
+    assert _oracles(substitute) == control.oracle_results
+    artifacts = dict(bundle.artifacts)
+    artifacts[result_entry.path] = canonical_json_bytes(substitute)
+    artifacts[log_entry.path] = canonical_json_bytes(substitute.action_log)
+    artifacts[trace_entry.path] = canonical_json_bytes(
+        _trace(substitute, lane=RealityTraceLane.CONTROL)
+    )
+    forged_control = NegativeControl.model_validate(
+        {
+            **control.model_dump(mode="python"),
+            "replay_result_sha256": _tagged_sha256(artifacts[result_entry.path]),
+            "action_log_sha256": _tagged_sha256(artifacts[log_entry.path]),
+            "trace_hash": substitute.trace_hash,
+            "semantic_signature": substitute.deterministic_signature(),
+        }
+    )
+    substituted = _remint_bundle(bundle, artifacts=artifacts, controls=(forged_control,))
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("replay-plan-execution-mismatch",)
+
+
+def test_patched_root_random_seed_must_match_the_primary_logical_root(
+    bundle: _Bundle,
+) -> None:
+    root_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.PATCH_ROOT
+    )
+    root = RootSeed.model_validate_json(bundle.artifacts[root_entry.path])
+    substituted_root = RootSeed.model_validate(
+        {**root.model_dump(mode="python"), "random_seed": root.random_seed + 1}
+    )
+    artifacts = {
+        **bundle.artifacts,
+        root_entry.path: canonical_json_bytes(substituted_root),
+    }
+    substituted = _remint_bundle(bundle, artifacts=artifacts)
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("patch-binding-mismatch",)
+
+
+def test_patched_block_cannot_be_claimed_from_an_unrelated_failure_code(
+    bundle: _Bundle,
+) -> None:
+    patch = bundle.receipt.patched_version
+    assert patch is not None
+    result_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.PATCH_RESULT
+    )
+    trace_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.PATCH_TRACE
+    )
+    replay_result = ReplayRunResult.model_validate_json(bundle.artifacts[result_entry.path])
+    failed_step = replay_result.steps[0]
+    substituted_step = type(failed_step).model_validate(
+        {**failed_step.model_dump(mode="python"), "failure_code": "EXECUTE_TIMEOUT"}
+    )
+    substituted_steps = (substituted_step, *replay_result.steps[1:])
+    trace_hash = canonical_sha256(
+        {
+            "plan_id": replay_result.plan_id,
+            "status": replay_result.status,
+            "root_fingerprint": replay_result.root_fingerprint,
+            "final_fingerprint": replay_result.final_fingerprint,
+            "steps": substituted_steps,
+            "action_log": replay_result.action_log,
+            "failed_step_id": replay_result.failed_step_id,
+        }
+    )
+    substitute = ReplayRunResult.model_validate(
+        {
+            **replay_result.model_dump(mode="python"),
+            "steps": substituted_steps,
+            "trace_hash": trace_hash,
+        }
+    )
+    artifacts = dict(bundle.artifacts)
+    artifacts[result_entry.path] = canonical_json_bytes(substitute)
+    artifacts[trace_entry.path] = canonical_json_bytes(
+        _trace(substitute, lane=RealityTraceLane.PATCH)
+    )
+    forged_patch = PatchedVersionReplay.model_validate(
+        {
+            **patch.model_dump(mode="python"),
+            "replay_result_sha256": _tagged_sha256(artifacts[result_entry.path]),
+            "trace_hash": substitute.trace_hash,
+            "semantic_signature": substitute.deterministic_signature(),
+            "failure_code": "EXECUTE_TIMEOUT",
+        }
+    )
+    substituted = _remint_bundle(
+        bundle,
+        artifacts=artifacts,
+        patched_version=forged_patch,
+        replace_patch=True,
+    )
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("patch-binding-mismatch",)
+
+
 def test_control_result_substitution_is_rejected(bundle: _Bundle) -> None:
     control = bundle.receipt.negative_controls[0]
     plan_entry = next(
@@ -993,7 +1343,7 @@ def test_control_result_substitution_is_rejected(bundle: _Bundle) -> None:
     artifacts = dict(bundle.artifacts)
     artifacts[result_entry.path] = canonical_json_bytes(substitute)
     artifacts[trace_entry.path] = canonical_json_bytes(
-        _trace(substitute, event_id="event.control.substitute")
+        _trace(substitute, lane=RealityTraceLane.CONTROL)
     )
     forged_control = NegativeControl.model_validate(
         {
@@ -1041,7 +1391,7 @@ def test_patch_result_substitution_is_rejected(bundle: _Bundle) -> None:
     artifacts = dict(bundle.artifacts)
     artifacts[result_entry.path] = canonical_json_bytes(substitute)
     artifacts[trace_entry.path] = canonical_json_bytes(
-        _trace(substitute, event_id="event.patch.substitute")
+        _trace(substitute, lane=RealityTraceLane.PATCH)
     )
     forged_patch = PatchedVersionReplay.model_validate(
         {

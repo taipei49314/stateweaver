@@ -50,10 +50,16 @@ pre-receipt manifest excludes the Finding, receipt, final publication report, an
 avoid recursive identity. All consumers must revalidate serialized input rather than trust
 unchecked in-memory model instances. Until a trusted broker/store resolver exists, the contract
 rejects both reserved confirmed statuses even when a receipt is internally coherent. A narrow
-synthetic-profile resolver now snapshots caller-supplied artifact bytes exactly once and closes manifest, role,
-digest, result/logical-trace, Oracle, control, patch, and evidence-index substitutions. It accepts no
-filesystem path or issuer assertion and always returns a non-authoritative, non-promotable
-candidate; authenticated retention and source/issuer trust remain open.
+synthetic-profile v2 resolver now snapshots caller-supplied artifact bytes exactly once and closes
+manifest, role, digest, retained-plan/executed-envelope, Oracle, control, patch, and evidence-index
+substitutions. It independently regenerates the complete replay-step event narrative for primary,
+control, and patched lanes from each typed result/action log, requires patch root parity, and rejects
+unrelated failure codes masquerading as `BLOCKED_BY_FIX`. The general event contract is also v2:
+its domain-separated semantic hash binds all envelope metadata, while `EventHistory` verifies an
+exact per-run hash chain. These remain self-contained integrity checks, not freshness or execution
+attestation. The resolver accepts no filesystem path or issuer assertion and always returns a
+non-authoritative, non-promotable candidate; authenticated retention and source/issuer trust remain
+open.
 
 One horizontal local integration now preserves the same three TestClient/OTLP/state-delta
 `OBSERVED` fragments through a 24 -> 4 -> 2 -> 1 in-memory search and Materialized-tier admission,
@@ -71,7 +77,7 @@ a live materialized-provider, Twin-derived ranking, executed replay, or release-
 | M3 Semantic Twin | Source + OTLP + state-delta flow and observed-fragment pipeline pass | `packages/twin/`, `tests/integration/twin/`, `tests/integration/pipeline/` |
 | M4 Search | Offline 24 → 4 → 2 → 1 flow preserves the observed candidate | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
 | M5 Chain Compiler | Three observed fragments cross the admission bridge; synthetic replay closure hardened | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
-| M6 Reality + Proof | Finding gate + immutable-byte candidate resolver pass; trusted broker absent | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
+| M6 Reality + Proof | V2 event reconstruction + immutable-byte candidate resolver pass; trusted broker absent | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
 | M7 StateChainBench | Trusted built-in synthetic runner hardened; not equal-work or public-certified | `benchmarks/statechainbench/` |
 | M8 Public UX | Read-only fixed API + four-workspace client pass local contract/browser QA | `apps/api/`, `apps/web/` |
 

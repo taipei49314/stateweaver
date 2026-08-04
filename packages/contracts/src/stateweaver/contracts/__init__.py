@@ -61,7 +61,7 @@ from .enums import (
     WorldStatus,
     WorldTier,
 )
-from .events import EventEnvelope
+from .events import EventEnvelope, EventHistory
 from .evidence import EvidenceProducer, EvidenceRecord, TraceContext
 from .hypotheses import EstimatedCost, Hypothesis, PredictedBoundary
 from .oracles import (
@@ -132,6 +132,7 @@ __all__ = [
     "EnvironmentMode",
     "EstimatedCost",
     "EventEnvelope",
+    "EventHistory",
     "EventType",
     "EvidenceKind",
     "EvidenceProducer",

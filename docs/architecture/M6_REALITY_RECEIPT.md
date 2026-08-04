@@ -6,7 +6,7 @@ replaces the former weak shape in which any caller-supplied replay ID plus `REPR
 confirmation.
 
 This is a typed causal-coherence boundary. The evidence package now includes one narrow
-`source-backed-synthetic-v1` immutable-byte resolver for this candidate record. It is not a
+`source-backed-synthetic-v2` immutable-byte resolver for this candidate record. It is not a
 signature, an issuer identity, an authenticated retained-artifact store, or a completed Reality
 Replay Broker.
 
@@ -29,28 +29,39 @@ complete retained evidence may issue a new receipt and select the corresponding 
 
 ## Causal bindings
 
-The receipt closes seven substitution boundaries:
+The receipt and V2 resolver close eight substitution boundaries:
 
 1. Scope and target: scope manifest, target lock, target identity/version, adapter lock, and anchor
    mode are immutable typed fields.
-2. Plan and root: chain ID, plan ID/hash, root seed ID, and clean-root fingerprint are pinned.
+2. Plan and root: chain ID, plan ID/hash, root seed ID, and clean-root fingerprint are pinned. Each
+   result step/action-log row must execute the corresponding retained `ReplayPlan` envelope exactly;
+   sharing only a plan ID is insufficient. Patched replay must preserve the primary random seed,
+   controlled clock, capture, and adapter versions while changing only the target build identity.
 3. Determinism: at least two unique replay runs must bind the exact scope, target/build, adapter,
    plan, and root. Each run binds a distinct raw replay-result digest because the serialized result
    contains its run ID; all runs share one action-log digest, semantic signature, and trace hash and
    reproduce the violation. Each trace artifact is separately raw-byte-bound by the manifest and
    carries the logical `replay_trace_hash` that must equal the replay result and receipt value.
-4. Reality Oracle: every promoted Oracle result must be deterministic, `OBSERVED`, `VIOLATED`,
+4. Event semantics: the `stateweaver.replay-step-events.v1` algorithm regenerates a typed
+   start/step/completion vector from every primary, control, and patched `ReplayRunResult`. Each step
+   event binds action identity/sequence/policy, trace and envelope hashes, fingerprints,
+   observations, Oracles, evidence, and failure semantics. Exact comparison rejects event omission,
+   reordering, lane substitution, or coherent narrative reminting. Its semantic hash excludes only
+   run occurrence identity so deterministic primary attempts remain comparable.
+5. Reality Oracle: every promoted Oracle result must be deterministic, `OBSERVED`, `VIOLATED`,
    evidence-backed, and part of the receipt's canonical Oracle-definition hash.
-5. Negative controls: at least one typed control kind must produce deterministic, `OBSERVED`,
+6. Negative controls: at least one typed control kind must produce deterministic, `OBSERVED`,
    `SATISFIED` Oracle results with `NOT_REPRODUCED`; exact target/adapter locks, root, and Oracle
    definitions must match while its plan, control-delta digest, and semantic signature differ from
    the primary replay. Run IDs and raw replay-result digests are globally unique across primary
    attempts, controls, and patch.
-6. Patched replay: `PATCH_VERIFIED` requires the same target identity, adapter lock, plan, logical
+7. Patched replay: `PATCH_VERIFIED` requires the same target identity, adapter lock, plan, logical
    root seed/fingerprint, and Oracle definitions against a different target version and target lock.
    The outcome must be exactly `BLOCKED_BY_FIX`, with an observed satisfied Oracle, distinct replay
-   signature, replay-result/action-log digests, and a precise failed step/code.
-7. Content identity: `receipt_hash` is SHA-256 over the canonical causal projection, and
+   signature, replay-result/action-log digests, and a precise failed step/code. The current synthetic
+   profile derives the block only from `ORACLE_EXPECTATION_MISMATCH`; unrelated execution failures
+   cannot be relabeled `BLOCKED_BY_FIX`.
+8. Content identity: `receipt_hash` is SHA-256 over the canonical causal projection, and
    `receipt_id` is derived from that full digest. The projection binds
    `pre_receipt_evidence_manifest_sha256`: the canonical evidence-only manifest created before the
    receipt. That manifest explicitly excludes the receipt, `finding.json`, final report,
@@ -74,6 +85,13 @@ profile uses compact sorted-key contracts JSON with no trailing line feed. Its r
 domain-separated snapshot hash, but its `authoritative` and `promotable` properties are permanently
 false; it is not accepted by the `Finding` promotion gate.
 
+The generic event boundary is independently upgraded to `EventEnvelope`/`EventHistory` schema
+`2.0`. `payload_hash` remains a payload-only digest, while a domain-separated `semantic_hash` binds
+schema, event type, experiment/run/world, actor, trace, timestamp, sequence, previous hash, and
+payload digest. `EventHistory` verifies exact sequence, context, time monotonicity, chain head, and
+history hash. This self-contained chain detects partial mutation and splicing; it cannot prove
+freshness against a producer that can fully remint history without a trusted checkpoint.
+
 ## Trust boundary still open
 
 An actor can recompute an internally coherent receipt hash. Therefore the hash detects inconsistent
@@ -84,12 +102,15 @@ those bytes came from. A complete M6 broker must still:
 - acquire the bytes from an immutable authenticated store without a mutable-path race;
 - resolve target/adapter source digests against retained source bytes rather than trust the values
   recorded inside their lock artifacts;
-- independently reconstruct event-level trace semantics; current event rows are content-bound but
-  only their logical replay trace hash is cross-checked against the replay result;
 - construct the receipt from typed replay results rather than caller claims;
 - enforce scope, approval, identity, rate, write, and cleanup gates;
 - bind trusted issuance or CI provenance to the receipt and proof bundle;
 - reproduce the bundle on a separate clean machine.
+
+The V2 semantic trace proves that the supplied event narrative is the deterministic projection of
+the supplied typed replay result. It still does not prove that an authenticated execution engine
+produced that result, bind wall-clock OTLP events, or derive the negative-control delta from a
+trusted mutation record.
 
 Until those checks exist and retained public evidence passes, the repository must describe this as
 a hardened promotion contract, not M6 certification.
@@ -104,5 +125,6 @@ canonical encoding, unsafe paths, controls, and patch replay:
 
 ```powershell
 uv run pytest packages/contracts/tests/test_reality_receipts.py -q
-uv run pytest packages/evidence/tests/test_reality_bundle.py -q
+uv run pytest packages/contracts/tests/test_event_history.py -q
+uv run pytest packages/evidence/tests/test_semantic_trace.py packages/evidence/tests/test_reality_bundle.py -q
 ```

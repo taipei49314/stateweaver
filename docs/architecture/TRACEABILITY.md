@@ -18,7 +18,7 @@ acceptance commands are intentionally local and do not require network access.
 | M3 — Security Semantic Twin | Exit flow and observed-fragment pipeline pass locally; release certification pending | `packages/twin/`, source/OTel adapters, `tests/integration/twin/`, `tests/integration/pipeline/` |
 | M4 — Tiered Search Controller | Offline exit flow preserves the observed candidate; materialized certification pending | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
 | M5 — Chain Compiler | Observed admission bridge and synthetic replay closure pass; release evidence pending | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
-| M6 — Reality Anchor + Proof Bundle | Typed Finding gate + immutable-byte candidate resolver implemented; trusted broker pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
+| M6 — Reality Anchor + Proof Bundle | V2 event reconstruction + immutable-byte candidate resolver implemented; trusted broker pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
 | M7 — StateChainBench | Trusted built-in synthetic runner hardened; equal-work/public audit pending | `benchmarks/statechainbench/` |
 | M8 — Web UI + Public Release | Fixed synthetic API/client and local browser QA pass; public release pending | `apps/api/`, `apps/web/` |
 
@@ -291,15 +291,22 @@ objects are revalidated at the Finding promotion boundary, including Pydantic in
 without normal validation. `SYNTHETIC_REPRODUCED` is explicitly non-confirmed. The evidence package
 now resolves the synthetic profile from one immutable in-memory byte mapping: it enforces exact
 pre-receipt coverage, hashes and parses the same bytes, and binds scope, locks, plan/root/chain,
-results, action logs, logical traces, Oracles, controls, patch replay, and evidence index. The result
-is permanently non-authoritative and non-promotable.
+results, action logs, Oracles, controls, patch replay, and evidence index. The V2 profile additionally
+requires every result/action-log row to execute the retained plan envelope exactly, independently
+regenerates start/step/completion event semantics for primary, control, and patch lanes, preserves
+the complete logical root across the vulnerable/patched differential, and accepts
+`BLOCKED_BY_FIX` only at the synthetic Oracle expectation boundary. Generic `EventEnvelope` v2 now
+binds all envelope metadata in a domain-separated semantic hash, while `EventHistory` verifies an
+exact per-run hash chain. These self-contained histories do not provide external freshness. The
+resolver result is permanently non-authoritative and non-promotable.
 
 This content hash and candidate resolver prove one supplied snapshot's internal coherence, not
 issuer identity, authenticated retention, target/adapter source provenance, or independent
 execution. The general Reality Replay Broker, trusted store acquisition, reporting layer, trusted
 issuance/attestation, and portable M6 reproduction workflow remain absent. The Finding validator
 therefore rejects both reserved confirmed statuses. M6 is **partially implemented and not
-certified**. See `docs/architecture/M6_REALITY_RECEIPT.md` for the exact boundary.
+certified**. Control-delta derivation, authenticated execution provenance, and retained source-byte
+resolution also remain open. See `docs/architecture/M6_REALITY_RECEIPT.md` for the exact boundary.
 
 ## M7 — StateChainBench
 

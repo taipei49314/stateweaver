@@ -49,8 +49,16 @@ from stateweaver.replay import (
 )
 
 from ._io import EvidenceInputError, assert_secret_free
+from .semantic_trace import (
+    RealityTraceArtifact,
+    RealityTraceEvent,
+    RealityTraceEventKind,
+    RealityTraceEventType,
+    RealityTraceFact,
+    RealityTraceLane,
+)
 
-_PROFILE: Literal["source-backed-synthetic-v1"] = "source-backed-synthetic-v1"
+_PROFILE: Literal["source-backed-synthetic-v2"] = "source-backed-synthetic-v2"
 _PATH_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*$")
 _FORBIDDEN_PATH_MARKERS = ("manifest", "receipt", "finding", "report", "attestation")
 
@@ -158,9 +166,9 @@ class RealityManifestEntry(_RealityModel):
         return self
 
 
-class RealityEvidenceManifestV1(_RealityModel):
-    schema_version: Literal["reality-pre-receipt-v1"] = "reality-pre-receipt-v1"
-    profile: Literal["source-backed-synthetic-v1"] = _PROFILE
+class RealityEvidenceManifestV2(_RealityModel):
+    schema_version: Literal["reality-pre-receipt-v2"] = "reality-pre-receipt-v2"
+    profile: Literal["source-backed-synthetic-v2"] = _PROFILE
     entries: Annotated[tuple[RealityManifestEntry, ...], Field(min_length=1)]
 
     @field_validator("entries")
@@ -215,28 +223,6 @@ class RealityChainBinding(_RealityModel):
     chain_id: ContractId
     plan_id: ContractId
     plan_hash: Sha256Digest
-
-
-class RealityTraceEvent(_RealityModel):
-    event_id: Token
-    kind: Token
-    attributes_sha256: Sha256Digest
-
-
-class RealityTraceArtifact(_RealityModel):
-    schema_version: Literal["1.0"] = "1.0"
-    replay_trace_hash: Sha256Digest
-    events: Annotated[tuple[RealityTraceEvent, ...], Field(min_length=1)]
-
-    @field_validator("events")
-    @classmethod
-    def events_are_canonical_and_unique(
-        cls, value: tuple[RealityTraceEvent, ...]
-    ) -> tuple[RealityTraceEvent, ...]:
-        identities = tuple(event.event_id for event in value)
-        if identities != tuple(sorted(identities)) or len(identities) != len(set(identities)):
-            raise ValueError("trace events must be unique and ordered")
-        return value
 
 
 class RealityDeltaChange(_RealityModel):
@@ -320,6 +306,9 @@ class RealityBundleVerificationResult:
     receipt_hash: str | None = None
     pre_receipt_manifest_sha256: str | None = None
     snapshot_sha256: str | None = None
+    profile: str | None = None
+    event_semantics_verified: bool = False
+    primary_semantic_trace_hash: str | None = None
 
     @property
     def promotable(self) -> Literal[False]:
@@ -485,9 +474,11 @@ def _oracle_evidence(oracles: tuple[OracleResult, ...]) -> set[str]:
 
 def _verify_result_projection(
     *,
+    plan: ReplayPlan,
     result: ReplayRunResult,
     action_log: tuple[ReplayActionLogEntry, ...],
     trace: RealityTraceArtifact,
+    expected_lane: RealityTraceLane,
     expected_run_id: str,
     expected_plan_id: str,
     expected_root_fingerprint: str,
@@ -496,7 +487,7 @@ def _verify_result_projection(
     expected_oracles: tuple[OracleResult, ...],
     expected_evidence_ids: tuple[str, ...],
     expected_status: ReplayRunStatus,
-) -> None:
+) -> str:
     if (
         result.run_id != expected_run_id
         or result.plan_id != expected_plan_id
@@ -510,6 +501,21 @@ def _verify_result_projection(
         or set(expected_evidence_ids) != _oracle_evidence(expected_oracles)
     ):
         raise _RealityVerificationError("replay-causal-binding-mismatch")
+    planned_step_ids = tuple(step.step_id for step in plan.steps)
+    if (
+        result.plan_id != plan.plan_id
+        or tuple(step.step_id for step in result.steps) != planned_step_ids
+        or tuple(entry.step_id for entry in result.action_log) != planned_step_ids
+        or any(
+            entry.action != planned.action
+            for planned, entry in zip(plan.steps, result.action_log, strict=True)
+        )
+    ):
+        raise _RealityVerificationError("replay-plan-execution-mismatch")
+    expected_trace = RealityTraceArtifact.from_replay_result(result, lane=expected_lane)
+    if trace != expected_trace:
+        raise _RealityVerificationError("replay-trace-semantics-mismatch")
+    return trace.semantic_trace_hash
 
 
 def _verify_static_artifacts(
@@ -517,7 +523,7 @@ def _verify_static_artifacts(
     receipt: RealityReplayReceipt,
     resolver: _EntryResolver,
     snapshot: Mapping[str, bytes],
-) -> tuple[RealityAdapterLock, ReplayPlan]:
+) -> tuple[RealityAdapterLock, ReplayPlan, RootSeed]:
     scope_entry = resolver.one(RealityArtifactRole.SCOPE)
     scope_artifact = _parse_model(
         RealityScopeArtifact,
@@ -571,19 +577,21 @@ def _verify_static_artifacts(
         or chain.plan_hash != receipt.plan_hash
     ):
         raise _RealityVerificationError("chain-binding-mismatch")
-    return adapter, plan
+    return adapter, plan, root
 
 
 def _verify_primary_attempts(
     *,
     receipt: RealityReplayReceipt,
+    plan: ReplayPlan,
     resolver: _EntryResolver,
     snapshot: Mapping[str, bytes],
-) -> None:
+) -> str:
     oracle_entry = resolver.one(RealityArtifactRole.PRIMARY_ORACLES)
     primary_oracles = _parse_vector(_ORACLE_VECTOR, _artifact(oracle_entry, snapshot))
     if primary_oracles != receipt.oracle_results:
         raise _RealityVerificationError("oracle-binding-mismatch")
+    semantic_trace_hashes: set[str] = set()
     for attempt in receipt.attempts:
         result_entry = resolver.one(
             RealityArtifactRole.PRIMARY_RESULT, run_id=attempt.replay_run_id
@@ -606,19 +614,26 @@ def _verify_primary_attempts(
         )
         if oracle_entry.sha256 != attempt.oracle_results_hash:
             raise _RealityVerificationError("oracle-binding-mismatch")
-        _verify_result_projection(
-            result=result,
-            action_log=action_log,
-            trace=trace,
-            expected_run_id=attempt.replay_run_id,
-            expected_plan_id=attempt.plan_id,
-            expected_root_fingerprint=attempt.root_fingerprint,
-            expected_trace_hash=attempt.trace_hash,
-            expected_signature=attempt.semantic_signature,
-            expected_oracles=primary_oracles,
-            expected_evidence_ids=attempt.evidence_ids,
-            expected_status=ReplayRunStatus.SUCCEEDED,
+        semantic_trace_hashes.add(
+            _verify_result_projection(
+                plan=plan,
+                result=result,
+                action_log=action_log,
+                trace=trace,
+                expected_lane=RealityTraceLane.PRIMARY,
+                expected_run_id=attempt.replay_run_id,
+                expected_plan_id=attempt.plan_id,
+                expected_root_fingerprint=attempt.root_fingerprint,
+                expected_trace_hash=attempt.trace_hash,
+                expected_signature=attempt.semantic_signature,
+                expected_oracles=primary_oracles,
+                expected_evidence_ids=attempt.evidence_ids,
+                expected_status=ReplayRunStatus.SUCCEEDED,
+            )
         )
+    if len(semantic_trace_hashes) != 1:
+        raise _RealityVerificationError("replay-trace-semantics-mismatch")
+    return semantic_trace_hashes.pop()
 
 
 def _verify_controls(
@@ -669,9 +684,11 @@ def _verify_controls(
         ):
             raise _RealityVerificationError("control-binding-mismatch")
         _verify_result_projection(
+            plan=plan,
             result=result,
             action_log=action_log,
             trace=trace,
+            expected_lane=RealityTraceLane.CONTROL,
             expected_run_id=control.replay_run_id,
             expected_plan_id=control.plan_id,
             expected_root_fingerprint=control.root_fingerprint,
@@ -688,6 +705,7 @@ def _verify_patch(
     receipt: RealityReplayReceipt,
     adapter_lock: RealityAdapterLock,
     plan: ReplayPlan,
+    primary_root: RootSeed,
     resolver: _EntryResolver,
     snapshot: Mapping[str, bytes],
 ) -> None:
@@ -734,17 +752,25 @@ def _verify_patch(
             root_fingerprint=patch.root_fingerprint,
             adapter_lock=adapter_lock,
         )
+        or patch.root_seed_id != primary_root.root_seed_id
+        or root.random_seed != primary_root.random_seed
+        or root.clock_epoch != primary_root.clock_epoch
+        or root.capture != primary_root.capture
+        or dict(root.adapter_versions) != dict(primary_root.adapter_versions)
         or plan.plan_id != patch.plan_id
         or oracles != patch.oracle_results
         or result.failed_step_id != patch.failed_step_id
         or failed is None
         or failed.failure_code != patch.failure_code
+        or patch.failure_code != "ORACLE_EXPECTATION_MISMATCH"
     ):
         raise _RealityVerificationError("patch-binding-mismatch")
     _verify_result_projection(
+        plan=plan,
         result=result,
         action_log=action_log,
         trace=trace,
+        expected_lane=RealityTraceLane.PATCH,
         expected_run_id=patch.replay_run_id,
         expected_plan_id=patch.plan_id,
         expected_root_fingerprint=patch.root_fingerprint,
@@ -790,7 +816,7 @@ def verify_reality_pre_receipt_bundle(
         if type(receipt_json) is not bytes or type(manifest_json) is not bytes:
             raise _RealityVerificationError("serialized-input-required")
         receipt = _parse_model(RealityReplayReceipt, receipt_json)
-        manifest = _parse_model(RealityEvidenceManifestV1, manifest_json)
+        manifest = _parse_model(RealityEvidenceManifestV2, manifest_json)
         manifest_sha256 = _tagged_sha256(manifest_json)
         if receipt.pre_receipt_evidence_manifest_sha256 != manifest_sha256:
             raise _RealityVerificationError("manifest-receipt-digest-mismatch")
@@ -803,17 +829,23 @@ def verify_reality_pre_receipt_bundle(
                 raise _RealityVerificationError("artifact-digest-mismatch")
 
         resolver = _EntryResolver(manifest.entries)
-        adapter_lock, plan = _verify_static_artifacts(
+        adapter_lock, plan, primary_root = _verify_static_artifacts(
             receipt=receipt,
             resolver=resolver,
             snapshot=snapshot,
         )
-        _verify_primary_attempts(receipt=receipt, resolver=resolver, snapshot=snapshot)
+        primary_semantic_trace_hash = _verify_primary_attempts(
+            receipt=receipt,
+            plan=plan,
+            resolver=resolver,
+            snapshot=snapshot,
+        )
         _verify_controls(receipt=receipt, resolver=resolver, snapshot=snapshot)
         _verify_patch(
             receipt=receipt,
             adapter_lock=adapter_lock,
             plan=plan,
+            primary_root=primary_root,
             resolver=resolver,
             snapshot=snapshot,
         )
@@ -825,6 +857,9 @@ def verify_reality_pre_receipt_bundle(
             receipt_hash=receipt.receipt_hash,
             pre_receipt_manifest_sha256=manifest_sha256,
             snapshot_sha256=_snapshot_sha256(manifest_json, snapshot),
+            profile=manifest.profile,
+            event_semantics_verified=True,
+            primary_semantic_trace_hash=primary_semantic_trace_hash,
         )
     except _RealityVerificationError as error:
         return RealityBundleVerificationResult(valid=False, errors=(error.code,))
@@ -843,11 +878,15 @@ __all__ = [
     "RealityEvidenceFact",
     "RealityEvidenceIndex",
     "RealityEvidenceItem",
-    "RealityEvidenceManifestV1",
+    "RealityEvidenceManifestV2",
     "RealityManifestEntry",
     "RealityScopeArtifact",
     "RealityTargetLock",
     "RealityTraceArtifact",
     "RealityTraceEvent",
+    "RealityTraceEventKind",
+    "RealityTraceEventType",
+    "RealityTraceFact",
+    "RealityTraceLane",
     "verify_reality_pre_receipt_bundle",
 ]

@@ -33,14 +33,18 @@ a trusted archive or snapshotting service before this verifier is called.
 `verify_reality_pre_receipt_bundle` is the first deliberately narrow M6 resolver. It accepts only
 serialized receipt/manifest bytes plus an in-memory `Mapping[str, bytes]`, snapshots each mapping
 entry once, and verifies exact manifest coverage, raw-byte digests, typed schemas, and the causal
-bindings among scope, target/adapter locks, plan/root/chain, replay results, action logs, logical
-trace hashes, Oracle evidence, controls, patch replay, and evidence index.
+bindings among scope, target/adapter locks, plan/root/chain, replay results, action logs, semantic
+trace events, Oracle evidence, controls, patch replay, and evidence index. Every result must execute
+the retained plan envelopes exactly. For primary, control, and patch lanes, the resolver rebuilds a
+V2 start/step/completion event vector from the typed result and action log and requires byte-parsed
+trace semantics to match it exactly.
 
-This `source-backed-synthetic-v1` profile uses the contracts canonical JSON dialect: compact,
+This `source-backed-synthetic-v2` profile uses the contracts canonical JSON dialect: compact,
 sorted-key UTF-8 with no trailing line feed. That is intentionally distinct from the M0/M1
 acceptance-artifact dialect, which includes one trailing line feed. The resolver accepts no paths,
 issuer claim, signature, caller `verified` flag, or model instance. Even a valid result is always
 `authoritative=False` and `promotable=False`; target/adapter source digests remain claims inside
-their resolved lock artifacts until a trusted store binds them to retained source bytes. Trace
-event rows are content-bound by the manifest, but this profile does not independently recompute
-their event attributes from an execution engine.
+their resolved lock artifacts until a trusted store binds them to retained source bytes. Event
+reconstruction proves agreement with the supplied typed replay result, not that an authenticated
+execution engine produced that result. The negative-control delta remains a content-bound claim;
+general mutation-to-delta derivation belongs to the future broker.
