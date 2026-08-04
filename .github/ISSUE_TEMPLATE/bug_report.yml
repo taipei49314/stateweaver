@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a reproducible defect in the bundled synthetic or local workflow.
+title: "[Bug]: "
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Do not include secrets, exploit details for third-party systems, or private target data.
+        Security vulnerabilities belong in private vulnerability reporting.
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      placeholder: git rev-parse HEAD
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Execution scope
+      options:
+        - Bundled in-process synthetic lab
+        - Localhost Docker Compose synthetic lab
+        - Static tooling only
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include deterministic commands, root/plan identifiers, and sanitized output.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: This report uses only synthetic, localhost, owned, or explicitly authorized scope.
+          required: true
+        - label: I removed credentials, private target data, and sensitive proof artifacts.
+          required: true

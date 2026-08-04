@@ -6,7 +6,9 @@ build-backend = "hatchling.build"
 name = "stateweaver-adapter-docker-compose"
 version = "0.1.0"
 description = "Fail-closed Docker Compose adapter for StateWeaver's fixed synthetic demo."
+readme = "README.md"
 requires-python = ">=3.12"
+license = "Apache-2.0"
 dependencies = [
   "pydantic>=2.12,<3",
   "stateweaver-worlds==0.1.0",

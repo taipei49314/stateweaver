@@ -2,6 +2,11 @@
 
 > Fork security states, not just agent conversations.
 
+[![CI](https://github.com/taipei49314/stateweaver/actions/workflows/ci.yml/badge.svg)](https://github.com/taipei49314/stateweaver/actions/workflows/ci.yml)
+[![Python 3.12–3.13](https://img.shields.io/badge/python-3.12%E2%80%933.13-3776AB.svg?logo=python&logoColor=white)](pyproject.toml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange.svg)](docs/architecture/TRACEABILITY.md)
+
 ![StateWeaver deterministic local workspace](output/playwright/stateweaver-final/overview-content-verified.png)
 
 StateWeaver is a state-first security research engine for **authorized, reproducible labs**. It
@@ -13,6 +18,24 @@ deterministic verdict.
 Root state -> World DAG -> Local transitions -> Chain compiler
            -> Clean replay -> Oracle verdict -> Patched replay
 ```
+
+## Run the deterministic proof
+
+The bundled proof needs no API key, Docker daemon, model provider, or external target. It runs
+entirely against the fixed in-process synthetic lab:
+
+```bash
+git clone https://github.com/taipei49314/stateweaver.git
+cd stateweaver
+uv sync --all-packages --group dev --locked
+uv run stateweaver --json doctor
+uv run stateweaver --json foundation verify
+```
+
+The final command performs five clean-root vulnerable replays, negative controls, and the same
+plan against the patched build. It exits nonzero unless the machine-readable proof closes. Start
+with the [architecture baseline](ARCHITECTURE.md), [traceability matrix](docs/architecture/TRACEABILITY.md),
+or [proof verification guide](docs/PROOF_VERIFICATION.md) for the trust boundaries.
 
 ## Why this is different
 
@@ -27,6 +50,16 @@ Root state -> World DAG -> Local transitions -> Chain compiler
   public-benchmark claims behind a higher release bar.
 
 ## Current status
+
+StateWeaver is a pre-alpha research implementation. Its fixed synthetic flows pass local
+formatting, typing, unit, integration, race, browser, build, and proof gates; live-provider and
+clean-machine M6 certification remain intentionally unclaimed. This repository is currently a
+source-only preview: no PyPI package or versioned GitHub Release is offered yet.
+
+<details>
+<summary>Implementation and trust-boundary detail</summary>
+
+<br>
 
 Architecture baseline v1 is being implemented milestone-by-milestone. The proof-producing M0/M1
 foundation, M3 semantic-twin flow, and M4 offline search flow pass locally. M2 deliberately remains
@@ -84,6 +117,8 @@ self-contained history also has no external freshness attestation. The flow perf
 I/O, and it does not turn the abstract allocation into a live materialized-provider, Twin-derived
 ranking, executed replay, or release-certification claim.
 
+</details>
+
 | Milestone | Auditable local status | Evidence |
 | --- | --- | --- |
 | M0 Contracts + Lab | Foundation proof passes; release audit pending | `packages/contracts/`, `labs/multitenant-saas/` |
@@ -92,7 +127,7 @@ ranking, executed replay, or release-certification claim.
 | M3 Semantic Twin | Source + OTLP + state-delta flow and observed-fragment pipeline pass | `packages/twin/`, `tests/integration/twin/`, `tests/integration/pipeline/` |
 | M4 Search | Offline 24 → 4 → 2 → 1 flow preserves the observed candidate | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
 | M5 Chain Compiler | Three observed fragments cross the admission bridge; synthetic replay closure hardened | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
-| M6 Reality + Proof | V2 event reconstruction + immutable-byte candidate resolver pass; trusted broker absent | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
+| M6 Reality + Proof | V2 event reconstruction + traceable publication candidate pass; trusted broker absent | `packages/contracts/`, `packages/evidence/`, `packages/reporting/`, `tests/e2e/proof_bundle/` |
 | M7 StateChainBench | Trusted built-in synthetic runner hardened; not equal-work or public-certified | `benchmarks/statechainbench/` |
 | M8 Public UX | Read-only fixed API + four-workspace client pass local contract/browser QA | `apps/api/`, `apps/web/` |
 

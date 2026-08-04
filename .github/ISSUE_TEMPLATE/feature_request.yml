@@ -1,0 +1,33 @@
+name: Feature request
+description: Propose a bounded, reproducible StateWeaver capability.
+title: "[Feature]: "
+labels: [enhancement, triage]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: State or evidence problem
+      description: Describe the missing state transition, evidence boundary, or workflow.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed capability
+      description: Explain typed inputs, outputs, authorization gates, and deterministic validation.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Machine-checkable acceptance
+      description: State the test, Oracle, or proof condition that would close the change.
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundary
+    attributes:
+      label: Scope boundary
+      options:
+        - label: The proposal does not require unauthorized targets, arbitrary egress, or real secrets.
+          required: true

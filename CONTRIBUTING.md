@@ -7,18 +7,22 @@ claim.
 ## Set up
 
 ```bash
-uv sync --all-packages --group dev
+uv sync --all-packages --group dev --locked
 uv run pytest
 ```
 
 ## Before opening a pull request
 
 ```bash
-uv run ruff format .
+uv run ruff format --check .
 uv run ruff check .
-uv run mypy packages labs
-uv run pytest --cov
+uv run mypy packages adapters apps labs workflows benchmarks tests
+uv run pytest --cov --cov-report=term-missing
+uv lock --check --offline
 ```
+
+For changes under `apps/web/`, also run `npm ci`, `npm run format:check`, `npm run lint`,
+`npm run typecheck`, `npm test`, and `npm run build` from that directory.
 
 Add focused unit tests and, where state is involved, at least one deterministic replay or property
 test. New adapters also require conformance tests for cleanup, idempotency, isolation, redaction,

@@ -9,8 +9,8 @@ egress and requires typed actions plus server-side policy decisions.
 ## Reporting a vulnerability
 
 Do not open a public issue containing exploit details, credentials, private target information, or
-proof bundles with sensitive artifacts. Use the repository's private security-advisory channel
-once one is configured. Until then, provide only a minimal redacted description to the maintainer.
+proof bundles with sensitive artifacts. Use
+[GitHub private vulnerability reporting](https://github.com/taipei49314/stateweaver/security/advisories/new).
 
 Include the affected version, impact, safe reproduction against the bundled synthetic lab, and a
 suggested mitigation if known. Never test a report against infrastructure you do not own or have

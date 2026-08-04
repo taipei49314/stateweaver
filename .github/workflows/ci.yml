@@ -59,7 +59,14 @@ jobs:
           uv run pytest packages/contracts/tests --junitxml=artifacts/acceptance/junit/contracts.xml
           uv run pytest packages/policy/tests --junitxml=artifacts/acceptance/junit/policy.xml
           uv run pytest labs/multitenant-saas/tests --junitxml=artifacts/acceptance/junit/lab.xml
-          uv run pytest packages/replay/tests adapters/environments/in_process_lab/tests apps/cli/tests packages/evidence/tests --junitxml=artifacts/acceptance/junit/replay.xml
+          uv run pytest \
+            packages/replay/tests \
+            adapters/environments/in_process_lab/tests \
+            apps/cli/tests \
+            packages/evidence/tests \
+            packages/reporting/tests \
+            tests/e2e/proof_bundle \
+            --junitxml=artifacts/acceptance/junit/replay.xml
 
       - name: Collect and verify causal acceptance proof
         if: matrix.python-version == '3.13'
@@ -99,8 +106,10 @@ jobs:
             dist/stateweaver_evidence-*.whl \
             dist/stateweaver_lab_multitenant_saas-*.whl \
             dist/stateweaver_policy-*.whl \
-            dist/stateweaver_replay-*.whl
+            dist/stateweaver_replay-*.whl \
+            dist/stateweaver_reporting-*.whl
           VIRTUAL_ENV="$PWD/.packaging-smoke" UV_OFFLINE=1 uv pip check
+          .packaging-smoke/bin/python -c "from stateweaver.reporting import RealityPublicationManifest"
           .packaging-smoke/bin/stateweaver --json doctor
           .packaging-smoke/bin/stateweaver --json foundation verify
           .packaging-smoke/bin/stateweaver foundation verify-evidence \

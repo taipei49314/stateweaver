@@ -17,6 +17,12 @@ classifiers = [
   "Topic :: Security",
 ]
 
+[project.urls]
+Homepage = "https://github.com/taipei49314/stateweaver"
+Repository = "https://github.com/taipei49314/stateweaver.git"
+Issues = "https://github.com/taipei49314/stateweaver/issues"
+Documentation = "https://github.com/taipei49314/stateweaver/tree/main/docs"
+
 [dependency-groups]
 dev = [
   "hypothesis>=6.130,<7",

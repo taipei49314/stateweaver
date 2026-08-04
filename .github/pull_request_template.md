@@ -7,8 +7,10 @@
 - [ ] Tests added or updated
 - [ ] `uv run ruff format --check .`
 - [ ] `uv run ruff check .`
-- [ ] `uv run mypy packages adapters apps labs`
-- [ ] `uv run pytest`
+- [ ] `uv run mypy packages adapters apps labs workflows benchmarks tests`
+- [ ] `uv run pytest --cov --cov-report=term-missing`
+- [ ] `uv lock --check --offline`
+- [ ] Web format/lint/typecheck/test/build gates run when `apps/web/` changed
 
 ## Security boundary
 

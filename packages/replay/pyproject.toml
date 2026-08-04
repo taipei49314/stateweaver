@@ -2,7 +2,9 @@
 name = "stateweaver-replay"
 version = "0.1.0"
 description = "Deterministic clean-root replay kernel for StateWeaver."
+readme = "README.md"
 requires-python = ">=3.12"
+license = "Apache-2.0"
 dependencies = [
   "pydantic>=2.12,<3",
   "stateweaver-contracts==0.1.0",
