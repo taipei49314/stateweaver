@@ -71,8 +71,9 @@ The receipt and V2 resolver close eight substitution boundaries:
    `receipt_id` is derived from that full digest. The projection binds
    `pre_receipt_evidence_manifest_sha256`: the canonical evidence-only manifest created before the
    receipt. That manifest explicitly excludes the receipt, `finding.json`, final report,
-   publication manifest, and broker attestation. A future final publication manifest may include
-   all of them without being fed back into the receipt hash.
+   publication manifest, and broker attestation. The reporting package now layers a final
+   publication-candidate manifest over the exact pre-receipt artifacts, pre-receipt manifest,
+   receipt, and deterministic report without feeding any of them back into the receipt hash.
 
 The `Finding` validator reconstructs and validates the nested receipt from ordinary data before it
 checks chain, Oracle-set, and status coherence. This prevents a nested Pydantic instance created via
@@ -90,6 +91,16 @@ Finding, report, publication-manifest, and attestation paths from the pre-receip
 profile uses compact sorted-key contracts JSON with no trailing line feed. Its result exposes a
 domain-separated snapshot hash, but its `authoritative` and `promotable` properties are permanently
 false; it is not accepted by the `Finding` promotion gate.
+
+`build_reality_publication` and `verify_reality_publication` add a deterministic, in-memory
+reporting boundary. The builder snapshots caller artifacts once, reruns the pre-receipt resolver,
+and derives `report.md` plus a canonical payload manifest. Every report row links to exact retained
+bytes and distinguishes a receipt-carried raw digest from a typed causal-verifier binding. The
+payload manifest never lists itself, and its exact digest is returned out of band. The verifier
+reconstructs the pre-receipt manifest, reruns causal verification, and byte-rederives both report
+and final manifest. These APIs accept no filesystem path, issuer assertion, clock, random ID, or
+caller-supplied verification result. Their outputs permanently expose `authoritative=False`,
+`promotable=False`, `attested=False`, and `control_kind_semantics_attested=False`.
 
 The generic event boundary is independently upgraded to `EventEnvelope`/`EventHistory` schema
 `2.0`. `payload_hash` remains a payload-only digest, while a domain-separated `semantic_hash` binds

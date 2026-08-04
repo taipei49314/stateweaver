@@ -63,7 +63,12 @@ and delta-only coherent remints are rejected. The enum kind is still an explicit
 producer label, not a proved mutation witness. These remain self-contained integrity checks, not
 freshness or execution attestation. The resolver accepts no filesystem path or issuer assertion
 and always returns a non-authoritative, non-promotable candidate; authenticated retention and
-source/issuer trust remain open.
+source/issuer trust remain open. A deterministic reporting layer now turns that exact snapshot into
+an in-memory publication candidate: its `report.md` links every claim to retained artifact bytes,
+and a non-recursive canonical manifest binds the pre-receipt payload, receipt, and report. A second
+consumer re-derives the pre-receipt projection, report, and final manifest rather than trusting
+producer prose. The result remains non-authoritative, non-promotable, and unattested; no trusted
+broker, portable clean-machine reproduction, or M6 certification is claimed.
 
 One horizontal local integration now preserves the same three TestClient/OTLP/state-delta
 `OBSERVED` fragments through a 24 -> 4 -> 2 -> 1 in-memory search and Materialized-tier admission,

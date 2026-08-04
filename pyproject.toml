@@ -45,6 +45,7 @@ members = [
   "packages/evidence",
   "packages/policy",
   "packages/replay",
+  "packages/reporting",
   "packages/search",
   "packages/twin",
   "packages/worlds",
@@ -54,7 +55,11 @@ members = [
 
 [tool.pytest.ini_options]
 addopts = '--strict-config --strict-markers -ra -m "not docker_integration"'
-pythonpath = ["packages/search/tests"]
+pythonpath = [
+  "packages/evidence/tests",
+  "packages/reporting/src",
+  "packages/search/tests",
+]
 testpaths = ["packages", "adapters", "apps", "labs", "workflows", "benchmarks", "tests"]
 xfail_strict = true
 markers = [
@@ -105,6 +110,8 @@ mypy_path = [
   "packages/replay/src",
   "packages/evidence/src",
   "packages/evidence/tests",
+  "packages/reporting/src",
+  "packages/reporting/tests",
   "packages/search/src",
   "packages/search/tests",
   "packages/twin/src",

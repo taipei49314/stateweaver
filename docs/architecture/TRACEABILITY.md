@@ -265,7 +265,7 @@ clean-room execution remains synthetic and uses its own mocked fragment fixture.
 **Architecture deliverables:** Reality Replay Broker, negative controls, patched-version replay,
 finding status machine, and Reality Proof Bundle.
 
-**Planned paths**
+**Current paths**
 
 - `packages/contracts/` (implemented receipt and finding status gate)
 - `packages/replay/` (extension)
@@ -273,7 +273,7 @@ finding status machine, and Reality Proof Bundle.
 - `packages/reporting/`
 - `tests/e2e/proof_bundle/`
 
-**Planned acceptance command**
+**Local acceptance command**
 
 ```powershell
 uv run pytest packages/contracts/tests packages/replay/tests packages/evidence/tests packages/reporting/tests tests/e2e/proof_bundle -q
@@ -312,10 +312,20 @@ remints, and V1 downgrade are rejected. These self-contained histories and proje
 provide external freshness. The resolver result is permanently non-authoritative and
 non-promotable.
 
+The reporting package now consumes only serialized receipt/manifest bytes and a single-read
+in-memory artifact snapshot. It re-runs the pre-receipt resolver, emits a deterministic
+`report.md` with one exact artifact link per manifest row, and creates a canonical final payload
+manifest that binds the pre-receipt artifacts, pre-receipt manifest, receipt, and report. The final
+manifest deliberately excludes itself; its digest is returned out of band for a future trusted
+issuer. Verification reconstructs the original pre-receipt projection and report from retained
+bytes, so payload omission, substitution, report-only coherent reminting, source-role reminting,
+unsafe paths, and default omission fail closed. The publication result is permanently
+`authoritative=False`, `promotable=False`, and `attested=False`.
+
 This content hash and candidate resolver prove one supplied snapshot's internal coherence, not
 issuer identity, authenticated retention, target/adapter source provenance, or independent
-execution. The general Reality Replay Broker, trusted store acquisition, reporting layer, trusted
-issuance/attestation, and portable M6 reproduction workflow remain absent. The Finding validator
+execution. The general Reality Replay Broker, trusted store acquisition, trusted
+issuance/attestation, and portable clean-machine M6 reproduction workflow remain absent. The Finding validator
 therefore rejects both reserved confirmed statuses. M6 is **partially implemented and not
 certified**. Kind-specific typed mutation witnesses, authenticated execution provenance, and
 retained source-byte resolution remain open. See `docs/architecture/M6_REALITY_RECEIPT.md` for the
