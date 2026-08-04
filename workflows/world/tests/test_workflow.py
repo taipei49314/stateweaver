@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-from search_test_fixtures import candidate, fragment, gates, ledger
+from search_test_fixtures import candidate, condition, fragment, gates, ledger
+from stateweaver.compiler import RootState
 from stateweaver.contracts import WorldTier
 from stateweaver.search import (
     BeamSearchPolicy,
@@ -29,6 +30,8 @@ from stateweaver.workflows.world import (
 class MemoryAllocator:
     fail_candidates: set[str] = field(default_factory=set)
     reused_identity: str | None = None
+    reused_allocation: str | None = None
+    unchecked_model: bool = False
     allocated: list[AllocatedWorld] = field(default_factory=list)
     released: list[AllocatedWorld] = field(default_factory=list)
 
@@ -38,13 +41,15 @@ class MemoryAllocator:
         suffix = request.candidate_id.removeprefix("candidate.")
         tier = request.target_tier.value
         allocation = AllocatedWorld(
-            allocation_id=f"allocation.{tier}.{suffix}",
+            allocation_id=self.reused_allocation or f"allocation.{tier}.{suffix}",
             candidate_id=request.candidate_id,
             target_tier=request.target_tier,
             state_fingerprint=request.state_fingerprint,
             sibling_identity=self.reused_identity or f"identity:world.{tier}.{suffix}",
         )
         self.allocated.append(allocation)
+        if self.unchecked_model:
+            return allocation.model_copy(update={"allocation_id": "unchecked allocation"})
         return allocation
 
     async def release(self, allocation: AllocatedWorld) -> None:
@@ -56,6 +61,7 @@ class MemoryCapture:
     fail_candidates: set[str] = field(default_factory=set)
     cancel_candidates: set[str] = field(default_factory=set)
     bad_oracle: bool = False
+    unchecked_root: bool = False
 
     async def capture(
         self, request: AllocationRequest, allocation: AllocatedWorld
@@ -65,14 +71,25 @@ class MemoryCapture:
         if request.candidate_id in self.cancel_candidates:
             raise asyncio.CancelledError()
         index = request.candidate_id.rsplit(".", maxsplit=1)[-1]
-        return CaptureReceipt(
+        receipt = CaptureReceipt(
             allocation_id=allocation.allocation_id,
             candidate_id=request.candidate_id,
             state_fingerprint=request.state_fingerprint,
+            compiler_root=RootState(
+                root_seed_id=f"root.synthetic.{index}",
+                world_id=allocation.allocation_id,
+                conditions=(condition(),),
+            ),
             evidence_ref=f"ev.synthetic.{index}",
             oracle_ref=f"oracle.synthetic.{index}",
             oracle_passed=not self.bad_oracle,
         )
+        if self.unchecked_root:
+            bad_root = receipt.compiler_root.model_copy(
+                update={"world_id": "allocation.synthetic.substituted"}
+            )
+            return receipt.model_copy(update={"compiler_root": bad_root})
+        return receipt
 
 
 def _workflow(
@@ -195,6 +212,26 @@ async def test_policy_evidence_and_oracle_gates_cannot_be_bypassed_by_model_scor
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ("allocator", "capture"))
+async def test_unchecked_callback_models_are_revalidated_before_commit(boundary: str) -> None:
+    item = candidate(46)
+    allocator = MemoryAllocator(unchecked_model=boundary == "allocator")
+    capture = MemoryCapture(unchecked_root=boundary == "capture")
+    workflow, _, _ = _workflow(
+        allocator,
+        capture,
+        initial_ledger=ledger(max_replay=1),
+    )
+
+    result = await workflow.advance(SearchBatch(candidates=(item,)))
+
+    assert not result.promotions
+    assert result.committed_ledger.usage().replay_worlds == 0
+    if boundary == "capture":
+        assert allocator.released == allocator.allocated
+
+
+@pytest.mark.asyncio
 async def test_fingerprint_dedup_and_reused_sibling_identity_fail_closed() -> None:
     duplicate_left = candidate(5, state_bucket=50)
     duplicate_right = candidate(6, state_bucket=50)
@@ -213,6 +250,20 @@ async def test_fingerprint_dedup_and_reused_sibling_identity_fail_closed() -> No
     assert len(result.promotions) == 1
     assert len(allocator.released) == 1
     assert result.committed_ledger.usage().replay_worlds == 1
+
+
+@pytest.mark.asyncio
+async def test_reused_allocation_id_fails_closed_with_distinct_sibling_identities() -> None:
+    first = candidate(47)
+    second = candidate(48)
+    allocator = MemoryAllocator(reused_allocation="allocation.replay.reused")
+    workflow, _, _ = _workflow(allocator, initial_ledger=ledger(max_replay=2))
+
+    result = await workflow.advance(SearchBatch(candidates=(first, second)))
+
+    assert not result.promotions
+    assert len(allocator.released) == 1
+    assert result.committed_ledger.usage().replay_worlds == 0
 
 
 @pytest.mark.asyncio

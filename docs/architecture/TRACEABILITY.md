@@ -15,9 +15,9 @@ acceptance commands are intentionally local and do not require network access.
 | M0 — Contracts + Lab | Proof-producing foundation passes locally; formal exit audit pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/policy/`, `packages/evidence/` |
 | M1 — Deterministic Replay Kernel | Proof-producing foundation passes locally; formal exit audit pending | `packages/replay/`, `adapters/environments/in_process_lab/`, `apps/cli/` |
 | M2 — Materialized World Engine | Synthetic archive + per-world concurrency implemented; live Docker and real-provider proof pending | `packages/worlds/`, `adapters/environments/docker_compose/`, `tests/integration/worlds/` |
-| M3 — Security Semantic Twin | Exit flow passes locally; release certification pending | `packages/twin/`, source/OTel adapters, `tests/integration/twin/` |
-| M4 — Tiered Search Controller | Offline exit flow passes locally; materialized certification pending | `packages/search/`, `workflows/world/` |
-| M5 — Chain Compiler | Synthetic action/auth/effect/root/expiry closure hardened; release evidence pending | `packages/compiler/`, `tests/integration/compiler/` |
+| M3 — Security Semantic Twin | Exit flow and observed-fragment pipeline pass locally; release certification pending | `packages/twin/`, source/OTel adapters, `tests/integration/twin/`, `tests/integration/pipeline/` |
+| M4 — Tiered Search Controller | Offline exit flow preserves the observed candidate; materialized certification pending | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
+| M5 — Chain Compiler | Observed admission bridge and synthetic replay closure pass; release evidence pending | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
 | M6 — Reality Anchor + Proof Bundle | Typed Finding gate + immutable-byte candidate resolver implemented; trusted broker pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
 | M7 — StateChainBench | Trusted built-in synthetic runner hardened; equal-work/public audit pending | `benchmarks/statechainbench/` |
 | M8 — Web UI + Public Release | Fixed synthetic API/client and local browser QA pass; public release pending | `apps/api/`, `apps/web/` |
@@ -158,6 +158,7 @@ state-delta learning, and provenance/fidelity tracking.
 - `adapters/source/fastapi_sqlalchemy/`
 - `adapters/telemetry/opentelemetry/`
 - `tests/integration/twin/`
+- `tests/integration/pipeline/`
 
 **Acceptance command**
 
@@ -172,6 +173,12 @@ delta, and emits an evidence-bound observed `TransitionFragment`. It opens no so
 external data. The stated M3 exit flow passes locally; retained release evidence and the formal
 release audit are still pending, so M3 is **implemented but not release-certified**.
 
+The horizontal pipeline test adds three socket-free TestClient flows with caller-constructed
+synthetic OTLP and state-delta evidence. Their three resulting `OBSERVED` fragments are preserved
+byte-for-byte through search admission and compiler input. This proves local typed data continuity,
+not application-emitted telemetry, runtime-derived state learning, authenticated telemetry
+provenance, or a live target observation.
+
 ## M4 — Tiered Search Controller
 
 **Architecture deliverables:** hypothesis schema, Ghost/Replay/Simulated tiers, beam frontier,
@@ -183,6 +190,7 @@ budget ledger, and promotion/prune gates.
 - `packages/mutations/`
 - `workflows/world/`
 - `tests/property/search/`
+- `tests/integration/pipeline/`
 
 **Acceptance command**
 
@@ -200,6 +208,14 @@ isolation, and a canonical event log. The local 24 → 4 → 2 → 1 synthetic f
 materialized allocation and retained release evidence are pending, so M4 is **implemented offline,
 not release-certified**.
 
+The cross-milestone pipeline additionally proves that the winning candidate retains the same three
+observed fragments across the 24 -> 4 -> 2 -> 1 reduction and that its in-memory Materialized-tier
+promotion record is independently rebound before compilation. Admission replays the controller from
+the exact batch, input ledger, and beam policy, then independently checks provisional and committed
+reservations. The winning hypothesis/state/score remain hand-authored fixtures rather than Twin-
+derived ranking inputs. "Materialized-tier" here is a typed workflow outcome backed by abstract
+callbacks; it is not a Docker/provider materialization claim.
+
 ## M5 — Chain Compiler
 
 **Architecture deliverables:** fragment graph, constraint translation, candidate plan generation,
@@ -209,6 +225,7 @@ clean-room replay, and chain minimization.
 
 - `packages/compiler/`
 - `tests/integration/compiler/`
+- `tests/integration/pipeline/`
 
 **Acceptance command**
 
@@ -226,6 +243,15 @@ and one-use authorization; substitution tests require rejection before state cha
 evidence is contained in the terminal observation. This closes the local synthetic integrity
 review, but retained release evidence and a non-synthetic chain are still pending. M5 is therefore
 **locally hardened, not release-certified**.
+
+`compile_observed_promotion` now joins M4 to M5 without weakening either trust boundary. It rejects
+candidate, promotion, state, evidence, policy, approval, world, goal, or fragment substitution,
+revalidates unchecked model instances, takes its exact `RootState` only from the capture receipt,
+requires fragment preconditions/effects to equal the action-envelope guards/effects, checks the
+compiler output against every closed input, and fails if minimization drops an admitted observed
+fragment. The pipeline test compiles all three M3-observed fragments into a deterministic three-step
+plan requiring fresh authorization. That plan is not executed by this test; the separate M5
+clean-room execution remains synthetic and uses its own mocked fragment fixture.
 
 ## M6 — Reality Anchor + Proof Bundle
 

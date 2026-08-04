@@ -55,14 +55,22 @@ digest, result/logical-trace, Oracle, control, patch, and evidence-index substit
 filesystem path or issuer assertion and always returns a non-authoritative, non-promotable
 candidate; authenticated retention and source/issuer trust remain open.
 
+One horizontal local integration now preserves the same three TestClient/OTLP/state-delta
+`OBSERVED` fragments through a 24 -> 4 -> 2 -> 1 in-memory search and Materialized-tier admission,
+then compiles all three into a minimal typed chain. The bridge independently rebinds promotion,
+state, evidence, Oracle, the replayed beam decision, provisional and committed budgets, the
+capture-supplied compiler root, policy/approval, allocation world, terminal goal, envelope semantics,
+and compiler output. It performs no external I/O, and it does not turn the abstract allocation into
+a live materialized-provider, Twin-derived ranking, executed replay, or release-certification claim.
+
 | Milestone | Auditable local status | Evidence |
 | --- | --- | --- |
 | M0 Contracts + Lab | Foundation proof passes; release audit pending | `packages/contracts/`, `labs/multitenant-saas/` |
 | M1 Deterministic Replay | Five-run clean-root differential passes | `packages/replay/`, `apps/cli/` |
 | M2 World Engine | Archive + lifecycle authority/concurrency pass; live Docker/provider proof absent | `packages/worlds/`, `tests/integration/worlds/`, adapter `PARTIAL` |
-| M3 Semantic Twin | Source + OTLP + state-delta flow passes | `packages/twin/`, `tests/integration/twin/` |
-| M4 Search | Offline 24 → 4 → 2 → 1 flow passes | `packages/search/`, `workflows/world/` |
-| M5 Chain Compiler | Three-fragment synthetic E2E; action/auth/effect/root/expiry closure hardened | `packages/compiler/`, `tests/integration/compiler/` |
+| M3 Semantic Twin | Source + OTLP + state-delta flow and observed-fragment pipeline pass | `packages/twin/`, `tests/integration/twin/`, `tests/integration/pipeline/` |
+| M4 Search | Offline 24 → 4 → 2 → 1 flow preserves the observed candidate | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
+| M5 Chain Compiler | Three observed fragments cross the admission bridge; synthetic replay closure hardened | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
 | M6 Reality + Proof | Finding gate + immutable-byte candidate resolver pass; trusted broker absent | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
 | M7 StateChainBench | Trusted built-in synthetic runner hardened; not equal-work or public-certified | `benchmarks/statechainbench/` |
 | M8 Public UX | Read-only fixed API + four-workspace client pass local contract/browser QA | `apps/api/`, `apps/web/` |

@@ -1,5 +1,10 @@
 """Offline typed orchestration of search promotions into abstract worlds."""
 
+from .chain import (
+    ObservedChainAdmission,
+    ObservedChainAdmissionError,
+    compile_observed_promotion,
+)
 from .models import (
     AllocatedWorld,
     AllocationRequest,
@@ -16,6 +21,8 @@ __all__ = [
     "AllocatedWorld",
     "AllocationRequest",
     "CaptureReceipt",
+    "ObservedChainAdmission",
+    "ObservedChainAdmissionError",
     "PromotionEvent",
     "PromotionEventKind",
     "PromotionRecord",
@@ -23,4 +30,5 @@ __all__ = [
     "WorldAllocator",
     "WorldCapture",
     "WorldPromotionWorkflow",
+    "compile_observed_promotion",
 ]

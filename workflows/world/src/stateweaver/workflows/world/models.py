@@ -6,9 +6,14 @@ from enum import StrEnum
 from typing import Annotated
 
 from pydantic import Field, model_validator
-from stateweaver.contracts import ContractId, Sha256Digest, WorldTier
+from stateweaver.compiler import RootState
+from stateweaver.contracts import (
+    ContractId,
+    Sha256Digest,
+    WorldTier,
+)
 from stateweaver.contracts.base import ContractModel, IdentityHandle
-from stateweaver.search import BudgetLedger, SearchResult
+from stateweaver.search import BeamSearchPolicy, BudgetLedger, SearchResult
 
 
 class PromotionEventKind(StrEnum):
@@ -40,9 +45,16 @@ class CaptureReceipt(ContractModel):
     allocation_id: ContractId
     candidate_id: ContractId
     state_fingerprint: Sha256Digest
+    compiler_root: RootState
     evidence_ref: ContractId
     oracle_ref: ContractId
     oracle_passed: bool
+
+    @model_validator(mode="after")
+    def compiler_root_binds_allocation(self) -> CaptureReceipt:
+        if self.compiler_root.world_id != self.allocation_id:
+            raise ValueError("captured compiler root must bind the allocation")
+        return self
 
 
 class PromotionEvent(ContractModel):
@@ -78,6 +90,7 @@ class PromotionRecord(ContractModel):
         if (
             self.candidate_id != self.allocation.candidate_id
             or self.candidate_id != self.capture.candidate_id
+            or self.allocation.target_tier is not self.target_tier
             or self.allocation.allocation_id != self.capture.allocation_id
             or self.allocation.state_fingerprint != self.capture.state_fingerprint
             or not self.capture.oracle_passed
@@ -87,6 +100,8 @@ class PromotionRecord(ContractModel):
 
 
 class WorkflowResult(ContractModel):
+    input_ledger: BudgetLedger
+    search_policy: BeamSearchPolicy
     search: SearchResult
     committed_ledger: BudgetLedger
     promotions: tuple[PromotionRecord, ...]
@@ -94,13 +109,22 @@ class WorkflowResult(ContractModel):
 
     @model_validator(mode="after")
     def result_is_consistent(self) -> WorkflowResult:
+        prefix = self.committed_ledger.reservations[: len(self.input_ledger.reservations)]
+        if prefix != self.input_ledger.reservations:
+            raise ValueError("committed ledger must preserve the complete input history")
         if tuple(event.sequence for event in self.events) != tuple(range(1, len(self.events) + 1)):
             raise ValueError("promotion events must have a contiguous sequence")
         ids = [item.candidate_id for item in self.promotions]
+        allocation_ids = [item.allocation.allocation_id for item in self.promotions]
         identities = [item.allocation.sibling_identity for item in self.promotions]
-        if len(ids) != len(set(ids)) or len(identities) != len(set(identities)):
+        if (
+            len(ids) != len(set(ids))
+            or len(allocation_ids) != len(set(allocation_ids))
+            or len(identities) != len(set(identities))
+        ):
             raise ValueError(
-                "committed promotions must have unique candidates and sibling identities"
+                "committed promotions require unique candidates, allocations, "
+                "and sibling identities"
             )
         reservations = {item.reservation_id for item in self.committed_ledger.reservations}
         if any(item.reservation_id not in reservations for item in self.promotions):

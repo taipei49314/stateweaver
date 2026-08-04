@@ -28,6 +28,10 @@ from .models import (
 from .ports import WorldAllocator, WorldCapture
 
 
+class _AllocationIdCollision(ValueError):
+    """An allocator returned an ownership handle already retained by the workflow."""
+
+
 class WorldPromotionWorkflow:
     """Allocate only controller-promoted candidates through closed async ports.
 
@@ -113,7 +117,12 @@ class WorldPromotionWorkflow:
                             allocation_id=allocation.allocation_id,
                         )
                         receipt = await self._capture.capture(request, allocation)
-                        self._validate_capture(candidate, request, allocation, receipt)
+                        receipt = self._validate_capture(
+                            candidate,
+                            request,
+                            allocation,
+                            receipt,
+                        )
                         self._event(
                             events,
                             PromotionEventKind.CAPTURED,
@@ -125,6 +134,32 @@ class WorldPromotionWorkflow:
                         if allocation is not None:
                             await self._release_after_failure(allocation)
                         raise
+                    except _AllocationIdCollision:
+                        collided = next(
+                            (
+                                item
+                                for item in accepted
+                                if allocation is not None
+                                and item[2].allocation_id == allocation.allocation_id
+                            ),
+                            None,
+                        )
+                        if collided is not None:
+                            accepted.remove(collided)
+                            await self._release_after_failure(collided[2])
+                            self._event(
+                                events,
+                                PromotionEventKind.ROLLED_BACK,
+                                collided[1],
+                                "allocation_id_collision",
+                            )
+                        self._event(
+                            events,
+                            PromotionEventKind.ROLLED_BACK,
+                            request,
+                            "allocation_id_collision",
+                        )
+                        continue
                     except Exception as error:  # Callback boundaries must not promote on error.
                         if allocation is not None:
                             await self._release_after_failure(allocation)
@@ -171,6 +206,8 @@ class WorldPromotionWorkflow:
                 )
             self._ledger = committed
             return WorkflowResult(
+                input_ledger=before,
+                search_policy=self._controller.policy,
                 search=search,
                 committed_ledger=committed,
                 promotions=tuple(records),
@@ -194,7 +231,10 @@ class WorldPromotionWorkflow:
         allocation = await self._allocator.allocate(request)
         if not isinstance(allocation, AllocatedWorld):
             raise TypeError("allocator returned an invalid allocation")
-        return allocation
+        try:
+            return AllocatedWorld.model_validate(allocation.model_dump(mode="python"))
+        except (AttributeError, TypeError, ValueError) as error:
+            raise TypeError("allocator returned an invalid allocation") from error
 
     def _validate_allocation(
         self,
@@ -202,11 +242,14 @@ class WorldPromotionWorkflow:
         allocation: AllocatedWorld,
         accepted: list[tuple[SearchCandidate, AllocationRequest, AllocatedWorld, CaptureReceipt]],
     ) -> None:
+        if allocation.allocation_id in self._active or any(
+            item[2].allocation_id == allocation.allocation_id for item in accepted
+        ):
+            raise _AllocationIdCollision
         if (
             allocation.candidate_id != request.candidate_id
             or allocation.target_tier is not request.target_tier
             or allocation.state_fingerprint != request.state_fingerprint
-            or allocation.allocation_id in self._active
             or allocation.sibling_identity in self._identities
             or any(item[2].sibling_identity == allocation.sibling_identity for item in accepted)
         ):
@@ -221,16 +264,20 @@ class WorldPromotionWorkflow:
     ) -> CaptureReceipt:
         if not isinstance(receipt, CaptureReceipt):
             raise TypeError("capture returned an invalid receipt")
+        try:
+            closed_receipt = CaptureReceipt.model_validate(receipt.model_dump(mode="python"))
+        except (AttributeError, TypeError, ValueError) as error:
+            raise TypeError("capture returned an invalid receipt") from error
         if (
-            receipt.allocation_id != allocation.allocation_id
-            or receipt.candidate_id != request.candidate_id
-            or receipt.state_fingerprint != request.state_fingerprint
-            or not receipt.oracle_passed
-            or receipt.evidence_ref not in candidate.gates.evidence_ids
-            or receipt.oracle_ref not in candidate.gates.oracle_refs
+            closed_receipt.allocation_id != allocation.allocation_id
+            or closed_receipt.candidate_id != request.candidate_id
+            or closed_receipt.state_fingerprint != request.state_fingerprint
+            or not closed_receipt.oracle_passed
+            or closed_receipt.evidence_ref not in candidate.gates.evidence_ids
+            or closed_receipt.oracle_ref not in candidate.gates.oracle_refs
         ):
             raise ValueError("capture receipt failed evidence or oracle binding")
-        return receipt
+        return closed_receipt
 
     async def _release_after_failure(self, allocation: AllocatedWorld) -> None:
         try:

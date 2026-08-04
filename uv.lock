@@ -1038,6 +1038,7 @@ version = "0.1.0"
 source = { editable = "workflows/world" }
 dependencies = [
     { name = "pydantic" },
+    { name = "stateweaver-compiler" },
     { name = "stateweaver-contracts" },
     { name = "stateweaver-search" },
 ]
@@ -1054,6 +1055,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pydantic", specifier = ">=2.12,<3" },
+    { name = "stateweaver-compiler", editable = "packages/compiler" },
     { name = "stateweaver-contracts", editable = "packages/contracts" },
     { name = "stateweaver-search", editable = "packages/search" },
 ]

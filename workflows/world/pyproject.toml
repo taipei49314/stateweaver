@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
   "pydantic>=2.12,<3",
+  "stateweaver-compiler==0.1.0",
   "stateweaver-contracts==0.1.0",
   "stateweaver-search==0.1.0",
 ]
@@ -28,6 +29,7 @@ dev = [
 packages = ["src/stateweaver"]
 
 [tool.uv.sources]
+stateweaver-compiler = { workspace = true }
 stateweaver-contracts = { workspace = true }
 stateweaver-search = { workspace = true }
 
@@ -37,6 +39,8 @@ asyncio_mode = "strict"
 pythonpath = [
   "src",
   "../../packages/contracts/src",
+  "../../packages/compiler/src",
+  "../../packages/replay/src",
   "../../packages/search/src",
   "../../packages/search/tests",
 ]
