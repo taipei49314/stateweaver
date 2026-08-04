@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from hypothesis import given, settings
@@ -21,9 +22,21 @@ from stateweaver.workflows.world import (
     AllocatedWorld,
     AllocationRequest,
     CaptureReceipt,
-    PromotionEventKind,
+    PromotionLifecyclePhase,
+    PromotionRunContext,
     WorldPromotionWorkflow,
+    promotion_lifecycle_payload,
 )
+
+_RECORDED_AT = datetime(2026, 8, 4, tzinfo=UTC)
+
+
+def _context(index: int) -> PromotionRunContext:
+    return PromotionRunContext(
+        experiment_id="experiment.workflow.tests",
+        run_id=f"run.workflow.{index:03d}",
+        recorded_at=_RECORDED_AT + timedelta(seconds=index),
+    )
 
 
 @dataclass
@@ -32,6 +45,8 @@ class MemoryAllocator:
     reused_identity: str | None = None
     reused_allocation: str | None = None
     unchecked_model: bool = False
+    fail_release: bool = False
+    cancel_release: bool = False
     allocated: list[AllocatedWorld] = field(default_factory=list)
     released: list[AllocatedWorld] = field(default_factory=list)
 
@@ -54,6 +69,10 @@ class MemoryAllocator:
 
     async def release(self, allocation: AllocatedWorld) -> None:
         self.released.append(allocation)
+        if self.cancel_release:
+            raise asyncio.CancelledError()
+        if self.fail_release:
+            raise RuntimeError("synthetic release failure")
 
 
 @dataclass
@@ -130,7 +149,7 @@ async def test_twenty_four_ghosts_flow_through_small_beams_to_materialized() -> 
         candidates=tuple(candidate(index, score=0.4 + index / 100) for index in range(24))
     )
 
-    replay = await workflow.advance(ghosts)
+    replay = await workflow.advance(ghosts, context=_context(1))
     assert len(replay.promotions) == 4
     replay_by_id = {item.candidate_id: item for item in ghosts.candidates}
     replay_batch = SearchBatch(
@@ -138,7 +157,7 @@ async def test_twenty_four_ghosts_flow_through_small_beams_to_materialized() -> 
             _retier(replay_by_id[item.candidate_id], WorldTier.REPLAY) for item in replay.promotions
         )
     )
-    simulated = await workflow.advance(replay_batch)
+    simulated = await workflow.advance(replay_batch, context=_context(2))
     assert len(simulated.promotions) == 2
     simulated_by_id = {item.candidate_id: item for item in replay_batch.candidates}
     simulated_batch = SearchBatch(
@@ -147,7 +166,7 @@ async def test_twenty_four_ghosts_flow_through_small_beams_to_materialized() -> 
             for item in simulated.promotions
         )
     )
-    materialized = await workflow.advance(simulated_batch)
+    materialized = await workflow.advance(simulated_batch, context=_context(3))
 
     assert len(materialized.promotions) == 1
     usage = workflow.ledger.usage()
@@ -157,19 +176,74 @@ async def test_twenty_four_ghosts_flow_through_small_beams_to_materialized() -> 
 
 
 @pytest.mark.asyncio
-async def test_callback_failure_rolls_back_hard_reservation_and_releases_allocation() -> None:
+async def test_callback_failure_does_not_commit_reservation_and_releases_allocation() -> None:
     first = candidate(0)
     second = candidate(1)
     allocator = MemoryAllocator()
     capture = MemoryCapture(fail_candidates={first.candidate_id})
     workflow, _, _ = _workflow(allocator, capture, initial_ledger=ledger(max_replay=2))
 
-    result = await workflow.advance(SearchBatch(candidates=(first, second)))
+    result = await workflow.advance(SearchBatch(candidates=(first, second)), context=_context(4))
 
     assert [item.candidate_id for item in result.promotions] == [second.candidate_id]
     assert result.committed_ledger.usage().replay_worlds == 1
     assert allocator.released[0].candidate_id == first.candidate_id
-    assert PromotionEventKind.ROLLED_BACK in {item.kind for item in result.events}
+    assert PromotionLifecyclePhase.NOT_COMMITTED in {
+        promotion_lifecycle_payload(item).phase for item in result.events
+    }
+
+
+@pytest.mark.asyncio
+async def test_release_failure_never_remints_not_committed_as_rollback() -> None:
+    item = candidate(49)
+    allocator = MemoryAllocator(fail_release=True)
+    workflow, _, _ = _workflow(
+        allocator,
+        MemoryCapture(fail_candidates={item.candidate_id}),
+        initial_ledger=ledger(max_replay=1),
+    )
+
+    result = await workflow.advance(SearchBatch(candidates=(item,)), context=_context(14))
+    phases = tuple(promotion_lifecycle_payload(event).phase for event in result.events)
+
+    assert phases == (
+        PromotionLifecyclePhase.RESERVED,
+        PromotionLifecyclePhase.NOT_COMMITTED,
+    )
+    assert not result.promotions
+    assert result.committed_ledger == result.input_ledger
+    assert allocator.released
+    assert workflow.cleanup_pending_allocation_ids == (
+        f"allocation.replay.{item.candidate_id.removeprefix('candidate.')}",
+    )
+
+    allocator.fail_release = False
+    await workflow.close()
+
+    assert not workflow.cleanup_pending_allocation_ids
+
+
+@pytest.mark.asyncio
+async def test_cancelled_release_retains_cleanup_ownership_before_propagating() -> None:
+    item = candidate(50)
+    allocator = MemoryAllocator(cancel_release=True)
+    workflow, _, _ = _workflow(
+        allocator,
+        MemoryCapture(fail_candidates={item.candidate_id}),
+        initial_ledger=ledger(max_replay=1),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await workflow.advance(SearchBatch(candidates=(item,)), context=_context(15))
+
+    allocation_id = f"allocation.replay.{item.candidate_id.removeprefix('candidate.')}"
+    assert workflow.cleanup_pending_allocation_ids == (allocation_id,)
+    assert workflow.ledger.usage().replay_worlds == 0
+
+    allocator.cancel_release = False
+    await workflow.close()
+
+    assert not workflow.cleanup_pending_allocation_ids
 
 
 @pytest.mark.asyncio
@@ -183,7 +257,7 @@ async def test_cancellation_releases_uncommitted_allocation_and_never_commits_bu
     )
 
     with pytest.raises(asyncio.CancelledError):
-        await workflow.advance(SearchBatch(candidates=(item,)))
+        await workflow.advance(SearchBatch(candidates=(item,)), context=_context(5))
 
     assert workflow.ledger.usage().replay_worlds == 0
     assert [allocation.candidate_id for allocation in allocator.released] == [item.candidate_id]
@@ -201,7 +275,10 @@ async def test_policy_evidence_and_oracle_gates_cannot_be_bypassed_by_model_scor
         initial_ledger=ledger(max_replay=3),
     )
 
-    result = await workflow.advance(SearchBatch(candidates=(denied, missing_evidence, bad_oracle)))
+    result = await workflow.advance(
+        SearchBatch(candidates=(denied, missing_evidence, bad_oracle)),
+        context=_context(6),
+    )
 
     assert not result.promotions
     assert not allocator.allocated or all(
@@ -223,7 +300,7 @@ async def test_unchecked_callback_models_are_revalidated_before_commit(boundary:
         initial_ledger=ledger(max_replay=1),
     )
 
-    result = await workflow.advance(SearchBatch(candidates=(item,)))
+    result = await workflow.advance(SearchBatch(candidates=(item,)), context=_context(7))
 
     assert not result.promotions
     assert result.committed_ledger.usage().replay_worlds == 0
@@ -236,7 +313,9 @@ async def test_fingerprint_dedup_and_reused_sibling_identity_fail_closed() -> No
     duplicate_left = candidate(5, state_bucket=50)
     duplicate_right = candidate(6, state_bucket=50)
     workflow, allocator, _ = _workflow(initial_ledger=ledger(max_replay=2))
-    deduped = await workflow.advance(SearchBatch(candidates=(duplicate_left, duplicate_right)))
+    deduped = await workflow.advance(
+        SearchBatch(candidates=(duplicate_left, duplicate_right)), context=_context(8)
+    )
     assert len(deduped.promotions) == 1
     assert len(allocator.allocated) == 1
 
@@ -246,7 +325,7 @@ async def test_fingerprint_dedup_and_reused_sibling_identity_fail_closed() -> No
     isolated, allocator, _ = _workflow(
         MemoryAllocator(reused_identity=reused), initial_ledger=ledger(max_replay=2)
     )
-    result = await isolated.advance(SearchBatch(candidates=(first, second)))
+    result = await isolated.advance(SearchBatch(candidates=(first, second)), context=_context(9))
     assert len(result.promotions) == 1
     assert len(allocator.released) == 1
     assert result.committed_ledger.usage().replay_worlds == 1
@@ -259,11 +338,63 @@ async def test_reused_allocation_id_fails_closed_with_distinct_sibling_identitie
     allocator = MemoryAllocator(reused_allocation="allocation.replay.reused")
     workflow, _, _ = _workflow(allocator, initial_ledger=ledger(max_replay=2))
 
-    result = await workflow.advance(SearchBatch(candidates=(first, second)))
+    result = await workflow.advance(SearchBatch(candidates=(first, second)), context=_context(10))
 
     assert not result.promotions
-    assert len(allocator.released) == 1
+    assert len(allocator.released) == 2
+    assert not workflow.cleanup_pending_allocation_ids
     assert result.committed_ledger.usage().replay_worlds == 0
+
+
+@pytest.mark.asyncio
+async def test_collision_with_committed_id_is_quarantined_until_close() -> None:
+    allocation_id = "allocation.replay.retained"
+    allocator = MemoryAllocator(reused_allocation=allocation_id)
+    workflow, _, _ = _workflow(allocator, initial_ledger=ledger(max_replay=2))
+
+    first = await workflow.advance(SearchBatch(candidates=(candidate(51),)), context=_context(16))
+    second = await workflow.advance(SearchBatch(candidates=(candidate(52),)), context=_context(17))
+
+    assert len(first.promotions) == 1
+    assert not second.promotions
+    pending_before_close = workflow.cleanup_pending_allocation_ids
+    assert pending_before_close == (allocation_id,)
+
+    await workflow.close()
+
+    pending_after_close = workflow.cleanup_pending_allocation_ids
+    assert not pending_after_close
+    assert len(allocator.released) == 2
+
+
+@pytest.mark.asyncio
+async def test_identical_failed_collision_releases_retain_distinct_ownership() -> None:
+    allocation_id = "allocation.replay.identical"
+    allocator = MemoryAllocator(
+        reused_allocation=allocation_id,
+        reused_identity="identity:world.replay.identical",
+        fail_release=True,
+    )
+    workflow, _, _ = _workflow(allocator, initial_ledger=ledger(max_replay=2))
+
+    result = await workflow.advance(
+        SearchBatch(candidates=(candidate(53), candidate(54))), context=_context(18)
+    )
+
+    assert not result.promotions
+    assert len(allocator.allocated) == 2
+    released_before_close = tuple(allocator.released)
+    pending_before_close = workflow.cleanup_pending_allocation_ids
+    assert len(released_before_close) == 2
+    assert pending_before_close == (allocation_id, allocation_id)
+
+    allocator.fail_release = False
+    await workflow.close()
+
+    released_after_close = tuple(allocator.released)
+    pending_after_close = workflow.cleanup_pending_allocation_ids
+    assert not pending_after_close
+    assert len(released_after_close) == 4
 
 
 @pytest.mark.asyncio
@@ -282,8 +413,8 @@ async def test_concurrent_calls_share_one_hard_budget() -> None:
     )
     workflow, _, _ = _workflow(initial_ledger=tight)
     left, right = await asyncio.gather(
-        workflow.advance(SearchBatch(candidates=(candidate(9),))),
-        workflow.advance(SearchBatch(candidates=(candidate(10),))),
+        workflow.advance(SearchBatch(candidates=(candidate(9),)), context=_context(11)),
+        workflow.advance(SearchBatch(candidates=(candidate(10),)), context=_context(12)),
     )
     assert len(left.promotions) + len(right.promotions) == 1
     assert workflow.ledger.usage().replay_worlds == 1
@@ -295,7 +426,8 @@ def test_property_budgets_and_sibling_identities_stay_bounded(indices: list[int]
     async def run() -> None:
         workflow, _, _ = _workflow(initial_ledger=ledger(max_replay=2))
         result = await workflow.advance(
-            SearchBatch(candidates=tuple(candidate(index) for index in indices))
+            SearchBatch(candidates=tuple(candidate(index) for index in indices)),
+            context=_context(13),
         )
         assert len(result.promotions) <= 2
         assert result.committed_ledger.usage().replay_worlds <= 2

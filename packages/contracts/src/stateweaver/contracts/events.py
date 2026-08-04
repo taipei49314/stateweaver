@@ -126,6 +126,13 @@ class EventEnvelope(AwareTimestampMixin, _EventContractV2):
     semantic_hash: Sha256Digest
     payload: Mapping[str, JsonValue]
 
+    @field_validator("payload", mode="before")
+    @classmethod
+    def immutable_json_is_revalidation_safe(cls, value: object) -> object:
+        """Restore JSON arrays before strict validation of an already-frozen payload."""
+
+        return thaw_json(freeze_json(value))
+
     @field_validator("payload")
     @classmethod
     def payload_is_deeply_immutable(cls, value: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
@@ -210,7 +217,7 @@ class EventEnvelope(AwareTimestampMixin, _EventContractV2):
             timestamp=timestamp,
             payload_hash=payload_hash,
             semantic_hash=semantic_hash,
-            payload=immutable_payload,
+            payload=cast(Mapping[str, JsonValue], thaw_json(immutable_payload)),
         )
 
 

@@ -247,6 +247,7 @@ class EventType(StrEnum):
     WORLD_FORKED = "world.forked"
     WORLD_PROMOTED = "world.promoted"
     WORLD_PRUNED = "world.pruned"
+    WORLD_PROMOTION_LIFECYCLE = "world.promotion.lifecycle"
     WORLD_MATERIALIZATION_STARTED = "world.materialization.started"
     WORLD_MATERIALIZATION_COMPLETED = "world.materialization.completed"
     ACTION_PROPOSED = "action.proposed"

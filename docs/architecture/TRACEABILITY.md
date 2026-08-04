@@ -203,8 +203,15 @@ useful conditions. `packages/search/` now provides the closed hypothesis decisio
 hard promotion gates, deterministic beam frontier, immutable budget ledger, deduplication, and
 diversity selection. Its focused 24-Ghost test promotes only the bounded beam and proves a model
 score cannot bypass a failed gate. `workflows/world/` now carries those decisions through abstract
-allocation/capture ports with hard reservation, rollback, evidence/Oracle binding, sibling identity
-isolation, and a canonical event log. The local 24 → 4 → 2 → 1 synthetic flow passes; real
+allocation/capture ports with hard reservation, compensating release, evidence/Oracle binding,
+sibling identity isolation, and canonical `EventEnvelope`/`EventHistory` v2 history. The history is
+reconstructed after replaying the exact bound search batch and policy, then binding the search
+result, input and committed ledgers, and committed promotions;
+each candidate is `search_blocked`, or follows `reserved` -> `allocated` -> `captured` ->
+`committed`, or follows `reserved` -> `not_committed`. It is a deterministic audit projection rather
+than operational callback telemetry or a wall-clock transcript. Releasing an uncommitted allocation does not claim
+transactional rollback or reversal of external effects, and the self-contained hash chain provides
+no external freshness attestation. The local 24 → 4 → 2 → 1 synthetic flow passes; real
 materialized allocation and retained release evidence are pending, so M4 is **implemented offline,
 not release-certified**.
 

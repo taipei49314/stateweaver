@@ -226,7 +226,7 @@ def _validate_workflow(
     workflow: WorkflowResult,
     candidate: SearchCandidate,
 ) -> PromotionRecord:
-    if workflow.search.input_fingerprint != sha256_digest(batch):
+    if workflow.search_batch != batch or workflow.search.input_fingerprint != sha256_digest(batch):
         raise ObservedChainAdmissionError("SEARCH_BATCH_FINGERPRINT_MISMATCH")
     expected_search = TieredSearchController(workflow.search_policy).advance(
         batch,

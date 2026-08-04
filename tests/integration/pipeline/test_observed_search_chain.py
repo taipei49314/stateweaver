@@ -59,6 +59,7 @@ from stateweaver.workflows.world import (
     AllocatedWorld,
     AllocationRequest,
     CaptureReceipt,
+    PromotionRunContext,
     WorldPromotionWorkflow,
     compile_observed_promotion,
 )
@@ -484,7 +485,14 @@ async def test_same_observed_fragments_flow_24_to_4_to_2_to_1_and_compile() -> N
         ),
     )
 
-    replay = await workflow.advance(ghosts)
+    replay = await workflow.advance(
+        ghosts,
+        context=PromotionRunContext(
+            experiment_id="experiment.pipeline.observed",
+            run_id="run.pipeline.replay",
+            recorded_at=EPOCH + timedelta(hours=1),
+        ),
+    )
     assert len(replay.promotions) == 4
     assert PRIMARY_ID in {item.candidate_id for item in replay.promotions}
     ghosts_by_id = {item.candidate_id: item for item in ghosts.candidates}
@@ -494,7 +502,14 @@ async def test_same_observed_fragments_flow_24_to_4_to_2_to_1_and_compile() -> N
         )
     )
 
-    simulated = await workflow.advance(replay_batch)
+    simulated = await workflow.advance(
+        replay_batch,
+        context=PromotionRunContext(
+            experiment_id="experiment.pipeline.observed",
+            run_id="run.pipeline.simulated",
+            recorded_at=EPOCH + timedelta(hours=2),
+        ),
+    )
     assert len(simulated.promotions) == 2
     assert PRIMARY_ID in {item.candidate_id for item in simulated.promotions}
     replay_by_id = {item.candidate_id: item for item in replay_batch.candidates}
@@ -505,7 +520,14 @@ async def test_same_observed_fragments_flow_24_to_4_to_2_to_1_and_compile() -> N
         )
     )
 
-    materialized = await workflow.advance(simulated_batch)
+    materialized = await workflow.advance(
+        simulated_batch,
+        context=PromotionRunContext(
+            experiment_id="experiment.pipeline.observed",
+            run_id="run.pipeline.materialized",
+            recorded_at=EPOCH + timedelta(hours=3),
+        ),
+    )
     assert tuple(item.candidate_id for item in materialized.promotions) == (PRIMARY_ID,)
     promotion = materialized.promotions[0]
     admitted_candidate = next(

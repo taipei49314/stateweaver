@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import pytest
 from search_test_fixtures import candidate, ledger
@@ -28,6 +29,7 @@ from stateweaver.contracts import (
 )
 from stateweaver.search import (
     BeamSearchPolicy,
+    BudgetLedger,
     DecisionDisposition,
     PromotionCost,
     PromotionGates,
@@ -44,6 +46,7 @@ from stateweaver.workflows.world import (
     ObservedChainAdmission,
     ObservedChainAdmissionError,
     PromotionRecord,
+    PromotionRunContext,
     WorkflowResult,
     compile_observed_promotion,
 )
@@ -225,6 +228,30 @@ def _goal(*, condition: StateCondition | None = None) -> TerminalGoal:
     )
 
 
+def _workflow_result(
+    *,
+    input_ledger: BudgetLedger,
+    search_policy: BeamSearchPolicy,
+    search_batch: SearchBatch,
+    search: SearchResult,
+    committed_ledger: BudgetLedger,
+    promotions: tuple[PromotionRecord, ...],
+) -> WorkflowResult:
+    return WorkflowResult.create(
+        context=PromotionRunContext(
+            experiment_id="experiment.synthetic.observed-chain",
+            run_id="run.synthetic.observed-chain",
+            recorded_at=datetime(2026, 8, 4, tzinfo=UTC),
+        ),
+        input_ledger=input_ledger,
+        search_policy=search_policy,
+        search_batch=search_batch,
+        search=search,
+        committed_ledger=committed_ledger,
+        promotions=promotions,
+    )
+
+
 def _case(
     transitions: tuple[TransitionFragment, ...] | None = None,
     *,
@@ -245,13 +272,13 @@ def _case(
         if reservation.candidate_id == item.candidate_id
     )
     promotion = _promotion(item, reservation_id=reservation.reservation_id)
-    workflow = WorkflowResult(
+    workflow = _workflow_result(
         input_ledger=input_ledger,
         search_policy=search_policy,
+        search_batch=batch,
         search=search,
         committed_ledger=search.ledger,
         promotions=(promotion,),
-        events=(),
     )
     compiler_fragments = tuple(
         _compiler_fragment(
@@ -371,19 +398,9 @@ def test_batch_fingerprint_substitution_is_rejected() -> None:
             "input_fingerprint": sha256_digest({"substituted": "batch"}),
         }
     )
-    workflow = WorkflowResult(
-        input_ledger=case.workflow.input_ledger,
-        search_policy=case.workflow.search_policy,
-        search=search,
-        committed_ledger=case.workflow.committed_ledger,
-        promotions=case.workflow.promotions,
-        events=(),
-    )
+    workflow = case.workflow.model_copy(update={"search": search})
 
-    _assert_rejected(
-        "SEARCH_BATCH_FINGERPRINT_MISMATCH",
-        lambda: _compile(case, workflow=workflow),
-    )
+    _assert_rejected("MALFORMED_INPUT", lambda: _compile(case, workflow=workflow))
 
 
 def test_invalid_chain_id_is_a_stable_admission_error() -> None:
@@ -418,13 +435,13 @@ def test_candidate_identifier_must_resolve_inside_the_bound_batch() -> None:
 
 def test_search_promotion_without_a_committed_promotion_record_is_rejected() -> None:
     case = _case()
-    workflow = WorkflowResult(
+    workflow = _workflow_result(
         input_ledger=case.workflow.input_ledger,
         search_policy=case.workflow.search_policy,
+        search_batch=case.batch,
         search=case.search,
-        committed_ledger=case.workflow.committed_ledger,
+        committed_ledger=case.workflow.input_ledger,
         promotions=(),
-        events=(),
     )
 
     _assert_rejected(
@@ -452,16 +469,9 @@ def test_non_promote_search_decision_is_rejected_even_if_a_promotion_record_is_s
         ledger=ledger(),
         input_fingerprint=sha256_digest(case.batch),
     )
-    workflow = WorkflowResult(
-        input_ledger=case.workflow.input_ledger,
-        search_policy=case.workflow.search_policy,
-        search=search,
-        committed_ledger=case.workflow.committed_ledger,
-        promotions=(case.promotion,),
-        events=(),
-    )
+    workflow = case.workflow.model_copy(update={"search": search})
 
-    _assert_rejected("SEARCH_RESULT_MISMATCH", lambda: _compile(case, workflow=workflow))
+    _assert_rejected("MALFORMED_INPUT", lambda: _compile(case, workflow=workflow))
 
 
 def test_unchecked_promotion_reservation_substitution_is_revalidated_by_the_bridge() -> None:
@@ -481,19 +491,11 @@ def test_committed_ledger_reservation_must_bind_candidate_tier_and_exact_cost() 
     )
     wrong_reservation = wrong_ledger.reservations[-1]
     promotion = _promotion(case.item, reservation_id=wrong_reservation.reservation_id)
-    workflow = WorkflowResult(
-        input_ledger=case.workflow.input_ledger,
-        search_policy=case.workflow.search_policy,
-        search=case.search,
-        committed_ledger=wrong_ledger,
-        promotions=(promotion,),
-        events=(),
+    workflow = case.workflow.model_copy(
+        update={"committed_ledger": wrong_ledger, "promotions": (promotion,)}
     )
 
-    _assert_rejected(
-        "COMMITTED_RESERVATION_MISMATCH",
-        lambda: _compile(case, workflow=workflow),
-    )
+    _assert_rejected("MALFORMED_INPUT", lambda: _compile(case, workflow=workflow))
 
 
 def test_provisional_search_reservation_must_bind_exact_candidate_cost() -> None:
@@ -519,19 +521,12 @@ def test_provisional_search_reservation_must_bind_exact_candidate_cost() -> None
         ledger=wrong_ledger,
         input_fingerprint=sha256_digest(case.batch),
     )
-    workflow = WorkflowResult(
-        input_ledger=case.workflow.input_ledger,
-        search_policy=case.workflow.search_policy,
-        search=search,
-        committed_ledger=case.workflow.committed_ledger,
-        promotions=case.workflow.promotions,
-        events=(),
-    )
+    workflow = case.workflow.model_copy(update={"search": search})
 
-    _assert_rejected("SEARCH_RESULT_MISMATCH", lambda: _compile(case, workflow=workflow))
+    _assert_rejected("MALFORMED_INPUT", lambda: _compile(case, workflow=workflow))
 
 
-def test_later_winner_can_admit_after_an_earlier_capture_rollback_changes_reservation_id() -> None:
+def test_later_winner_can_admit_when_an_earlier_reservation_does_not_commit() -> None:
     first = _candidate((_transition(70),), index=70)
     second = _candidate((_transition(71),), index=71)
     batch = SearchBatch(candidates=(first, second))
@@ -549,13 +544,13 @@ def test_later_winner_can_admit_after_an_earlier_capture_rollback_changes_reserv
     committed = committed_ledger.reservations[-1]
     assert provisional.reservation_id != committed.reservation_id
     promotion = _promotion(selected, reservation_id=committed.reservation_id)
-    workflow = WorkflowResult(
+    workflow = _workflow_result(
         input_ledger=input_ledger,
         search_policy=search_policy,
+        search_batch=batch,
         search=search,
         committed_ledger=committed_ledger,
         promotions=(promotion,),
-        events=(),
     )
     transition = selected.transition_fragments[0]
     compiler_fragment = _compiler_fragment(
@@ -586,16 +581,9 @@ def test_promotion_state_substitution_is_rejected() -> None:
         reservation_id=case.promotion.reservation_id,
         state_fingerprint=sha256_digest({"substituted": "state"}),
     )
-    workflow = WorkflowResult(
-        input_ledger=case.workflow.input_ledger,
-        search_policy=case.workflow.search_policy,
-        search=case.search,
-        committed_ledger=case.workflow.committed_ledger,
-        promotions=(promotion,),
-        events=(),
-    )
+    workflow = case.workflow.model_copy(update={"promotions": (promotion,)})
 
-    _assert_rejected("STATE_FINGERPRINT_MISMATCH", lambda: _compile(case, workflow=workflow))
+    _assert_rejected("MALFORMED_INPUT", lambda: _compile(case, workflow=workflow))
 
 
 def test_malformed_captured_root_world_is_revalidated_by_the_bridge() -> None:
@@ -657,13 +645,11 @@ def test_search_recomputation_rejects_fragment_evidence_outside_candidate_gates(
             "input_fingerprint": sha256_digest(batch),
         }
     )
-    workflow = WorkflowResult(
-        input_ledger=baseline.workflow.input_ledger,
-        search_policy=baseline.workflow.search_policy,
-        search=search,
-        committed_ledger=baseline.workflow.committed_ledger,
-        promotions=baseline.workflow.promotions,
-        events=(),
+    workflow = baseline.workflow.model_copy(
+        update={
+            "search_batch": batch,
+            "search": search,
+        }
     )
     compiler_fragment = _compiler_fragment(
         transition,
@@ -683,7 +669,7 @@ def test_search_recomputation_rejects_fragment_evidence_outside_candidate_gates(
     with pytest.raises(ObservedChainAdmissionError) as caught:
         _compile(case)
 
-    assert caught.value.code == "SEARCH_RESULT_MISMATCH"
+    assert caught.value.code == "MALFORMED_INPUT"
 
 
 def test_compiler_envelope_policy_decision_must_match_candidate_gate() -> None:

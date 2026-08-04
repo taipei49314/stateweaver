@@ -83,6 +83,23 @@ def test_event_v2_round_trip_separates_payload_and_semantic_integrity() -> None:
     assert EventEnvelope.model_validate_json(authorized.model_dump_json()) == authorized
 
 
+def test_json_array_payload_survives_strict_wire_revalidation() -> None:
+    event = _event(
+        payload={
+            "reason_codes": ["BEAM_CAPACITY", "BUDGET_EXCEEDED"],
+            "nested": [{"accepted": True}],
+        }
+    )
+
+    closed = EventEnvelope.model_validate(event.model_dump(mode="python"))
+
+    assert closed == event
+    assert closed.model_dump(mode="json")["payload"]["reason_codes"] == [
+        "BEAM_CAPACITY",
+        "BUDGET_EXCEEDED",
+    ]
+
+
 @pytest.mark.parametrize(
     ("field", "replacement"),
     [

@@ -66,8 +66,14 @@ One horizontal local integration now preserves the same three TestClient/OTLP/st
 then compiles all three into a minimal typed chain. The bridge independently rebinds promotion,
 state, evidence, Oracle, the replayed beam decision, provisional and committed budgets, the
 capture-supplied compiler root, policy/approval, allocation world, terminal goal, envelope semantics,
-and compiler output. It performs no external I/O, and it does not turn the abstract allocation into
-a live materialized-provider, Twin-derived ranking, executed replay, or release-certification claim.
+and compiler output. Promotion events form a canonical `EventEnvelope`/`EventHistory` v2 lifecycle
+reconstructed from the bound search batch, policy and result, input and committed ledgers, and committed promotions:
+`search_blocked`; `reserved` -> `not_committed`; or `reserved` -> `allocated` -> `captured` ->
+`committed`. This is an audit projection, not operational callback telemetry or a wall-clock
+transcript. Releasing an uncommitted allocation is compensating cleanup, not a transactional rollback claim; the
+self-contained history also has no external freshness attestation. The flow performs no external
+I/O, and it does not turn the abstract allocation into a live materialized-provider, Twin-derived
+ranking, executed replay, or release-certification claim.
 
 | Milestone | Auditable local status | Evidence |
 | --- | --- | --- |
