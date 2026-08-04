@@ -56,10 +56,14 @@ substitutions. It independently regenerates the complete replay-step event narra
 control, and patched lanes from each typed result/action log, requires patch root parity, and rejects
 unrelated failure codes masquerading as `BLOCKED_BY_FIX`. The general event contract is also v2:
 its domain-separated semantic hash binds all envelope metadata, while `EventHistory` verifies an
-exact per-run hash chain. These remain self-contained integrity checks, not freshness or execution
-attestation. The resolver accepts no filesystem path or issuer assertion and always returns a
-non-authoritative, non-promotable candidate; authenticated retention and source/issuer trust remain
-open.
+exact per-run hash chain. Negative controls now retain their own exact root artifact, require full
+logical-root parity, and carry a V2 delta reconstructed from exact verified plan/root artifact
+digests and deterministic result signatures; default-field omission, caller-authored state paths,
+and delta-only coherent remints are rejected. The enum kind is still an explicitly unattested
+producer label, not a proved mutation witness. These remain self-contained integrity checks, not
+freshness or execution attestation. The resolver accepts no filesystem path or issuer assertion
+and always returns a non-authoritative, non-promotable candidate; authenticated retention and
+source/issuer trust remain open.
 
 One horizontal local integration now preserves the same three TestClient/OTLP/state-delta
 `OBSERVED` fragments through a 24 -> 4 -> 2 -> 1 in-memory search and Materialized-tier admission,

@@ -199,7 +199,7 @@ class RealityReplayAttempt(ContractModel):
 
 
 class NegativeControl(_VersionedContractV2):
-    """A non-vacuous control replay proving that the violation is condition-specific."""
+    """An observed non-violating replay bound to a distinct producer-labelled control."""
 
     name: Name
     kind: NegativeControlKind

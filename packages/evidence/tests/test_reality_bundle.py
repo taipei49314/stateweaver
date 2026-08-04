@@ -38,6 +38,7 @@ from stateweaver.evidence import (
     RealityBundleVerificationResult,
     RealityChainBinding,
     RealityControlDelta,
+    RealityControlDeltaDimension,
     RealityDeltaChange,
     RealityEvidenceFact,
     RealityEvidenceIndex,
@@ -207,6 +208,7 @@ def _build_bundle() -> _Bundle:
     plan = _model_from_json(ReplayPlan, proof["canonical_plan"])
     primary_root = _model_from_json(RootSeed, proof["root_state"])
     control_plan = _model_from_json(ReplayPlan, control_source["plan"])
+    control_root = _model_from_json(RootSeed, control_source["root_seed"])
     patch_root = _model_from_json(RootSeed, patch_source["root_seed"])
     primary_results = tuple(
         _model_from_json(ReplayRunResult, source["replay_result"]) for source in attempt_sources
@@ -267,7 +269,7 @@ def _build_bundle() -> _Bundle:
         )
     )
     adapter_hash = add("locks/adapter.json", RealityArtifactRole.ADAPTER_LOCK, adapter_lock)
-    add("roots/primary.json", RealityArtifactRole.ROOT, primary_root)
+    primary_root_hash = add("roots/primary.json", RealityArtifactRole.ROOT, primary_root)
     plan_hash = add("plans/primary.json", RealityArtifactRole.PLAN, plan)
     add(
         "chains/primary.json",
@@ -327,6 +329,13 @@ def _build_bundle() -> _Bundle:
 
     control_name = cast(str, control_source["name"])
     control_path = "controls/removed-precondition"
+    control_root_hash = add(
+        f"{control_path}/root.json",
+        RealityArtifactRole.CONTROL_ROOT,
+        control_root,
+        run_id=control_result.run_id,
+        control_name=control_name,
+    )
     control_plan_hash = add(
         f"{control_path}/plan.json",
         RealityArtifactRole.CONTROL_PLAN,
@@ -362,16 +371,15 @@ def _build_bundle() -> _Bundle:
         run_id=control_result.run_id,
         control_name=control_name,
     )
-    control_delta = RealityControlDelta(
+    control_delta = RealityControlDelta.derive(
         control_name=control_name,
         kind=NegativeControlKind.REMOVED_PRECONDITION,
-        changes=(
-            RealityDeltaChange(
-                state_path="session.prerequisite",
-                before_sha256=sha256_digest({"present": True}),
-                after_sha256=sha256_digest({"present": False}),
-            ),
-        ),
+        primary_plan_sha256=plan_hash,
+        primary_root_sha256=primary_root_hash,
+        primary_result=primary_results[0],
+        control_plan_sha256=control_plan_hash,
+        control_root_sha256=control_root_hash,
+        control_result=control_result,
     )
     control_delta_hash = add(
         f"{control_path}/delta.json",
@@ -389,8 +397,8 @@ def _build_bundle() -> _Bundle:
         adapter_lock_sha256=adapter_hash,
         plan_id=control_plan.plan_id,
         plan_hash=control_plan_hash,
-        root_seed_id=primary_root.root_seed_id,
-        root_fingerprint=primary_root.capture.fingerprint,
+        root_seed_id=control_root.root_seed_id,
+        root_fingerprint=control_root.capture.fingerprint,
         replay_run_id=control_result.run_id,
         replay_result_sha256=control_result_hash,
         action_log_sha256=control_action_log_hash,
@@ -560,9 +568,360 @@ def test_valid_synthetic_bundle_is_a_non_promotable_candidate(bundle: _Bundle) -
     assert result.snapshot_sha256 is not None
     assert result.profile == "source-backed-synthetic-v2"
     assert result.event_semantics_verified is True
+    assert result.control_delta_derivation_verified is True
+    assert result.control_kind_semantics_verified is False
     assert result.primary_semantic_trace_hash is not None
     assert result.promotable is False
     assert result.authoritative is False
+
+
+def test_control_delta_v2_is_the_exact_artifact_projection(bundle: _Bundle) -> None:
+    delta_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.CONTROL_DELTA
+    )
+    primary_root_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.ROOT
+    )
+    control_root_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.CONTROL_ROOT
+    )
+    delta = RealityControlDelta.model_validate_json(bundle.artifacts[delta_entry.path])
+    control = bundle.receipt.negative_controls[0]
+
+    assert delta.schema_version == "reality-control-delta-v2"
+    assert delta.projection_scope == "artifact-causal-projection"
+    assert delta.kind_semantics_attested is False
+    assert delta.primary_plan_sha256 == bundle.receipt.plan_hash
+    assert delta.control_plan_sha256 == control.plan_hash
+    assert delta.primary_root_sha256 == primary_root_entry.sha256
+    assert delta.control_root_sha256 == control_root_entry.sha256
+    assert delta.primary_result_signature == bundle.receipt.attempts[0].semantic_signature
+    assert delta.control_result_signature == control.semantic_signature
+    assert tuple(change.dimension for change in delta.changes) == (
+        RealityControlDeltaDimension.PLAN_ARTIFACT,
+        RealityControlDeltaDimension.RESULT_SEMANTICS,
+    )
+
+
+def test_control_delta_rejects_an_internally_omitted_source_change(bundle: _Bundle) -> None:
+    delta_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.CONTROL_DELTA
+    )
+    delta = RealityControlDelta.model_validate_json(bundle.artifacts[delta_entry.path])
+
+    with pytest.raises(ValidationError, match="exact source projection"):
+        RealityControlDelta.model_validate(
+            {
+                **delta.model_dump(mode="python"),
+                "changes": (delta.changes[0],),
+            }
+        )
+
+
+def test_control_delta_wire_defaults_cannot_be_omitted_and_reminted(bundle: _Bundle) -> None:
+    delta_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.CONTROL_DELTA
+    )
+    control = bundle.receipt.negative_controls[0]
+    delta_payload = json.loads(bundle.artifacts[delta_entry.path])
+    assert isinstance(delta_payload, dict)
+    delta_payload.pop("projection_scope")
+    abbreviated_delta = canonical_json_bytes(delta_payload)
+    artifacts = {**bundle.artifacts, delta_entry.path: abbreviated_delta}
+    forged_control = NegativeControl.model_validate(
+        {
+            **control.model_dump(mode="python"),
+            "control_delta_sha256": _tagged_sha256(abbreviated_delta),
+        }
+    )
+    substituted = _remint_bundle(bundle, artifacts=artifacts, controls=(forged_control,))
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("control-delta-derivation-mismatch",)
+
+
+def test_legacy_control_delta_is_rejected_after_full_bundle_remint(bundle: _Bundle) -> None:
+    delta_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.CONTROL_DELTA
+    )
+    control = bundle.receipt.negative_controls[0]
+    legacy_delta = canonical_json_bytes(
+        {
+            "schema_version": "1.0",
+            "control_name": control.name,
+            "kind": control.kind,
+            "changes": [
+                {
+                    "state_path": "session.prerequisite",
+                    "before_sha256": sha256_digest({"present": True}),
+                    "after_sha256": sha256_digest({"present": False}),
+                }
+            ],
+        }
+    )
+    artifacts = {**bundle.artifacts, delta_entry.path: legacy_delta}
+    forged_control = NegativeControl.model_validate(
+        {
+            **control.model_dump(mode="python"),
+            "control_delta_sha256": _tagged_sha256(legacy_delta),
+        }
+    )
+    substituted = _remint_bundle(bundle, artifacts=artifacts, controls=(forged_control,))
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("artifact-schema-invalid",)
+
+
+def test_coherently_reminted_delta_claim_cannot_replace_derived_sources(
+    bundle: _Bundle,
+) -> None:
+    delta_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.CONTROL_DELTA
+    )
+    delta = RealityControlDelta.model_validate_json(bundle.artifacts[delta_entry.path])
+    control = bundle.receipt.negative_controls[0]
+    forged_plan_sha256 = sha256_digest({"forged": "control-plan"})
+    forged_changes = tuple(
+        RealityDeltaChange(
+            dimension=change.dimension,
+            primary_sha256=change.primary_sha256,
+            control_sha256=(
+                forged_plan_sha256
+                if change.dimension is RealityControlDeltaDimension.PLAN_ARTIFACT
+                else change.control_sha256
+            ),
+        )
+        for change in delta.changes
+    )
+    forged_delta = RealityControlDelta.model_validate(
+        {
+            **delta.model_dump(mode="python"),
+            "control_plan_sha256": forged_plan_sha256,
+            "changes": forged_changes,
+        }
+    )
+    forged_delta_json = forged_delta.canonical_bytes()
+    artifacts = {**bundle.artifacts, delta_entry.path: forged_delta_json}
+    forged_control = NegativeControl.model_validate(
+        {
+            **control.model_dump(mode="python"),
+            "control_delta_sha256": _tagged_sha256(forged_delta_json),
+        }
+    )
+    substituted = _remint_bundle(bundle, artifacts=artifacts, controls=(forged_control,))
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("control-delta-derivation-mismatch",)
+
+
+def test_missing_control_root_fails_exact_role_closure(bundle: _Bundle) -> None:
+    root_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.CONTROL_ROOT
+    )
+    artifacts = {path: value for path, value in bundle.artifacts.items() if path != root_entry.path}
+    entries = tuple(entry for entry in bundle.manifest.entries if entry.path != root_entry.path)
+    substituted = _remint_bundle(bundle, artifacts=artifacts, entries=entries)
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("manifest-role-closure-invalid",)
+
+
+def test_control_root_default_omission_cannot_escape_exact_artifact_derivation(
+    bundle: _Bundle,
+) -> None:
+    root_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.CONTROL_ROOT
+    )
+    root_payload = cast(dict[str, Any], json.loads(bundle.artifacts[root_entry.path]))
+    capture = cast(dict[str, Any], root_payload["capture"])
+    capture_artifacts = cast(list[dict[str, Any]], capture["artifacts"])
+    assert capture_artifacts[0].pop("schema_version") == "1.0"
+    abbreviated_root = canonical_json_bytes(root_payload)
+    artifacts = {**bundle.artifacts, root_entry.path: abbreviated_root}
+    substituted = _remint_bundle(bundle, artifacts=artifacts)
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("control-delta-derivation-mismatch",)
+
+
+def test_control_plan_default_omission_cannot_escape_exact_artifact_derivation(
+    bundle: _Bundle,
+) -> None:
+    plan_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.CONTROL_PLAN
+    )
+    control = bundle.receipt.negative_controls[0]
+    plan_payload = cast(dict[str, Any], json.loads(bundle.artifacts[plan_entry.path]))
+    assert plan_payload.pop("schema_version") == "1.0"
+    abbreviated_plan = canonical_json_bytes(plan_payload)
+    artifacts = {**bundle.artifacts, plan_entry.path: abbreviated_plan}
+    forged_control = NegativeControl.model_validate(
+        {
+            **control.model_dump(mode="python"),
+            "plan_hash": _tagged_sha256(abbreviated_plan),
+        }
+    )
+    substituted = _remint_bundle(bundle, artifacts=artifacts, controls=(forged_control,))
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("control-delta-derivation-mismatch",)
+
+
+def test_control_root_random_seed_substitution_fails_after_delta_and_bundle_remint(
+    bundle: _Bundle,
+) -> None:
+    primary_plan_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.PLAN
+    )
+    primary_root_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.ROOT
+    )
+    primary_result_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.PRIMARY_RESULT
+        and entry.run_id == bundle.receipt.attempts[0].replay_run_id
+    )
+    control_root_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.CONTROL_ROOT
+    )
+    control_plan_entry = next(
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.CONTROL_PLAN
+    )
+    control_result_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.CONTROL_RESULT
+    )
+    delta_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.CONTROL_DELTA
+    )
+    primary_result = ReplayRunResult.model_validate_json(
+        bundle.artifacts[primary_result_entry.path]
+    )
+    control_root = RootSeed.model_validate_json(bundle.artifacts[control_root_entry.path])
+    forged_root = RootSeed.model_validate(
+        {**control_root.model_dump(mode="python"), "random_seed": control_root.random_seed + 1}
+    )
+    control_result = ReplayRunResult.model_validate_json(
+        bundle.artifacts[control_result_entry.path]
+    )
+    control = bundle.receipt.negative_controls[0]
+    forged_root_json = canonical_json_bytes(forged_root)
+    forged_delta = RealityControlDelta.derive(
+        control_name=control.name,
+        kind=control.kind,
+        primary_plan_sha256=primary_plan_entry.sha256,
+        primary_root_sha256=primary_root_entry.sha256,
+        primary_result=primary_result,
+        control_plan_sha256=control_plan_entry.sha256,
+        control_root_sha256=_tagged_sha256(forged_root_json),
+        control_result=control_result,
+    )
+    forged_delta_json = forged_delta.canonical_bytes()
+    artifacts = {
+        **bundle.artifacts,
+        control_root_entry.path: forged_root_json,
+        delta_entry.path: forged_delta_json,
+    }
+    forged_control = NegativeControl.model_validate(
+        {
+            **control.model_dump(mode="python"),
+            "control_delta_sha256": _tagged_sha256(forged_delta_json),
+        }
+    )
+    substituted = _remint_bundle(bundle, artifacts=artifacts, controls=(forged_control,))
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("control-root-logical-root-mismatch",)
+
+
+def test_delta_kind_mismatch_is_rejected_after_receipt_and_manifest_remint(
+    bundle: _Bundle,
+) -> None:
+    delta_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.CONTROL_DELTA
+    )
+    delta = RealityControlDelta.model_validate_json(bundle.artifacts[delta_entry.path])
+    control = bundle.receipt.negative_controls[0]
+    forged_delta = RealityControlDelta.model_validate(
+        {**delta.model_dump(mode="python"), "kind": NegativeControlKind.SAME_TENANT}
+    )
+    forged_delta_json = forged_delta.canonical_bytes()
+    artifacts = {**bundle.artifacts, delta_entry.path: forged_delta_json}
+    forged_control = NegativeControl.model_validate(
+        {
+            **control.model_dump(mode="python"),
+            "control_delta_sha256": _tagged_sha256(forged_delta_json),
+        }
+    )
+    substituted = _remint_bundle(bundle, artifacts=artifacts, controls=(forged_control,))
+
+    result = _verify(substituted)
+
+    assert not result.valid
+    assert result.errors == ("control-binding-mismatch",)
+
+
+def test_coherent_kind_relabel_stays_explicitly_outside_the_trust_boundary(
+    bundle: _Bundle,
+) -> None:
+    delta_entry = next(
+        entry
+        for entry in bundle.manifest.entries
+        if entry.role is RealityArtifactRole.CONTROL_DELTA
+    )
+    delta = RealityControlDelta.model_validate_json(bundle.artifacts[delta_entry.path])
+    control = bundle.receipt.negative_controls[0]
+    relabeled_delta = RealityControlDelta.model_validate(
+        {**delta.model_dump(mode="python"), "kind": NegativeControlKind.SAME_TENANT}
+    )
+    relabeled_delta_json = relabeled_delta.canonical_bytes()
+    artifacts = {**bundle.artifacts, delta_entry.path: relabeled_delta_json}
+    relabeled_control = NegativeControl.model_validate(
+        {
+            **control.model_dump(mode="python"),
+            "kind": NegativeControlKind.SAME_TENANT,
+            "control_delta_sha256": _tagged_sha256(relabeled_delta_json),
+        }
+    )
+    substituted = _remint_bundle(bundle, artifacts=artifacts, controls=(relabeled_control,))
+
+    result = _verify(substituted)
+
+    assert result.valid
+    assert result.control_delta_derivation_verified is True
+    assert result.control_kind_semantics_verified is False
+    assert result.authoritative is False
+    assert result.promotable is False
 
 
 def test_candidate_cannot_promote_a_finding(bundle: _Bundle) -> None:
@@ -1181,7 +1540,7 @@ def test_control_result_must_execute_the_retained_plan_envelope_exactly(
         if entry.role is RealityArtifactRole.CONTROL_TRACE
     )
     root_entry = next(
-        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.ROOT
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.CONTROL_ROOT
     )
     retained_plan = ReplayPlan.model_validate_json(bundle.artifacts[plan_entry.path])
     retained_action = retained_plan.steps[0].action
@@ -1327,7 +1686,7 @@ def test_control_result_substitution_is_rejected(bundle: _Bundle) -> None:
         if entry.role is RealityArtifactRole.CONTROL_TRACE
     )
     root_entry = next(
-        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.ROOT
+        entry for entry in bundle.manifest.entries if entry.role is RealityArtifactRole.CONTROL_ROOT
     )
     control_plan = ReplayPlan.model_validate_json(bundle.artifacts[plan_entry.path])
     primary_root = RootSeed.model_validate_json(bundle.artifacts[root_entry.path])

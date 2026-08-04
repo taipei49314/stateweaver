@@ -292,28 +292,34 @@ The core contract now rejects the former bare `replay_run_id + REPRODUCED` promo
 content-addressed `RealityReplayReceipt` models the necessary input for `REALITY_REPLAYED`, and
 `PATCH_VERIFIED` additionally models an exact `BLOCKED_BY_FIX` patched receipt. It binds the
 scope, target and adapter locks; chain, plan and clean root; at least two unique attempts with one
-semantic signature and trace hash; deterministic `OBSERVED + VIOLATED` Oracle results; non-vacuous
-`OBSERVED + SATISFIED` negative controls; and an evidence-manifest digest. All nested receipt
-objects are revalidated at the Finding promotion boundary, including Pydantic instances created
-without normal validation. `SYNTHETIC_REPRODUCED` is explicitly non-confirmed. The evidence package
-now resolves the synthetic profile from one immutable in-memory byte mapping: it enforces exact
-pre-receipt coverage, hashes and parses the same bytes, and binds scope, locks, plan/root/chain,
+semantic signature and trace hash; deterministic `OBSERVED + VIOLATED` Oracle results; structurally
+non-vacuous `OBSERVED + SATISFIED` negative-control artifacts; and an evidence-manifest digest. All
+nested receipt objects are revalidated at the Finding promotion boundary, including Pydantic
+instances created without normal validation. `SYNTHETIC_REPRODUCED` is explicitly non-confirmed.
+The evidence package now resolves the synthetic profile from one immutable in-memory byte mapping:
+it enforces exact pre-receipt coverage, hashes and parses the same bytes, and binds scope, locks,
+plan/root/chain,
 results, action logs, Oracles, controls, patch replay, and evidence index. The V2 profile additionally
 requires every result/action-log row to execute the retained plan envelope exactly, independently
 regenerates start/step/completion event semantics for primary, control, and patch lanes, preserves
 the complete logical root across the vulnerable/patched differential, and accepts
 `BLOCKED_BY_FIX` only at the synthetic Oracle expectation boundary. Generic `EventEnvelope` v2 now
 binds all envelope metadata in a domain-separated semantic hash, while `EventHistory` verifies an
-exact per-run hash chain. These self-contained histories do not provide external freshness. The
-resolver result is permanently non-authoritative and non-promotable.
+exact per-run hash chain. It also retains each control root, requires full primary-root parity, and
+reconstructs `reality-control-delta-v2` from the verified raw primary/control plan and root artifact
+digests plus both deterministic result signatures. Default-field omission, delta-only coherent
+remints, and V1 downgrade are rejected. These self-contained histories and projections do not
+provide external freshness. The resolver result is permanently non-authoritative and
+non-promotable.
 
 This content hash and candidate resolver prove one supplied snapshot's internal coherence, not
 issuer identity, authenticated retention, target/adapter source provenance, or independent
 execution. The general Reality Replay Broker, trusted store acquisition, reporting layer, trusted
 issuance/attestation, and portable M6 reproduction workflow remain absent. The Finding validator
 therefore rejects both reserved confirmed statuses. M6 is **partially implemented and not
-certified**. Control-delta derivation, authenticated execution provenance, and retained source-byte
-resolution also remain open. See `docs/architecture/M6_REALITY_RECEIPT.md` for the exact boundary.
+certified**. Kind-specific typed mutation witnesses, authenticated execution provenance, and
+retained source-byte resolution remain open. See `docs/architecture/M6_REALITY_RECEIPT.md` for the
+exact boundary.
 
 ## M7 — StateChainBench
 

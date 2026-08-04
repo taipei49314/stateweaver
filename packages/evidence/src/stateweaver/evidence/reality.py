@@ -103,6 +103,7 @@ class RealityArtifactRole(StrEnum):
     PRIMARY_RESULT = "primary-result"
     PRIMARY_ACTION_LOG = "primary-action-log"
     PRIMARY_TRACE = "primary-trace"
+    CONTROL_ROOT = "control-root"
     CONTROL_PLAN = "control-plan"
     CONTROL_RESULT = "control-result"
     CONTROL_ACTION_LOG = "control-action-log"
@@ -126,6 +127,7 @@ _PRIMARY_RUN_ROLES = frozenset(
 )
 _CONTROL_ROLES = frozenset(
     {
+        RealityArtifactRole.CONTROL_ROOT,
         RealityArtifactRole.CONTROL_PLAN,
         RealityArtifactRole.CONTROL_RESULT,
         RealityArtifactRole.CONTROL_ACTION_LOG,
@@ -225,33 +227,126 @@ class RealityChainBinding(_RealityModel):
     plan_hash: Sha256Digest
 
 
+class RealityControlDeltaDimension(StrEnum):
+    PLAN_ARTIFACT = "plan-artifact"
+    RESULT_SEMANTICS = "result-semantics"
+    ROOT_ARTIFACT = "root-artifact"
+
+
 class RealityDeltaChange(_RealityModel):
-    state_path: Token
-    before_sha256: Sha256Digest
-    after_sha256: Sha256Digest
+    dimension: RealityControlDeltaDimension
+    primary_sha256: Sha256Digest
+    control_sha256: Sha256Digest
 
     @model_validator(mode="after")
     def change_is_nonvacuous(self) -> RealityDeltaChange:
-        if self.before_sha256 == self.after_sha256:
-            raise ValueError("control delta must change the selected state")
+        if self.primary_sha256 == self.control_sha256:
+            raise ValueError("control delta dimension must differ from the primary replay")
         return self
 
 
 class RealityControlDelta(_RealityModel):
-    schema_version: Literal["1.0"] = "1.0"
+    """Exact plan/root artifacts plus result semantics; the kind label remains unattested."""
+
+    schema_version: Literal["reality-control-delta-v2"] = "reality-control-delta-v2"
+    projection_scope: Literal["artifact-causal-projection"] = "artifact-causal-projection"
+    kind_semantics_attested: Literal[False] = False
     control_name: Token
     kind: NegativeControlKind
+    primary_plan_sha256: Sha256Digest
+    control_plan_sha256: Sha256Digest
+    primary_root_sha256: Sha256Digest
+    control_root_sha256: Sha256Digest
+    primary_result_signature: Sha256Digest
+    control_result_signature: Sha256Digest
     changes: Annotated[tuple[RealityDeltaChange, ...], Field(min_length=1)]
 
-    @field_validator("changes")
     @classmethod
-    def changes_are_canonical_and_unique(
-        cls, value: tuple[RealityDeltaChange, ...]
+    def derive(
+        cls,
+        *,
+        control_name: str,
+        kind: NegativeControlKind,
+        primary_plan_sha256: str,
+        primary_root_sha256: str,
+        primary_result: ReplayRunResult,
+        control_plan_sha256: str,
+        control_root_sha256: str,
+        control_result: ReplayRunResult,
+    ) -> RealityControlDelta:
+        primary_result_signature = primary_result.deterministic_signature()
+        control_result_signature = control_result.deterministic_signature()
+        return cls(
+            control_name=control_name,
+            kind=kind,
+            primary_plan_sha256=primary_plan_sha256,
+            control_plan_sha256=control_plan_sha256,
+            primary_root_sha256=primary_root_sha256,
+            control_root_sha256=control_root_sha256,
+            primary_result_signature=primary_result_signature,
+            control_result_signature=control_result_signature,
+            changes=cls._expected_changes(
+                primary_plan_sha256=primary_plan_sha256,
+                control_plan_sha256=control_plan_sha256,
+                primary_root_sha256=primary_root_sha256,
+                control_root_sha256=control_root_sha256,
+                primary_result_signature=primary_result_signature,
+                control_result_signature=control_result_signature,
+            ),
+        )
+
+    @staticmethod
+    def _expected_changes(
+        *,
+        primary_plan_sha256: str,
+        control_plan_sha256: str,
+        primary_root_sha256: str,
+        control_root_sha256: str,
+        primary_result_signature: str,
+        control_result_signature: str,
     ) -> tuple[RealityDeltaChange, ...]:
-        paths = tuple(change.state_path for change in value)
-        if paths != tuple(sorted(paths)) or len(paths) != len(set(paths)):
-            raise ValueError("control delta paths must be unique and ordered")
-        return value
+        candidates = (
+            (
+                RealityControlDeltaDimension.PLAN_ARTIFACT,
+                primary_plan_sha256,
+                control_plan_sha256,
+            ),
+            (
+                RealityControlDeltaDimension.RESULT_SEMANTICS,
+                primary_result_signature,
+                control_result_signature,
+            ),
+            (
+                RealityControlDeltaDimension.ROOT_ARTIFACT,
+                primary_root_sha256,
+                control_root_sha256,
+            ),
+        )
+        return tuple(
+            RealityDeltaChange(
+                dimension=dimension,
+                primary_sha256=primary_sha256,
+                control_sha256=control_sha256,
+            )
+            for dimension, primary_sha256, control_sha256 in candidates
+            if primary_sha256 != control_sha256
+        )
+
+    @model_validator(mode="after")
+    def changes_are_the_exact_source_projection(self) -> RealityControlDelta:
+        expected = self._expected_changes(
+            primary_plan_sha256=self.primary_plan_sha256,
+            control_plan_sha256=self.control_plan_sha256,
+            primary_root_sha256=self.primary_root_sha256,
+            control_root_sha256=self.control_root_sha256,
+            primary_result_signature=self.primary_result_signature,
+            control_result_signature=self.control_result_signature,
+        )
+        if not expected:
+            raise ValueError("control delta must differ from the primary replay")
+        if self.changes != expected:
+            raise ValueError("control delta changes must equal the exact source projection")
+        return self
 
 
 class RealityEvidenceFact(_RealityModel):
@@ -308,6 +403,7 @@ class RealityBundleVerificationResult:
     snapshot_sha256: str | None = None
     profile: str | None = None
     event_semantics_verified: bool = False
+    control_delta_derivation_verified: bool = False
     primary_semantic_trace_hash: str | None = None
 
     @property
@@ -317,6 +413,16 @@ class RealityBundleVerificationResult:
     @property
     def authoritative(self) -> Literal[False]:
         return False
+
+    @property
+    def control_kind_semantics_verified(self) -> Literal[False]:
+        return False
+
+
+@dataclass(frozen=True)
+class _VerifiedPrimaryProjection:
+    semantic_trace_hash: str
+    result: ReplayRunResult
 
 
 class _RealityVerificationError(ValueError):
@@ -523,7 +629,7 @@ def _verify_static_artifacts(
     receipt: RealityReplayReceipt,
     resolver: _EntryResolver,
     snapshot: Mapping[str, bytes],
-) -> tuple[RealityAdapterLock, ReplayPlan, RootSeed]:
+) -> tuple[RealityAdapterLock, ReplayPlan, RootSeed, str, str]:
     scope_entry = resolver.one(RealityArtifactRole.SCOPE)
     scope_artifact = _parse_model(
         RealityScopeArtifact,
@@ -577,7 +683,7 @@ def _verify_static_artifacts(
         or chain.plan_hash != receipt.plan_hash
     ):
         raise _RealityVerificationError("chain-binding-mismatch")
-    return adapter, plan, root
+    return adapter, plan, root, plan_entry.sha256, root_entry.sha256
 
 
 def _verify_primary_attempts(
@@ -586,12 +692,13 @@ def _verify_primary_attempts(
     plan: ReplayPlan,
     resolver: _EntryResolver,
     snapshot: Mapping[str, bytes],
-) -> str:
+) -> _VerifiedPrimaryProjection:
     oracle_entry = resolver.one(RealityArtifactRole.PRIMARY_ORACLES)
     primary_oracles = _parse_vector(_ORACLE_VECTOR, _artifact(oracle_entry, snapshot))
     if primary_oracles != receipt.oracle_results:
         raise _RealityVerificationError("oracle-binding-mismatch")
     semantic_trace_hashes: set[str] = set()
+    primary_result: ReplayRunResult | None = None
     for attempt in receipt.attempts:
         result_entry = resolver.one(
             RealityArtifactRole.PRIMARY_RESULT, run_id=attempt.replay_run_id
@@ -612,6 +719,8 @@ def _verify_primary_attempts(
             RealityTraceArtifact,
             _artifact(trace_entry, snapshot),
         )
+        if primary_result is None:
+            primary_result = result
         if oracle_entry.sha256 != attempt.oracle_results_hash:
             raise _RealityVerificationError("oracle-binding-mismatch")
         semantic_trace_hashes.add(
@@ -633,17 +742,29 @@ def _verify_primary_attempts(
         )
     if len(semantic_trace_hashes) != 1:
         raise _RealityVerificationError("replay-trace-semantics-mismatch")
-    return semantic_trace_hashes.pop()
+    if primary_result is None:
+        raise _RealityVerificationError("replay-causal-binding-mismatch")
+    return _VerifiedPrimaryProjection(
+        semantic_trace_hash=semantic_trace_hashes.pop(),
+        result=primary_result,
+    )
 
 
 def _verify_controls(
     *,
     receipt: RealityReplayReceipt,
+    adapter_lock: RealityAdapterLock,
+    primary_plan: ReplayPlan,
+    primary_root: RootSeed,
+    primary_plan_sha256: str,
+    primary_root_sha256: str,
+    primary_result: ReplayRunResult,
     resolver: _EntryResolver,
     snapshot: Mapping[str, bytes],
 ) -> None:
     for control in receipt.negative_controls:
         selector = {"run_id": control.replay_run_id, "control_name": control.name}
+        root_entry = resolver.one(RealityArtifactRole.CONTROL_ROOT, **selector)
         plan_entry = resolver.one(RealityArtifactRole.CONTROL_PLAN, **selector)
         result_entry = resolver.one(RealityArtifactRole.CONTROL_RESULT, **selector)
         log_entry = resolver.one(RealityArtifactRole.CONTROL_ACTION_LOG, **selector)
@@ -651,6 +772,7 @@ def _verify_controls(
         oracle_entry = resolver.one(RealityArtifactRole.CONTROL_ORACLES, **selector)
         delta_entry = resolver.one(RealityArtifactRole.CONTROL_DELTA, **selector)
 
+        root = _parse_model(RootSeed, _artifact(root_entry, snapshot))
         plan = _parse_model(
             ReplayPlan,
             _artifact(plan_entry, snapshot, expected_sha256=control.plan_hash),
@@ -671,10 +793,29 @@ def _verify_controls(
             _ORACLE_VECTOR,
             _artifact(oracle_entry, snapshot, expected_sha256=control.oracle_results_hash),
         )
-        delta = _parse_model(
-            RealityControlDelta,
-            _artifact(delta_entry, snapshot, expected_sha256=control.control_delta_sha256),
+        delta_content = _artifact(
+            delta_entry,
+            snapshot,
+            expected_sha256=control.control_delta_sha256,
         )
+        delta = _parse_model(RealityControlDelta, delta_content)
+        if not _root_matches(
+            root,
+            root_seed_id=control.root_seed_id,
+            target_version=control.target_version,
+            root_fingerprint=control.root_fingerprint,
+            adapter_lock=adapter_lock,
+        ):
+            raise _RealityVerificationError("control-root-binding-mismatch")
+        if (
+            root.root_seed_id != primary_root.root_seed_id
+            or root.target_version != primary_root.target_version
+            or root.random_seed != primary_root.random_seed
+            or root.clock_epoch != primary_root.clock_epoch
+            or root.capture != primary_root.capture
+            or dict(root.adapter_versions) != dict(primary_root.adapter_versions)
+        ):
+            raise _RealityVerificationError("control-root-logical-root-mismatch")
         if (
             plan.plan_id != control.plan_id
             or plan.root_seed_id != control.root_seed_id
@@ -698,6 +839,18 @@ def _verify_controls(
             expected_evidence_ids=control.evidence_ids,
             expected_status=ReplayRunStatus.SUCCEEDED,
         )
+        expected_delta = RealityControlDelta.derive(
+            control_name=control.name,
+            kind=control.kind,
+            primary_plan_sha256=primary_plan_sha256,
+            primary_root_sha256=primary_root_sha256,
+            primary_result=primary_result,
+            control_plan_sha256=plan_entry.sha256,
+            control_root_sha256=root_entry.sha256,
+            control_result=result,
+        )
+        if delta_content != expected_delta.canonical_bytes():
+            raise _RealityVerificationError("control-delta-derivation-mismatch")
 
 
 def _verify_patch(
@@ -829,18 +982,30 @@ def verify_reality_pre_receipt_bundle(
                 raise _RealityVerificationError("artifact-digest-mismatch")
 
         resolver = _EntryResolver(manifest.entries)
-        adapter_lock, plan, primary_root = _verify_static_artifacts(
-            receipt=receipt,
-            resolver=resolver,
-            snapshot=snapshot,
+        adapter_lock, plan, primary_root, primary_plan_sha256, primary_root_sha256 = (
+            _verify_static_artifacts(
+                receipt=receipt,
+                resolver=resolver,
+                snapshot=snapshot,
+            )
         )
-        primary_semantic_trace_hash = _verify_primary_attempts(
+        primary_projection = _verify_primary_attempts(
             receipt=receipt,
             plan=plan,
             resolver=resolver,
             snapshot=snapshot,
         )
-        _verify_controls(receipt=receipt, resolver=resolver, snapshot=snapshot)
+        _verify_controls(
+            receipt=receipt,
+            adapter_lock=adapter_lock,
+            primary_plan=plan,
+            primary_root=primary_root,
+            primary_plan_sha256=primary_plan_sha256,
+            primary_root_sha256=primary_root_sha256,
+            primary_result=primary_projection.result,
+            resolver=resolver,
+            snapshot=snapshot,
+        )
         _verify_patch(
             receipt=receipt,
             adapter_lock=adapter_lock,
@@ -859,7 +1024,8 @@ def verify_reality_pre_receipt_bundle(
             snapshot_sha256=_snapshot_sha256(manifest_json, snapshot),
             profile=manifest.profile,
             event_semantics_verified=True,
-            primary_semantic_trace_hash=primary_semantic_trace_hash,
+            control_delta_derivation_verified=True,
+            primary_semantic_trace_hash=primary_projection.semantic_trace_hash,
         )
     except _RealityVerificationError as error:
         return RealityBundleVerificationResult(valid=False, errors=(error.code,))
@@ -874,6 +1040,7 @@ __all__ = [
     "RealityBundleVerificationResult",
     "RealityChainBinding",
     "RealityControlDelta",
+    "RealityControlDeltaDimension",
     "RealityDeltaChange",
     "RealityEvidenceFact",
     "RealityEvidenceIndex",

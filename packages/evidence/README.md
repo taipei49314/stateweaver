@@ -46,5 +46,12 @@ issuer claim, signature, caller `verified` flag, or model instance. Even a valid
 `authoritative=False` and `promotable=False`; target/adapter source digests remain claims inside
 their resolved lock artifacts until a trusted store binds them to retained source bytes. Event
 reconstruction proves agreement with the supplied typed replay result, not that an authenticated
-execution engine produced that result. The negative-control delta remains a content-bound claim;
-general mutation-to-delta derivation belongs to the future broker.
+execution engine produced that result. For every negative control, the manifest now retains a
+separate `CONTROL_ROOT` and the resolver requires it to equal the primary logical root in full,
+including random seed, controlled clock, capture, and adapter versions. It then reconstructs a
+`reality-control-delta-v2` artifact from the exact verified primary/control plan and root artifact
+digests plus both deterministic result signatures, and requires byte-exact equality. This also
+rejects default-field omission, arbitrary caller-written state paths, and coherent delta-only
+reminting. The enumerated control `kind` remains a producer-authored classification: the V2
+artifact fixes `kind_semantics_attested=false`, and the verification result permanently exposes
+`control_kind_semantics_verified=False` until an adapter-issued typed mutation witness exists.

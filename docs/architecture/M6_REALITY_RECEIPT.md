@@ -50,10 +50,16 @@ The receipt and V2 resolver close eight substitution boundaries:
    run occurrence identity so deterministic primary attempts remain comparable.
 5. Reality Oracle: every promoted Oracle result must be deterministic, `OBSERVED`, `VIOLATED`,
    evidence-backed, and part of the receipt's canonical Oracle-definition hash.
-6. Negative controls: at least one typed control kind must produce deterministic, `OBSERVED`,
-   `SATISFIED` Oracle results with `NOT_REPRODUCED`; exact target/adapter locks, root, and Oracle
-   definitions must match while its plan, control-delta digest, and semantic signature differ from
-   the primary replay. Run IDs and raw replay-result digests are globally unique across primary
+6. Negative-control causal projection: at least one enumerated control label must produce
+   deterministic, `OBSERVED`, `SATISFIED` Oracle results with `NOT_REPRODUCED`; exact target/adapter
+   locks, Oracle definitions, and a separately retained control root are required. The control root
+   must equal the primary logical root in full, including random seed, controlled clock, capture,
+   and adapter versions. `reality-control-delta-v2` is reconstructed from the exact verified
+   primary/control plan and root artifact digests plus both deterministic result signatures; a
+   byte-exact comparison rejects omitted dimensions, default-field omission, schema downgrade, or
+   coherent delta-only reminting. The enum `kind` remains a producer-authored classification and is
+   explicitly unattested; no current adapter-issued witness proves that the label describes the
+   actual plan mutation. Run IDs and raw replay-result digests are globally unique across primary
    attempts, controls, and patch.
 7. Patched replay: `PATCH_VERIFIED` requires the same target identity, adapter lock, plan, logical
    root seed/fingerprint, and Oracle definitions against a different target version and target lock.
@@ -108,9 +114,10 @@ those bytes came from. A complete M6 broker must still:
 - reproduce the bundle on a separate clean machine.
 
 The V2 semantic trace proves that the supplied event narrative is the deterministic projection of
-the supplied typed replay result. It still does not prove that an authenticated execution engine
-produced that result, bind wall-clock OTLP events, or derive the negative-control delta from a
-trusted mutation record.
+the supplied typed replay result. The V2 control delta likewise proves an exact artifact-derived
+primary/control projection, but not that an authenticated execution engine produced either result,
+not wall-clock OTLP binding, and not the truth of a producer-selected control-kind label. A future
+typed mutation witness must close that semantic classification boundary.
 
 Until those checks exist and retained public evidence passes, the repository must describe this as
 a hardened promotion contract, not M6 certification.
@@ -121,7 +128,8 @@ Focused contract tests cover legacy-field rejection, plan/root/target substituti
 run vectors, Oracle provenance/outcome, negative controls, patch comparison, content-addressed
 identity, status shape, and constructed-instance revalidation. Evidence resolver tests additionally
 cover single-read snapshots, exact coverage/role closure, digest and logical-trace substitution,
-canonical encoding, unsafe paths, controls, and patch replay:
+canonical encoding, unsafe paths, control-root parity, delta V1 downgrade, delta-only coherent
+reminting, the explicitly unattested kind boundary, and patch replay:
 
 ```powershell
 uv run pytest packages/contracts/tests/test_reality_receipts.py -q

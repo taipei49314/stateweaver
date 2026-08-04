@@ -252,6 +252,26 @@ def test_reality_receipt_is_content_addressed_and_binds_finding() -> None:
 
 
 @pytest.mark.parametrize(
+    ("kind", "control_delta_sha256"),
+    (
+        (NegativeControlKind.ALTERNATE_ORDER, digest("d")),
+        (NegativeControlKind.FRESH_SESSION, digest("8")),
+    ),
+)
+def test_reality_receipt_identity_binds_control_label_and_delta_digest(
+    kind: NegativeControlKind,
+    control_delta_sha256: str,
+) -> None:
+    baseline = receipt()
+    changed = receipt(
+        negative_controls=(negative_control(kind=kind, control_delta_sha256=control_delta_sha256),)
+    )
+
+    assert changed.receipt_hash != baseline.receipt_hash
+    assert changed.receipt_id != baseline.receipt_id
+
+
+@pytest.mark.parametrize(
     ("attempt_changes", "message"),
     [
         ({"replay_outcome": ReplayOutcome.NOT_REPRODUCED}, "must reproduce"),
