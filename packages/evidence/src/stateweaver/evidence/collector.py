@@ -77,7 +77,12 @@ _JUNIT_REQUIRED_IDENTITIES: dict[str, frozenset[str]] = {
     ),
 }
 _JUNIT_ALLOWED_PREFIXES: dict[str, tuple[str, ...]] = {
-    "contracts": ("tests.test_canonical::", "tests.test_contracts::"),
+    "contracts": (
+        "tests.test_canonical::",
+        "tests.test_contracts::",
+        "tests.test_event_history::",
+        "tests.test_reality_receipts::",
+    ),
     "policy": ("tests.test_evaluator::",),
     "lab": ("tests.test_lab::",),
     "replay": (
@@ -86,6 +91,8 @@ _JUNIT_ALLOWED_PREFIXES: dict[str, tuple[str, ...]] = {
         "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::",
         "apps.cli.tests.test_foundation::",
         "packages.evidence.tests.test_collector::",
+        "packages.evidence.tests.test_reality_bundle::",
+        "packages.evidence.tests.test_semantic_trace::",
     ),
 }
 ACCEPTANCE_TEST_COMMAND = (

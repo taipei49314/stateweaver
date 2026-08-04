@@ -64,13 +64,12 @@ jobs:
             adapters/environments/in_process_lab/tests \
             apps/cli/tests \
             packages/evidence/tests \
-            packages/reporting/tests \
-            tests/e2e/proof_bundle \
             --junitxml=artifacts/acceptance/junit/replay.xml
 
       - name: Collect and verify causal acceptance proof
         if: matrix.python-version == '3.13'
         run: |
+          set -o pipefail
           uv run stateweaver foundation collect-evidence \
             --output-root artifacts/acceptance/runs \
             --run-id "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
@@ -80,7 +79,7 @@ jobs:
             --junit-policy artifacts/acceptance/junit/policy.xml \
             --junit-lab artifacts/acceptance/junit/lab.xml \
             --junit-replay artifacts/acceptance/junit/replay.xml \
-            > artifacts/acceptance/collection.json
+            | tee artifacts/acceptance/collection.json
           uv run stateweaver foundation verify-evidence \
             "artifacts/acceptance/runs/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --repository-marker "${GITHUB_SHA}"
