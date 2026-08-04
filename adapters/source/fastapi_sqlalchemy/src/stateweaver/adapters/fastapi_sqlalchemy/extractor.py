@@ -96,7 +96,11 @@ def extract_fastapi_routes(app: FastAPI, spec: SourceExtractionSpec) -> tuple[So
             continue
         methods = tuple(
             sorted(
-                (_SUPPORTED_METHODS[item] for item in route.methods if item in _SUPPORTED_METHODS),
+                (
+                    _SUPPORTED_METHODS[item]
+                    for item in route.methods or ()
+                    if item in _SUPPORTED_METHODS
+                ),
                 key=lambda item: item.value,
             )
         )

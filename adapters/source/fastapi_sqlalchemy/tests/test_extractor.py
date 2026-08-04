@@ -92,3 +92,24 @@ def test_output_is_deterministic_across_repeated_framework_extraction() -> None:
     app = create_app("vulnerable")
     assert extract_fastapi_routes(app, _spec()) == extract_fastapi_routes(app, _spec())
     assert extract_fastapi_openapi(app, _spec()) == extract_fastapi_openapi(app, _spec())
+
+
+def test_route_without_declared_methods_is_ignored() -> None:
+    app = create_app("vulnerable")
+    route = next(
+        item
+        for item in app.routes
+        if getattr(item, "path", None) == "/v1/lab/documents/{document_id}"
+    )
+    route.methods = None  # type: ignore[attr-defined]
+
+    routes = extract_fastapi_routes(
+        app,
+        SourceExtractionSpec(
+            service_id="service.synthetic.lab",
+            evidence_id="evidence.source.lab",
+            include_path_prefixes=("/v1/lab/",),
+        ),
+    )
+
+    assert all(item.path != "/v1/lab/documents/{document_id}" for item in routes)

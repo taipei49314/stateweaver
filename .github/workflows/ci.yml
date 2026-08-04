@@ -96,9 +96,9 @@ jobs:
           UV_OFFLINE=1 uv export --locked --no-dev --package stateweaver-cli --no-emit-local --no-editable \
             --output-file dist/runtime-requirements.txt
           uv venv .packaging-smoke
-          VIRTUAL_ENV="$PWD/.packaging-smoke" UV_OFFLINE=1 uv pip install --require-hashes --no-deps \
+          uv pip install --python .packaging-smoke/bin/python --require-hashes --no-deps \
             -r dist/runtime-requirements.txt
-          VIRTUAL_ENV="$PWD/.packaging-smoke" UV_OFFLINE=1 uv pip install --no-deps --no-index --find-links dist \
+          uv pip install --python .packaging-smoke/bin/python --no-deps --no-index --find-links dist \
             dist/stateweaver_cli-*.whl \
             dist/stateweaver_adapter_in_process_lab-*.whl \
             dist/stateweaver_contracts-*.whl \
@@ -107,7 +107,7 @@ jobs:
             dist/stateweaver_policy-*.whl \
             dist/stateweaver_replay-*.whl \
             dist/stateweaver_reporting-*.whl
-          VIRTUAL_ENV="$PWD/.packaging-smoke" UV_OFFLINE=1 uv pip check
+          uv pip check --python .packaging-smoke/bin/python
           .packaging-smoke/bin/python -c "from stateweaver.reporting import RealityPublicationManifest"
           .packaging-smoke/bin/stateweaver --json doctor
           .packaging-smoke/bin/stateweaver --json foundation verify
