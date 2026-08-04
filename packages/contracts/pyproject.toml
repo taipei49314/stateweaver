@@ -12,7 +12,7 @@ license = "Apache-2.0"
 dependencies = ["pydantic>=2.11,<3"]
 
 [project.optional-dependencies]
-test = ["hypothesis>=6.130,<7", "pytest>=8.3,<10"]
+test = ["hypothesis>=6.130,<7", "pytest>=9.0.3,<10"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/stateweaver"]

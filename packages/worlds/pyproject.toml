@@ -8,7 +8,7 @@ license = "Apache-2.0"
 dependencies = ["pydantic>=2.11,<3"]
 
 [project.optional-dependencies]
-test = ["hypothesis>=6.130,<7", "pytest>=8.3,<10", "pytest-asyncio>=0.25,<2"]
+test = ["hypothesis>=6.130,<7", "pytest>=9.0.3,<10", "pytest-asyncio>=0.25,<2"]
 
 [build-system]
 requires = ["hatchling>=1.27"]
