@@ -527,7 +527,7 @@ def test_verifier_binds_independently_supplied_provenance(
     expected[field] = value
     result = verify_acceptance_evidence(run, expected_provenance=ExpectedProvenance(**expected))
     assert not result.valid
-    assert any("coher" in error.lower() for error in result.errors)
+    assert result.errors == ("artifact provenance does not match independent expectations",)
 
 
 def test_file_collection_is_closed_while_semantic_hash_ignores_audit_clocks(

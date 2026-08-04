@@ -35,6 +35,9 @@ content; it independently re-runs the installed, fixed local foundation under th
 network guard and requires the resulting semantic hash, installed source/Oracle digests, and stable
 runtime dependency-byte fingerprint to match the bundle. Neither command accepts a target,
 credential, or arbitrary command.
+Because that fingerprint includes platform-specific installed bytes, deterministic re-execution
+requires the producer's operating system, Python ABI, and wheel build. A mismatch is reported as a
+provenance failure, separately from bundle causal-coherence failures.
 Collection requires `--started-at` with an absolute timestamp captured immediately before the
 first normative JUnit command, so the retained run window covers both the tests and differential.
 This establishes local hash, causal, installed-runtime, and deterministic re-execution coherence;

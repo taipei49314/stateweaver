@@ -64,6 +64,10 @@ class ExpectedProvenance:
     foundation_semantic_sha256: str | None = None
 
 
+class _ProvenanceMismatchError(AcceptanceEvidenceError):
+    """The bundle is coherent, but an independently derived provenance value differs."""
+
+
 def verify_acceptance_evidence(
     run_directory: Path, *, expected_provenance: ExpectedProvenance | None = None
 ) -> VerificationResult:
@@ -201,6 +205,8 @@ def _verify_coherence(
             junit_results,
             expected_provenance,
         )
+    except _ProvenanceMismatchError:
+        errors.append("artifact provenance does not match independent expectations")
     except (AcceptanceEvidenceError, EvidenceInputError, KeyError, TypeError, ValueError):
         errors.append("artifact bundle is not causally coherent")
 
@@ -263,7 +269,7 @@ def _validate_run_manifest(
             != expected_provenance.foundation_semantic_sha256
         )
     ):
-        raise AcceptanceEvidenceError("run provenance does not match independent expectations")
+        raise _ProvenanceMismatchError("run provenance does not match independent expectations")
 
 
 def _string_mapping(value: object) -> TypeGuard[Mapping[str, Any]]:

@@ -13,7 +13,8 @@ completed and its attestation has been retained.
 
 ## Local semantic verification
 
-Download the `acceptance-proof` artifact, install the matching locked StateWeaver wheels, and run:
+Download the `acceptance-proof` artifact, install the matching locked StateWeaver wheels on the
+same operating system, Python ABI, and wheel build as the producer, and run:
 
 ```console
 stateweaver foundation verify-evidence \
@@ -27,6 +28,14 @@ derived semantic and installed-byte fingerprints. The verifier reads the manifes
 required artifact once; hashing, canonical parsing, causal checks, and JUnit parsing use those same
 captured bytes. A successful JSON response includes `snapshot_sha256`, which identifies the run ID,
 manifest, and complete captured artifact set with length-delimited domain separation.
+
+The installed-runtime fingerprint deliberately includes platform-specific dependency bytes, such
+as compiled wheels. A proof produced on Linux therefore fails the high-level provenance check on a
+Windows installation even when the bundle, source, and Oracle are identical. That failure is
+reported as `artifact provenance does not match independent expectations`; it is distinct from
+`artifact bundle is not causally coherent`. Use the exact producer platform for deterministic
+re-execution, and use the manifest hash plus GitHub attestation below for portable provenance
+verification.
 
 That result describes the captured bytes, not the future contents of the directory path. Do not
 reopen files from a mutable directory and treat them as verified. The local path adapter is not a
