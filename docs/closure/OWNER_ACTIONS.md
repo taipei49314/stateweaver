@@ -6,11 +6,12 @@ Release, or change the default branch.
 
 ## Required
 
-1. Review/merge the closure-branch docs onto `main` when ready.
+1. Review/merge the closure-branch docs onto `main` when ready
+   ([PR #7](https://github.com/taipei49314/stateweaver/pull/7) or successor).
 2. For **MERGE_CANDIDATE** PRs (#1, #4, #3):
    - `@dependabot rebase` onto current `main` (already green at `5df5f57`).
    - Merge only after CI is green on the rebased tip.
-   - Prefer landing #4 and #3 in the same window.
+   - Prefer landing #4 and #3 in the same window after #1.
 3. For **CLOSE_WITH_REASON** PRs (#2, #5): close without merge or
    `@dependabot ignore this major version`.
 4. Keep public claims inside

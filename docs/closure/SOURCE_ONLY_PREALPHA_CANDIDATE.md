@@ -1,19 +1,22 @@
 # Source-only pre-alpha candidate (prepared, unpublished)
 
 Date: 2026-08-07  
-Candidate tip (closure branch base): `5df5f57eb8a588eda420d610603f4689faaf4b05`  
+Candidate tip (product / main): `5df5f57eb8a588eda420d610603f4689faaf4b05`  
 Branch: `closure/stateweaver-20260807`
 
 This document prepares a **source-only pre-alpha candidate**. It does **not**
 publish a GitHub Release, PyPI package, or annotated tag. Final milestone
 wording remains reserved for GPT on Monday.
 
+Decision token: `SOURCE_ONLY_PREALPHA_CANDIDATE_PREPARED`
+
 ## What this candidate is
 
 - A git source tree that runs the fixed in-process synthetic lab offline.
-- Locally verified on the tip above with:
+- Locally re-verified on the product tip above with:
   - `uv run stateweaver --json doctor` → exit 0 (`mode=offline-in-process`)
   - `uv run stateweaver --json foundation verify` → exit 0 (`accepted=true`)
+  - normative JUnit suites (contracts / policy / lab / replay) → exit 0
   - `foundation collect-evidence` + `foundation verify-evidence` → exit 0
     (`verified=true`, `valid=true`)
 
@@ -52,5 +55,6 @@ uv run stateweaver --json foundation verify
 
 ## Dependency queue posture
 
-See [DEPENDENCY_PR_VERDICTS.md](DEPENDENCY_PR_VERDICTS.md). Queue inspection is
-complete; merge/close actions remain with the owner.
+See [DEPENDENCY_QUEUE.md](DEPENDENCY_QUEUE.md) and
+[DEPENDENCY_PR_VERDICTS.md](DEPENDENCY_PR_VERDICTS.md). Queue inspection is
+complete (`DEPENDENCY_QUEUE_CLOSED`); merge/close actions remain with the owner.
