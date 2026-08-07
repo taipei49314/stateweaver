@@ -1,6 +1,23 @@
-﻿# OWNER_ACTIONS — stateweaver
+﻿# OWNER_ACTIONS — stateweaver dependency queue / source-only candidate
 
-1. Do not merge Dependabot PRs from Cursor.
-2. Fix or waive Python 3.13 CI redness on main before treating action bumps as MERGE_CANDIDATE.
-3. Close or defer PR #5 (TypeScript 7) under scope freeze unless Monday expands frontend milestone.
-4. After dependency queue decisions, prepare source-only pre-alpha tag only if GPT issues wording — Cursor will not publish.
+Cursor branch: `closure/stateweaver-20260807`  
+Cursor must **not** merge Dependabot PRs, force-push, rewrite tags, publish a
+Release, or change the default branch.
+
+## Required
+
+1. Review/merge the closure-branch docs onto `main` when ready.
+2. For **MERGE_CANDIDATE** PRs (#1, #4, #3):
+   - `@dependabot rebase` onto current `main` (already green at `5df5f57`).
+   - Merge only after CI is green on the rebased tip.
+   - Prefer landing #4 and #3 in the same window.
+3. For **CLOSE_WITH_REASON** PRs (#2, #5): close without merge or
+   `@dependabot ignore this major version`.
+4. Keep public claims inside
+   [SOURCE_ONLY_PREALPHA_CANDIDATE.md](SOURCE_ONLY_PREALPHA_CANDIDATE.md).
+   Final milestone wording is reserved for GPT Monday.
+
+## Note on Python 3.13
+
+Do **not** treat unrebased Dependabot Py3.13 failures as a main-baseline
+blocker. Main CI at `5df5f57` is green; rebase first.

@@ -1,17 +1,34 @@
 ﻿# DEPENDENCY_PR_VERDICTS — stateweaver 2026-08-07
 
-Inspected open Dependabot PRs on `main` tip `5df5f57`. Cursor does **not** merge these PRs.
+Inspected each open Dependabot PR **one at a time** with a local rebase onto
+`origin/main` (`5df5f57eb8a588eda420d610603f4689faaf4b05`). Cursor did **not**
+merge, recreate, or close any Dependabot PR.
 
-| PR | Change | CI snapshot (as of inspection) | Verdict | Reason |
+Order: setup/runtime tooling → artifact upload → artifact download → type
+checker → major TypeScript upgrade last.
+
+| PR | Title | Rebase onto main | Local checks | Verdict |
 |---|---|---|---|---|
-| #1 | `astral-sh/setup-uv` 6.8.0 → 9.0.0 | Py3.12 SUCCESS; Py3.13 FAILURE; Web SUCCESS | **BLOCKED** | Major action bump; Py3.13 job red on PR. Re-test after Py3.13 baseline fixed on main or accept scoped merge after isolated green. |
-| #3 | `actions/download-artifact` 4.3.0 → 8.0.1 | Py3.12 SUCCESS; Py3.13 FAILURE; Web SUCCESS | **BLOCKED** | Same Py3.13 redness; major artifact action. Do not batch with others. |
-| #4 | `actions/upload-artifact` 4.6.2 → 7.0.1 | Py3.12 SUCCESS; Py3.13 FAILURE; Web SUCCESS | **BLOCKED** | Pair with #3 after isolated re-test; Py3.13 failure blocks MERGE_CANDIDATE. |
-| #2 | mypy `<2,>=1.15` → `>=1.15,<3` | Py3.12 FAILURE; Py3.13 FAILURE; Web SUCCESS | **CLOSE_WITH_REASON** or keep open as blocked | Type-checker ceiling expansion failed Python jobs — not merge-ready. |
-| #5 | TypeScript 6.0.3 → 7.0.2 (`apps/web`) | Py3.12 SUCCESS; Py3.13 FAILURE; Web **FAILURE** | **CLOSE_WITH_REASON** (scope freeze) | Major TS upgrade expands frontend scope; Web public experience failed. Prefer freeze until Monday GPT milestone wording / frontend owner scope. |
+| [#1](https://github.com/taipei49314/stateweaver/pull/1) | `astral-sh/setup-uv` 6.8.0 → 9.0.0 | Clean | Workflow YAML OK; pin-only; `enable-cache` / `python-version` unchanged. Breaking note: `prune-cache` default `false` (compatible here). | **MERGE_CANDIDATE** |
+| [#4](https://github.com/taipei49314/stateweaver/pull/4) | `actions/upload-artifact` 4.6.2 → 7.0.1 | Clean | Workflow YAML OK; existing inputs unchanged; `archive` default remains `true` (zipped). | **MERGE_CANDIDATE** |
+| [#3](https://github.com/taipei49314/stateweaver/pull/3) | `actions/download-artifact` 4.3.0 → 8.0.1 | Clean | Workflow YAML OK; attest-job `name`+`path` unchanged. | **MERGE_CANDIDATE** |
+| [#2](https://github.com/taipei49314/stateweaver/pull/2) | mypy constraint → `>=1.15,<3` | Clean | As shipped: `uv sync --locked` **exit 1** (no lock update). After local `uv lock`: mypy 1.20.2, `mypy` exit 0 (132 files). Opening `<3` admits mypy 2.x without paired plan. | **CLOSE_WITH_REASON** |
+| [#5](https://github.com/taipei49314/stateweaver/pull/5) | TypeScript 6.0.3 → 7.0.2 in `/apps/web` | Clean | `npm ci` **exit 1** `ERESOLVE`: `typescript-eslint@8.65.0` peers `typescript@>=4.8.4 <6.1.0`. Major upgrade deferred. | **CLOSE_WITH_REASON** |
 
-Recommended owner order (unchanged from workpack): #1 tooling → #3/#4 artifacts → #2 mypy → #5 TS last.
+## Stale remote CI vs rebase truth
 
-## Source-only pre-alpha note
+Dependabot tips were behind `main` by 2–4 commits. Remote Py3.13 redness on those
+tips is **not** post-rebase proof: `main` tip `5df5f57` CI conclusion is
+**success**. Owner must `@dependabot rebase` and require green CI before merge.
 
-Current `main` remains **source-only pre-alpha**. Do **not** claim: live-provider support, trusted Reality Broker, M6 clean-machine certification, PyPI production readiness, or general production readiness. Final milestone wording reserved for GPT Monday.
+## CLOSE_WITH_REASON detail
+
+### PR #2 — mypy `>=1.15,<3`
+
+Incomplete without `uv.lock`. Upper bound opens mypy 2.x during weekend scope
+freeze. Keep `mypy>=1.15,<2` until a dedicated mypy 2 validation lands.
+
+### PR #5 — TypeScript 7.0.2
+
+Peer conflict with current `typescript-eslint@8.65.0`. Close/ignore major until
+a coordinated eslint toolchain bump exists.
