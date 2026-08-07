@@ -57,65 +57,27 @@ clean-machine M6 certification remain intentionally unclaimed. This repository i
 source-only preview: no PyPI package or versioned GitHub Release is offered yet.
 
 <details>
-<summary>Implementation and trust-boundary detail</summary>
+<summary>Implementation and trust-boundary detail (summary)</summary>
 
-<br>
+Architecture baseline v1 ships milestone-by-milestone. Locally proven today:
 
-Architecture baseline v1 is being implemented milestone-by-milestone. The proof-producing M0/M1
-foundation, M3 semantic-twin flow, and M4 offline search flow pass locally. M2 deliberately remains
-partial: its content-backed six-component synthetic archive protocol passes emulator tests, but no
-live Docker or real-provider snapshot proof exists. Per-world lifecycle gates now prove four-way
-runner overlap without permitting same-world races. `WorldManager` linearizes snapshot, restore,
-destroy, transition, and parent-fork admission per world, while monotonic revisions reject stale
-commits. Pending world/environment reservations also close the pre-publication admission race:
-duplicate or overlapping handles cannot reach snapshot or let a losing operation destroy the
-winner, while cleanup failures remain quarantined. A single private store writer now owns all
-lifecycle commits; the public world catalog is read-only, rejects metadata-only cleanup bypasses,
-and binds asynchronous commands to one event loop. The opt-in live workflow remains unexecuted.
-M5's synthetic authorization closure, M7's trusted-runner integrity, and M8's fixed API/browser
-contract have been adversarially hardened and pass their local gates. They remain synthetic
-prototypes, not release certification. M6 now has a fail-closed, content-addressed
-`RealityReplayReceipt`: bare replay IDs and claimed outcomes can no longer promote a `Finding`.
-The receipt binds scope/target/adapter locks, plan/root identity, repeated replay semantics,
-observed Oracle violations, negative controls, patch comparison, and the evidence manifest. It is
-an internal-coherence contract, not a Reality Broker signature or producer attestation. Its
-pre-receipt manifest excludes the Finding, receipt, final publication report, and attestation to
-avoid recursive identity. All consumers must revalidate serialized input rather than trust
-unchecked in-memory model instances. Until a trusted broker/store resolver exists, the contract
-rejects both reserved confirmed statuses even when a receipt is internally coherent. A narrow
-synthetic-profile v2 resolver now snapshots caller-supplied artifact bytes exactly once and closes
-manifest, role, digest, retained-plan/executed-envelope, Oracle, control, patch, and evidence-index
-substitutions. It independently regenerates the complete replay-step event narrative for primary,
-control, and patched lanes from each typed result/action log, requires patch root parity, and rejects
-unrelated failure codes masquerading as `BLOCKED_BY_FIX`. The general event contract is also v2:
-its domain-separated semantic hash binds all envelope metadata, while `EventHistory` verifies an
-exact per-run hash chain. Negative controls now retain their own exact root artifact, require full
-logical-root parity, and carry a V2 delta reconstructed from exact verified plan/root artifact
-digests and deterministic result signatures; default-field omission, caller-authored state paths,
-and delta-only coherent remints are rejected. The enum kind is still an explicitly unattested
-producer label, not a proved mutation witness. These remain self-contained integrity checks, not
-freshness or execution attestation. The resolver accepts no filesystem path or issuer assertion
-and always returns a non-authoritative, non-promotable candidate; authenticated retention and
-source/issuer trust remain open. A deterministic reporting layer now turns that exact snapshot into
-an in-memory publication candidate: its `report.md` links every claim to retained artifact bytes,
-and a non-recursive canonical manifest binds the pre-receipt payload, receipt, and report. A second
-consumer re-derives the pre-receipt projection, report, and final manifest rather than trusting
-producer prose. The result remains non-authoritative, non-promotable, and unattested; no trusted
-broker, portable clean-machine reproduction, or M6 certification is claimed.
+| Area | Honest status |
+|---|---|
+| M0/M1 foundation proof | Passes (clean-root differential + negative controls) |
+| M2 world engine | Archive + lifecycle gates pass; **no** live Docker/provider proof |
+| M3 semantic twin | Source + OTLP + state-delta observed-fragment path passes |
+| M4 offline search | 24 → 4 → 2 → 1 flow preserves the observed candidate |
+| M5 chain compiler | Admission bridge for observed fragments; synthetic closure only |
+| M6 reality receipt | Fail-closed `RealityReplayReceipt` + reporting candidate; **no** trusted broker / M6 cert |
+| M7 StateChainBench | Deterministic prototype runner — not equal-work public benchmark |
+| M8 public UX | Fixed loopback API + browser contract pass local QA |
 
-One horizontal local integration now preserves the same three TestClient/OTLP/state-delta
-`OBSERVED` fragments through a 24 -> 4 -> 2 -> 1 in-memory search and Materialized-tier admission,
-then compiles all three into a minimal typed chain. The bridge independently rebinds promotion,
-state, evidence, Oracle, the replayed beam decision, provisional and committed budgets, the
-capture-supplied compiler root, policy/approval, allocation world, terminal goal, envelope semantics,
-and compiler output. Promotion events form a canonical `EventEnvelope`/`EventHistory` v2 lifecycle
-reconstructed from the bound search batch, policy and result, input and committed ledgers, and committed promotions:
-`search_blocked`; `reserved` -> `not_committed`; or `reserved` -> `allocated` -> `captured` ->
-`committed`. This is an audit projection, not operational callback telemetry or a wall-clock
-transcript. Releasing an uncommitted allocation is compensating cleanup, not a transactional rollback claim; the
-self-contained history also has no external freshness attestation. The flow performs no external
-I/O, and it does not turn the abstract allocation into a live materialized-provider, Twin-derived
-ranking, executed replay, or release-certification claim.
+Receipts and reports are **internal-coherence** artifacts, not producer
+attestation or Reality Broker signatures. Live-provider and clean-machine M6
+certification remain intentionally unclaimed.
+
+Full matrices: [docs/architecture/TRACEABILITY.md](docs/architecture/TRACEABILITY.md),
+[docs/PROOF_VERIFICATION.md](docs/PROOF_VERIFICATION.md), [ARCHITECTURE.md](ARCHITECTURE.md).
 
 </details>
 
