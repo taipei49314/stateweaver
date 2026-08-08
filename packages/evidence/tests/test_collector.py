@@ -8,6 +8,7 @@ from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
+from xml.etree import ElementTree
 
 import pytest
 from evidence_test_fixtures import EPOCH, foundation
@@ -89,6 +90,15 @@ def _junit_sources(
         )
         sources[name] = path
     return sources
+
+
+def _append_junit_identity(path: Path, identity: str) -> None:
+    tree = ElementTree.parse(path)
+    root = tree.getroot()
+    root.set("tests", str(int(root.attrib["tests"]) + 1))
+    classname, testcase_name = identity.split("::", 1)
+    ElementTree.SubElement(root, "testcase", classname=classname, name=testcase_name)
+    tree.write(path, encoding="utf-8", xml_declaration=False)
 
 
 def _metadata(proof: dict[str, object]) -> dict[str, object]:
@@ -290,6 +300,59 @@ def test_rejects_malformed_junit_as_a_safe_evidence_error(tmp_path: Path) -> Non
         )
 
 
+@pytest.mark.parametrize(
+    ("group", "identity"),
+    [
+        (
+            "contracts",
+            "tests.test_event_history::test_event_history_round_trip_binds_exact_chain_and_head",
+        ),
+        (
+            "contracts",
+            "tests.test_reality_receipts::test_confirmed_finding_requires_typed_reality_receipt",
+        ),
+        (
+            "replay",
+            "packages.evidence.tests.test_reality_bundle::test_valid_synthetic_bundle_is_a_non_promotable_candidate",
+        ),
+        (
+            "replay",
+            "packages.evidence.tests.test_semantic_trace::test_success_trace_projects_exact_action_semantics",
+        ),
+    ],
+)
+def test_accepts_known_package_junit_extensions(tmp_path: Path, group: str, identity: str) -> None:
+    sources = _junit_sources(tmp_path)
+    _append_junit_identity(sources[group], identity)
+
+    result = collect_acceptance_evidence(
+        input=_input(tmp_path, sources=sources),
+        output_root=tmp_path / "artifacts",
+        run_id="known-junit-extension",
+    )
+
+    assert verify_acceptance_evidence(result.run_directory).valid
+
+
+@pytest.mark.parametrize(
+    "identity",
+    [
+        "packages.reporting.tests.test_reality_publication::test_build_is_byte_deterministic_and_immutable",
+        "tests.e2e.proof_bundle.test_publication_journey::test_independent_consumer_reproduces_the_publication_candidate",
+    ],
+)
+def test_rejects_later_milestone_junit_in_replay_group(tmp_path: Path, identity: str) -> None:
+    sources = _junit_sources(tmp_path)
+    _append_junit_identity(sources["replay"], identity)
+
+    with pytest.raises(AcceptanceEvidenceError, match="required group"):
+        collect_acceptance_evidence(
+            input=_input(tmp_path, sources=sources),
+            output_root=tmp_path / "artifacts",
+            run_id="cross-milestone-junit",
+        )
+
+
 def test_rejects_junit_aggregate_counts_that_do_not_match_testcases(tmp_path: Path) -> None:
     sources = _junit_sources(tmp_path)
     sources["policy"].write_text(
@@ -464,7 +527,7 @@ def test_verifier_binds_independently_supplied_provenance(
     expected[field] = value
     result = verify_acceptance_evidence(run, expected_provenance=ExpectedProvenance(**expected))
     assert not result.valid
-    assert any("coher" in error.lower() for error in result.errors)
+    assert result.errors == ("artifact provenance does not match independent expectations",)
 
 
 def test_file_collection_is_closed_while_semantic_hash_ignores_audit_clocks(

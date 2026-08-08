@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
@@ -64,13 +64,12 @@ jobs:
             adapters/environments/in_process_lab/tests \
             apps/cli/tests \
             packages/evidence/tests \
-            packages/reporting/tests \
-            tests/e2e/proof_bundle \
             --junitxml=artifacts/acceptance/junit/replay.xml
 
       - name: Collect and verify causal acceptance proof
         if: matrix.python-version == '3.13'
         run: |
+          set -o pipefail
           uv run stateweaver foundation collect-evidence \
             --output-root artifacts/acceptance/runs \
             --run-id "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
@@ -80,7 +79,7 @@ jobs:
             --junit-policy artifacts/acceptance/junit/policy.xml \
             --junit-lab artifacts/acceptance/junit/lab.xml \
             --junit-replay artifacts/acceptance/junit/replay.xml \
-            > artifacts/acceptance/collection.json
+            | tee artifacts/acceptance/collection.json
           uv run stateweaver foundation verify-evidence \
             "artifacts/acceptance/runs/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --repository-marker "${GITHUB_SHA}"
@@ -97,9 +96,9 @@ jobs:
           UV_OFFLINE=1 uv export --locked --no-dev --package stateweaver-cli --no-emit-local --no-editable \
             --output-file dist/runtime-requirements.txt
           uv venv .packaging-smoke
-          VIRTUAL_ENV="$PWD/.packaging-smoke" UV_OFFLINE=1 uv pip install --require-hashes --no-deps \
+          uv pip install --python .packaging-smoke/bin/python --require-hashes --no-deps \
             -r dist/runtime-requirements.txt
-          VIRTUAL_ENV="$PWD/.packaging-smoke" UV_OFFLINE=1 uv pip install --no-deps --no-index --find-links dist \
+          uv pip install --python .packaging-smoke/bin/python --no-deps --no-index --find-links dist \
             dist/stateweaver_cli-*.whl \
             dist/stateweaver_adapter_in_process_lab-*.whl \
             dist/stateweaver_contracts-*.whl \
@@ -108,7 +107,7 @@ jobs:
             dist/stateweaver_policy-*.whl \
             dist/stateweaver_replay-*.whl \
             dist/stateweaver_reporting-*.whl
-          VIRTUAL_ENV="$PWD/.packaging-smoke" UV_OFFLINE=1 uv pip check
+          uv pip check --python .packaging-smoke/bin/python
           .packaging-smoke/bin/python -c "from stateweaver.reporting import RealityPublicationManifest"
           .packaging-smoke/bin/stateweaver --json doctor
           .packaging-smoke/bin/stateweaver --json foundation verify
@@ -118,7 +117,7 @@ jobs:
 
       - name: Upload coverage artifact
         if: matrix.python-version == '3.13'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage
           path: coverage.xml
@@ -127,7 +126,7 @@ jobs:
 
       - name: Upload immutable acceptance proof
         if: matrix.python-version == '3.13'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: acceptance-proof
           path: artifacts/acceptance
@@ -175,7 +174,7 @@ jobs:
         working-directory: apps/web
 
       - name: Retain web distribution
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: stateweaver-web
           path: apps/web/dist
@@ -208,7 +207,7 @@ jobs:
           subject-path: artifacts/acceptance/runs/*/artifact-manifest.sha256
 
       - name: Retain the Sigstore bundle for offline verification
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: acceptance-proof-attestation
           path: ${{ steps.attest.outputs.bundle-path }}
