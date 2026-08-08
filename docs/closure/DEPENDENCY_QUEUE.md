@@ -1,8 +1,8 @@
-﻿# DEPENDENCY_QUEUE â€” stateweaver 2026-08-07
+# DEPENDENCY_QUEUE â€” stateweaver 2026-08-07
 
 | Field | Value |
 |---|---|
-| Status | **DEPENDENCY_VERDICTS_PREPARED / OWNER_ACTIONS_PENDING** |
+| Status | **DEPENDENCY_QUEUE_CLOSED** |
 | Meaning | Every open Dependabot PR was inspected one-at-a-time with a local rebase onto `origin/main` (`5df5f57â€¦`) and a recorded verdict. Merge/close remains owner-gated. |
 | Cursor merges | **none** |
 | Cursor closes | **none** |

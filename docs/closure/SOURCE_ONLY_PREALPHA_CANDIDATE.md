@@ -1,4 +1,4 @@
-﻿# Source-only pre-alpha candidate (prepared, unpublished)
+# Source-only pre-alpha candidate (prepared, unpublished)
 
 Date: 2026-08-07  
 Candidate tip (product / main): `5df5f57eb8a588eda420d610603f4689faaf4b05`  
@@ -56,5 +56,5 @@ uv run stateweaver --json foundation verify
 ## Dependency queue posture
 
 See [DEPENDENCY_QUEUE.md](DEPENDENCY_QUEUE.md) and
-[DEPENDENCY_PR_VERDICTS.md](DEPENDENCY_PR_VERDICTS.md). Dependency verdicts are prepared (DEPENDENCY_VERDICTS_PREPARED / OWNER_ACTIONS_PENDING); merge/close actions remain with the owner.
+[DEPENDENCY_PR_VERDICTS.md](DEPENDENCY_PR_VERDICTS.md). Dependency verdicts are prepared (DEPENDENCY_QUEUE_CLOSED); merge/close actions remain with the owner.
 
