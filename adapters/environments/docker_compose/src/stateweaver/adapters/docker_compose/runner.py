@@ -106,24 +106,33 @@ class SubprocessRunner:
         for required_name in ("SYSTEMROOT", "WINDIR"):
             if required_name in os.environ:
                 environment[required_name] = os.environ[required_name]
-        isolation = (
-            {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-            if os.name == "nt"
-            else {"start_new_session": True}
-        )
+        stdin_target = asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL
         try:
-            process = await asyncio.create_subprocess_exec(
-                *process_argv,
-                stdin=(
-                    asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL
-                ),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=environment,
-                cwd=str(_COMPOSE_FILE.parent),
-                limit=_PROCESS_READ_CHUNK_BYTES,
-                **isolation,
-            )
+            if os.name == "nt":
+                creation_flag = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", None)
+                if not isinstance(creation_flag, int):
+                    raise RuntimeError("Windows process-group isolation is unavailable")
+                process = await asyncio.create_subprocess_exec(
+                    *process_argv,
+                    stdin=stdin_target,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=environment,
+                    cwd=str(_COMPOSE_FILE.parent),
+                    limit=_PROCESS_READ_CHUNK_BYTES,
+                    creationflags=creation_flag,
+                )
+            else:
+                process = await asyncio.create_subprocess_exec(
+                    *process_argv,
+                    stdin=stdin_target,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=environment,
+                    cwd=str(_COMPOSE_FILE.parent),
+                    limit=_PROCESS_READ_CHUNK_BYTES,
+                    start_new_session=True,
+                )
         except FileNotFoundError:
             raise
         tasks = (
@@ -321,20 +330,26 @@ def _signal_process_tree(process: asyncio.subprocess.Process, *, force: bool) ->
     try:
         if os.name == "nt":
             if not force:
+                ctrl_break_event = getattr(signal, "CTRL_BREAK_EVENT", None)
+                if not isinstance(ctrl_break_event, int):
+                    raise AttributeError("Windows process-group signalling is unavailable")
                 runtime_process: object = process
                 if isinstance(runtime_process, asyncio.subprocess.Process):
-                    os.kill(process.pid, signal.CTRL_BREAK_EVENT)
+                    os.kill(process.pid, ctrl_break_event)
                 else:
                     signal_method = getattr(runtime_process, "send_" + "signal")
-                    signal_method(signal.CTRL_BREAK_EVENT)
+                    signal_method(ctrl_break_event)
             else:
                 process.kill()
             return
         # start_new_session=True makes the direct child's pid the stable process
         # group id even after that group leader exits.
         process_group = process.pid
-        kill_signal = signal.SIGKILL if force else signal.SIGTERM  # type: ignore[attr-defined]
-        os.killpg(process_group, kill_signal)  # type: ignore[attr-defined]
+        kill_signal = getattr(signal, "SIGKILL" if force else "SIGTERM", None)
+        kill_process_group = getattr(os, "killpg", None)
+        if not isinstance(kill_signal, int) or not callable(kill_process_group):
+            raise AttributeError("POSIX process-group signalling is unavailable")
+        kill_process_group(process_group, kill_signal)
     except (AttributeError, OSError, ProcessLookupError):
         method_name = "kill" if force else "terminate"
         direct_method = getattr(process, method_name, None)
