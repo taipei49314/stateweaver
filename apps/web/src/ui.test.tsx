@@ -416,7 +416,10 @@ beforeEach(() => {
     'fetch',
     vi.fn((u: string) => Promise.resolve({ ok: true, json: () => Promise.resolve(payloads[u]) })),
   );
-  Object.assign(navigator, { clipboard: { writeText: vi.fn() } });
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: vi.fn() },
+  });
 });
 afterEach(cleanup);
 async function ready() {

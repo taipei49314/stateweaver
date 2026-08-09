@@ -27,7 +27,9 @@ from stateweaver.worlds import (
 
 from .errors import ComposeAdapterError, ComposeUnavailableError
 from .runner import (
+    MAX_PROCESS_STREAM_BYTES,
     MAX_STATE_ARCHIVE_BYTES,
+    ProcessBoundaryError,
     ProcessResult,
     ProcessRunner,
     SubprocessRunner,
@@ -272,20 +274,32 @@ class DockerComposeEnvironmentAdapter:
             raise ComposeAdapterError(
                 "fixed synthetic compose health response is invalid"
             ) from error
-        if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], dict):
+        # Compose v2 serializes `ps --format json` as an array while Compose v5
+        # serializes a single matching service as one object. Normalize only those
+        # two closed shapes; multiple or non-object rows remain fail closed.
+        rows = [payload] if isinstance(payload, dict) else payload
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
             raise ComposeAdapterError("fixed synthetic compose health check failed")
-        row = payload[0]
+        row = rows[0]
         container_id = row.get("ID")
-        if (
-            row.get("Service") != "synthetic-demo"
-            or row.get("Image") != _IMAGE
-            or row.get("Project") != project
-            or not isinstance(container_id, str)
-            or not _CONTAINER_ID_PATTERN.fullmatch(container_id)
-            or str(row.get("State", "")).lower() != "running"
-            or str(row.get("Health", "")).lower() != "healthy"
-        ):
-            raise ComposeAdapterError("fixed synthetic compose health check failed")
+        fixed_checks = (
+            (row.get("Service") == "synthetic-demo", "service"),
+            (row.get("Image") == _IMAGE, "image"),
+            (row.get("Project") == project, "project"),
+            (
+                isinstance(container_id, str)
+                and _CONTAINER_ID_PATTERN.fullmatch(container_id) is not None,
+                "container-id",
+            ),
+            (str(row.get("State", "")).lower() == "running", "state"),
+            (str(row.get("Health", "")).lower() == "healthy", "health"),
+        )
+        for accepted, check_name in fixed_checks:
+            if not accepted:
+                raise ComposeAdapterError(
+                    f"fixed synthetic compose health check failed: {check_name}"
+                )
+        assert isinstance(container_id, str)
         image = await self._run(("docker", "inspect", "--format", "{{.Image}}", container_id))
         if image.stdout.strip() != expected_image_id:
             raise ComposeAdapterError("running container image identity is invalid")
@@ -356,6 +370,14 @@ class DockerComposeEnvironmentAdapter:
             result = await self._runner.run(require_exact_argv(argv), stdin=stdin)
         except FileNotFoundError as error:
             raise ComposeUnavailableError("docker executable is unavailable") from error
+        except ProcessBoundaryError as error:
+            if error.code == "process-deadline-exceeded":
+                raise ComposeUnavailableError(
+                    "local Docker Compose command exceeded its fixed deadline"
+                ) from None
+            raise ComposeAdapterError(
+                "local Docker Compose process exceeded its fixed output boundary"
+            ) from None
         if (
             not isinstance(result, ProcessResult)
             or not isinstance(result.returncode, int)
@@ -364,7 +386,10 @@ class DockerComposeEnvironmentAdapter:
             or not isinstance(result.stderr, str)
         ):
             raise ComposeAdapterError("process runner returned an invalid result")
-        if len(result.stdout.encode("utf-8")) > MAX_STATE_ARCHIVE_BYTES:
+        if (
+            len(result.stdout.encode("utf-8")) > MAX_PROCESS_STREAM_BYTES
+            or len(result.stderr.encode("utf-8")) > MAX_PROCESS_STREAM_BYTES
+        ):
             raise ComposeAdapterError("process output exceeds the fixed archive boundary")
         if result.returncode != 0:
             raise ComposeUnavailableError("local Docker Compose command failed")

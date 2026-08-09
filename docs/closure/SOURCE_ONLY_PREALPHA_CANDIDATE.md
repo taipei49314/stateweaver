@@ -1,5 +1,8 @@
 # Source-only pre-alpha candidate (prepared, unpublished)
 
+> **HISTORICAL / SUPERSEDED.** This preserves the 2026-08-07 `5df5f57…` source-only snapshot. It
+> was never published and is not evidence for any later SHA.
+
 Date: 2026-08-07  
 Candidate tip (product / main): `5df5f57eb8a588eda420d610603f4689faaf4b05`  
 Branch: `closure/stateweaver-20260807`
@@ -14,10 +17,10 @@ Decision token: `SOURCE_ONLY_PREALPHA_CANDIDATE_PREPARED`
 
 - A git source tree that runs the fixed in-process synthetic lab offline.
 - Locally re-verified on the product tip above with:
-  - `uv run stateweaver --json doctor` â†’ exit 0 (`mode=offline-in-process`)
-  - `uv run stateweaver --json foundation verify` â†’ exit 0 (`accepted=true`)
-  - normative JUnit suites (contracts / policy / lab / replay) â†’ exit 0
-  - `foundation collect-evidence` + `foundation verify-evidence` â†’ exit 0
+  - `uv run stateweaver --json doctor` → exit 0 (`mode=offline-in-process`)
+  - `uv run stateweaver --json foundation verify` → exit 0 (`accepted=true`)
+  - normative JUnit suites (contracts / policy / lab / replay) → exit 0
+  - `foundation collect-evidence` + `foundation verify-evidence` → exit 0
     (`verified=true`, `valid=true`)
 
 ## Exact limitations (non-claims)
@@ -57,4 +60,3 @@ uv run stateweaver --json foundation verify
 
 See [DEPENDENCY_QUEUE.md](DEPENDENCY_QUEUE.md) and
 [DEPENDENCY_PR_VERDICTS.md](DEPENDENCY_PR_VERDICTS.md). Dependency verdicts are prepared (DEPENDENCY_QUEUE_CLOSED); merge/close actions remain with the owner.
-

@@ -1,0 +1,104 @@
+{
+  "schema_version": "1.1",
+  "record_type": "narrative-baseline-snapshot",
+  "qualification_receipt": false,
+  "limitations": [
+    "no complete timestamped stdout/stderr transcript",
+    "no per-command artifact hash inventory",
+    "no retained before/after process or Docker resource inventory",
+    "does not qualify this or any later source SHA"
+  ],
+  "repository": "https://github.com/taipei49314/stateweaver",
+  "captured_at_utc": "2026-08-09T09:37:00Z",
+  "base_sha": "aa60cad5be43f383810bf2e276307c4f4c9cec10",
+  "tested_sha": "aa60cad5be43f383810bf2e276307c4f4c9cec10",
+  "tree_sha": "6112f9b9cd2179a8c03cc3098b9aa7ca6d5a6d8e",
+  "dirty_before": false,
+  "environment": {
+    "os": "Microsoft Windows 11 Pro 10.0.26200 amd64",
+    "python": "3.13.14",
+    "uv": "0.12.2",
+    "node": "24.16.0",
+    "npm": "12.0.2",
+    "docker_client": "29.6.2",
+    "docker_server": "29.6.2",
+    "docker_compose": "5.3.1"
+  },
+  "commands": [
+    {"argv": "uv sync --all-packages --group dev --locked", "exit_code": 0},
+    {"argv": "uv run stateweaver --json doctor", "exit_code": 0},
+    {"argv": "uv run stateweaver --json foundation verify", "exit_code": 0},
+    {"argv": "uv run ruff format --check .", "exit_code": 0},
+    {"argv": "uv run ruff check .", "exit_code": 0},
+    {"argv": "uv run mypy packages adapters apps labs workflows benchmarks tests", "exit_code": 0},
+    {
+      "argv": "uv run pytest --cov --cov-report=term-missing --cov-report=xml",
+      "exit_code": 0,
+      "summary": "711 passed, 1 deselected, 86.49% coverage"
+    },
+    {"argv": "npm ci", "cwd": "apps/web", "exit_code": 0},
+    {"argv": "npm run format:check", "cwd": "apps/web", "exit_code": 0},
+    {"argv": "npm run lint", "cwd": "apps/web", "exit_code": 0},
+    {"argv": "npm run typecheck", "cwd": "apps/web", "exit_code": 0},
+    {
+      "argv": "npm test",
+      "cwd": "apps/web",
+      "exit_code": 1,
+      "summary": "Vitest fork worker startup timed out after 60 seconds; no test file executed"
+    },
+    {
+      "argv": "npm run build",
+      "cwd": "apps/web",
+      "status": "NOT_RUN",
+      "reason": "checked command sequence stopped at the first failure"
+    }
+  ],
+  "provenance": {
+    "workflow_run": "https://github.com/taipei49314/stateweaver/actions/runs/31239564101",
+    "subject": "artifact-manifest.sha256",
+    "subject_sha256": "c275c83431e0ae94c8331d1f7998cd3d1956de5126e00f16f497fff378eaf01f",
+    "signer_workflow": "taipei49314/stateweaver/.github/workflows/ci.yml",
+    "source_ref": "refs/heads/main",
+    "source_digest": "aa60cad5be43f383810bf2e276307c4f4c9cec10",
+    "verified": true,
+    "proves": "GitHub Actions workflow provenance for the exact manifest subject",
+    "does_not_prove": "algorithm correctness, trusted Reality, independent execution, or release qualification"
+  },
+  "historical_gate_notes": [
+    {"id": "SW-B00", "status": "OBSERVED", "evidence": "operator recorded fresh clone HEAD equal to live main"},
+    {"id": "SW-B01", "status": "FAIL", "evidence": "first npm test exited 1"},
+    {"id": "SW-B02", "status": "NOT_VERIFIED", "evidence": "dirty_before was recorded false; no retained before/after process inventory"},
+    {"id": "SW-B03", "status": "OBSERVED", "evidence": "source/ref/signer-constrained offline bundle verification was recorded"},
+    {"id": "SW-B04", "status": "OBSERVED", "evidence": "unrun live/release gates were recorded explicitly"},
+    {"id": "SW-M0-ALL", "status": "FAIL", "evidence": "foundation command exit 0 was recorded, but no exact row registry existed at this SHA"},
+    {"id": "SW-M1-ALL", "status": "FAIL", "evidence": "five-run replay result was recorded, but no exact row registry existed at this SHA"},
+    {"id": "SW-M01-EVIDENCE", "status": "OBSERVED", "evidence": "public CI proof manifest and attestation bind aa60cad; no detached same-platform audit was retained"},
+    {"id": "SW-M01-AUDIT", "status": "NOT_RUN", "evidence": "no detached same-platform consumer receipt"},
+    {"id": "SW-REGISTRY", "status": "FAIL", "evidence": "acceptance-registry.json absent at baseline"},
+    {"id": "SW-M2-LIVE", "status": "FAIL", "evidence": "https://github.com/taipei49314/stateweaver/actions/runs/31306321481"},
+    {"id": "SW-M2-4WAY", "status": "NOT_RUN", "evidence": "live run failed before sibling creation"},
+    {"id": "SW-M2-PROVIDERS", "status": "FAIL", "evidence": "single synthetic JSON bridge, not six real providers"},
+    {"id": "SW-M2-CLEANUP", "status": "NOT_RUN", "evidence": "no retained failure-path inventory receipt"},
+    {"id": "SW-M3-OBSERVED", "status": "FAIL", "evidence": "pipeline supplied its own OTLP, evidence, and state deltas"},
+    {"id": "SW-M4-MATERIALIZED", "status": "FAIL", "evidence": "in-memory allocator/capture only"},
+    {"id": "SW-M5-CHAIN", "status": "FAIL", "evidence": "observed plan was not executed; clean-root test used mocked fragments"},
+    {"id": "SW-M6-ACQUIRE", "status": "FAIL", "evidence": "authenticated immutable acquisition absent"},
+    {"id": "SW-M6-TRUST", "status": "BLOCKED", "evidence": "producer-external frozen TRUST_POLICY absent"},
+    {"id": "SW-M6-ISSUE", "status": "BLOCKED", "evidence": "trusted issuer/revocation/freshness infrastructure absent"},
+    {"id": "SW-M6-REPLAY", "status": "BLOCKED", "evidence": "separate clean-machine consumer absent"},
+    {"id": "SW-M6-PROMOTE", "status": "BLOCKED", "evidence": "required upstream M6 gates not satisfied"},
+    {"id": "SW-M7-FAIR", "status": "FAIL", "evidence": "proxy tariff is not measured equal work"},
+    {"id": "SW-M7-PREREG", "status": "BLOCKED", "evidence": "external custodian/protected evaluator absent"},
+    {"id": "SW-M7-HOLDOUT", "status": "BLOCKED", "evidence": "no preregistered protected holdout result"},
+    {"id": "SW-M7-REPRO", "status": "BLOCKED", "evidence": "independent reproduction absent"},
+    {"id": "SW-M8-NEWUSER", "status": "FAIL", "evidence": "no browser/new-user release-asset journey"},
+    {"id": "SW-M8-PACKAGE", "status": "NOT_RUN", "evidence": "no two-root release payload comparison"},
+    {"id": "SW-M8-PROVIDER", "status": "BLOCKED", "evidence": "no allowed live-provider credential/run"}
+  ],
+  "operator_privacy_observation": {
+    "independently_verified": false,
+    "secret_values_read": false,
+    "secret_values_logged": false,
+    "public_targets_scanned": false
+  }
+}

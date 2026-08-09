@@ -26,7 +26,7 @@ services:
     healthcheck:
       test: ["CMD", "python", "/opt/stateweaver/state_bridge.py", "health"]
       interval: 2s
-      timeout: 1s
+      timeout: 10s
       retries: 3
 
 networks:

@@ -1,0 +1,660 @@
+name: Fail-closed candidate delivery
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact lowercase 40-character SHA currently at refs/heads/main
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Bind request to current main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      source_sha: ${{ steps.identity.outputs.source_sha }}
+      tree_sha: ${{ steps.identity.outputs.tree_sha }}
+      source_date_epoch: ${{ steps.identity.outputs.source_date_epoch }}
+      version: ${{ steps.identity.outputs.version }}
+
+    steps:
+      - name: Check out fresh main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/heads/main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require the exact current main commit
+        id: identity
+        env:
+          REQUESTED_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "$REQUESTED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          head_sha="$(git rev-parse HEAD)"
+          remote_sha="$(git ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 {print $1}')"
+          [[ "$REQUESTED_SOURCE_SHA" == "$head_sha" ]]
+          [[ "$REQUESTED_SOURCE_SHA" == "$remote_sha" ]]
+          [[ -z "$(git status --porcelain=v1)" ]]
+          tree_sha="$(git rev-parse 'HEAD^{tree}')"
+          source_date_epoch="$(git show -s --format=%ct HEAD)"
+          version="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+[A-Za-z0-9.+-]*$ ]]
+          {
+            echo "source_sha=$head_sha"
+            echo "tree_sha=$tree_sha"
+            echo "source_date_epoch=$source_date_epoch"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+
+  source_gates:
+    name: Re-run controllable source and web gates
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      ANTHROPIC_API_KEY: ""
+      GOOGLE_API_KEY: ""
+      OPENAI_API_KEY: ""
+      SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+
+    steps:
+      - name: Check out the bound source in a fresh job
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Recheck source identity
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          [[ "$(git ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 {print $1}')" == "$SOURCE_SHA" ]]
+          [[ -z "$(git status --porcelain=v1)" ]]
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install the locked Python workspace
+        run: uv sync --all-packages --group dev --locked
+
+      - name: Run Python quality, type, test, and foundation gates
+        run: |
+          set -euo pipefail
+          uv run stateweaver --json doctor
+          uv run stateweaver --json foundation verify
+          uv run ruff format --check .
+          uv run ruff check .
+          uv run mypy packages adapters apps labs workflows benchmarks tests tools/candidate
+          uv run pytest packages adapters apps labs workflows benchmarks tests tools/candidate/tests \
+            --cov --cov-report=term-missing --cov-report=xml
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Run locked web gates
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run format:check
+          npm run lint
+          npm run typecheck
+          npm test
+          npm run build
+          npm audit --audit-level=high
+
+  build_upload:
+    name: Reproduce, assemble, verify, and upload candidate
+    needs: [preflight, source_gates]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      artifact_name: ${{ steps.address.outputs.artifact_name }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      manifest_sha256: ${{ steps.address.outputs.manifest_sha256 }}
+    env:
+      ANTHROPIC_API_KEY: ""
+      GOOGLE_API_KEY: ""
+      OPENAI_API_KEY: ""
+      SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+      TREE_SHA: ${{ needs.preflight.outputs.tree_sha }}
+      SOURCE_DATE_EPOCH: ${{ needs.preflight.outputs.source_date_epoch }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+      TZ: UTC
+      LC_ALL: C.UTF-8
+      PYTHONHASHSEED: "0"
+
+    steps:
+      - name: Check out the bound source in a fresh job
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require current main before building
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          [[ "$(git rev-parse 'HEAD^{tree}')" == "$TREE_SHA" ]]
+          [[ "$(git ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 {print $1}')" == "$SOURCE_SHA" ]]
+          [[ -z "$(git status --porcelain=v1)" ]]
+          echo "BUILD_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Export two pristine absolute build roots
+        run: |
+          set -euo pipefail
+          root_a="$RUNNER_TEMP/stateweaver-root-a-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          root_b="$RUNNER_TEMP/stateweaver-root-b-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          [[ ! -e "$root_a" && ! -e "$root_b" ]]
+          mkdir -p "$root_a" "$root_b"
+          git archive "$SOURCE_SHA" | tar -x -C "$root_a"
+          git archive "$SOURCE_SHA" | tar -x -C "$root_b"
+          {
+            echo "ROOT_A=$root_a"
+            echo "ROOT_B=$root_b"
+          } >> "$GITHUB_ENV"
+
+      - name: Build every wheel and sdist twice
+        run: |
+          set -euo pipefail
+          uv build --project "$ROOT_A" --all-packages --out-dir "$ROOT_A/dist"
+          uv build --project "$ROOT_B" --all-packages --out-dir "$ROOT_B/dist"
+          [[ -n "$(find "$ROOT_A/dist" -maxdepth 1 -type f -name '*.whl' -print -quit)" ]]
+          [[ -n "$(find "$ROOT_A/dist" -maxdepth 1 -type f -name '*.tar.gz' -print -quit)" ]]
+          python -m tools.candidate.normalize "$ROOT_A/dist" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+          python -m tools.candidate.normalize "$ROOT_B/dist" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH"
+          python -m tools.candidate.compare "$ROOT_A/dist" "$ROOT_B/dist"
+
+      - name: Build and compare deterministic web archives
+        run: |
+          set -euo pipefail
+          npm ci --prefix "$ROOT_A/apps/web"
+          npm run build --prefix "$ROOT_A/apps/web"
+          npm ci --prefix "$ROOT_B/apps/web"
+          npm run build --prefix "$ROOT_B/apps/web"
+          for root in "$ROOT_A" "$ROOT_B"; do
+            stage="$root/web-stage"
+            archive_root="$stage/stateweaver-web-$VERSION"
+            mkdir -p "$archive_root" "$root/web-artifact"
+            cp -a "$root/apps/web/dist/." "$archive_root/"
+            tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 \
+              --numeric-owner --format=ustar -C "$stage" -cf - "stateweaver-web-$VERSION" \
+              | gzip -n > "$root/web-artifact/stateweaver-web-$VERSION.tar.gz"
+          done
+          python -m tools.candidate.compare "$ROOT_A/web-artifact" "$ROOT_B/web-artifact"
+
+      - name: Produce the exact-SHA foundation proof
+        run: |
+          set -euo pipefail
+          uv sync --all-packages --group dev --locked
+          proof_run_id="candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p artifacts/acceptance/junit
+          printf '%s\n' "$BUILD_STARTED_AT" > artifacts/acceptance/started-at.txt
+          uv run pytest packages/contracts/tests --junitxml=artifacts/acceptance/junit/contracts.xml
+          uv run pytest packages/policy/tests --junitxml=artifacts/acceptance/junit/policy.xml
+          uv run pytest labs/multitenant-saas/tests --junitxml=artifacts/acceptance/junit/lab.xml
+          uv run pytest \
+            packages/replay/tests \
+            adapters/environments/in_process_lab/tests \
+            apps/cli/tests \
+            packages/evidence/tests \
+            --junitxml=artifacts/acceptance/junit/replay.xml
+          uv run stateweaver foundation collect-evidence \
+            --output-root artifacts/acceptance/runs \
+            --run-id "$proof_run_id" \
+            --repository-marker "$SOURCE_SHA" \
+            --started-at "$BUILD_STARTED_AT" \
+            --junit-contracts artifacts/acceptance/junit/contracts.xml \
+            --junit-policy artifacts/acceptance/junit/policy.xml \
+            --junit-lab artifacts/acceptance/junit/lab.xml \
+            --junit-replay artifacts/acceptance/junit/replay.xml \
+            | tee artifacts/acceptance/collection.json
+          uv run stateweaver foundation verify-evidence \
+            "artifacts/acceptance/runs/$proof_run_id" \
+            --repository-marker "$SOURCE_SHA"
+          echo "PROOF_RUN_DIR=$GITHUB_WORKSPACE/artifacts/acceptance/runs/$proof_run_id" >> "$GITHUB_ENV"
+
+      - name: Derive and vendor the exact locked runtime closure
+        run: |
+          set -euo pipefail
+          candidate_python="$(uv python find 3.13)"
+          candidate_python_full_version="$("$candidate_python" -c \
+            'import sys; print(".".join(str(value) for value in sys.version_info[:3]))')"
+          [[ "$candidate_python_full_version" =~ ^3\.13\.[0-9]+$ ]]
+          runtime_requirements="$RUNNER_TEMP/runtime-requirements-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.txt"
+          [[ ! -e "$runtime_requirements" ]]
+          "$candidate_python" -m tools.candidate.runtime uv.lock \
+            --python-full-version "$candidate_python_full_version" \
+            --output "$runtime_requirements"
+          "$candidate_python" -m ensurepip --default-pip
+          candidate_pip_version="$("$candidate_python" -m pip --version | awk '{print $2}')"
+          [[ "$candidate_pip_version" =~ ^[0-9]+\.[0-9]+([.][0-9]+)?([A-Za-z0-9.+-]*)?$ ]]
+          vendor_a="$RUNNER_TEMP/vendor-a-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          vendor_b="$RUNNER_TEMP/vendor-b-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          [[ ! -e "$vendor_a" && ! -e "$vendor_b" ]]
+          mkdir -p "$vendor_a" "$vendor_b"
+          for vendor_root in "$vendor_a" "$vendor_b"; do
+            "$candidate_python" -m pip --disable-pip-version-check download \
+              --require-hashes \
+              --only-binary=:all: \
+              --no-cache-dir \
+              --no-deps \
+              --dest "$vendor_root" \
+              --requirement "$runtime_requirements"
+          done
+          "$candidate_python" -m tools.candidate.compare "$vendor_a" "$vendor_b"
+          mkdir -p candidate/payload/vendor/python
+          cp "$vendor_a/"*.whl candidate/payload/vendor/python/
+          {
+            echo "CANDIDATE_PYTHON=$candidate_python"
+            echo "CANDIDATE_PYTHON_FULL_VERSION=$candidate_python_full_version"
+            echo "CANDIDATE_PIP_VERSION=$candidate_pip_version"
+            echo "VENDOR_A=$vendor_a"
+            echo "VENDOR_B=$vendor_b"
+          } >> "$GITHUB_ENV"
+
+      - name: Stage candidate payload and installation metadata
+        run: |
+          set -euo pipefail
+          mkdir -p \
+            candidate/payload/python \
+            candidate/payload/web \
+            candidate/payload/source \
+            candidate/payload/evidence/foundation \
+            candidate/payload/metadata \
+            candidate/payload/qualification-inputs/m7
+          cp "$ROOT_A/dist/"*.whl "$ROOT_A/dist/"*.tar.gz candidate/payload/python/
+          cp "$ROOT_A/web-artifact/stateweaver-web-$VERSION.tar.gz" candidate/payload/web/
+          cp -a artifacts/acceptance/. candidate/payload/evidence/foundation/
+          git archive --format=tar --prefix="stateweaver-$VERSION/" "$SOURCE_SHA" \
+            | gzip -n > "candidate/payload/source/stateweaver-source-$VERSION.tar.gz"
+          git cat-file commit "$SOURCE_SHA" > "$RUNNER_TEMP/git-commit-object"
+          uv run python - \
+            > candidate/payload/qualification-inputs/m7/local-synthetic-holdout.json <<'PY'
+          from statechainbench import (
+              BudgetLimits,
+              DatasetSplit,
+              EqualBudgetRunner,
+              GeneratorConfig,
+              generate_dataset,
+          )
+
+          dataset = generate_dataset(GeneratorConfig(seed=1729, variants_per_family=4))
+          report = EqualBudgetRunner(dataset).compare(
+              BudgetLimits(max_action_cost=40, max_world_cost=30, max_latency_units=250),
+              split=DatasetSplit.HOLDOUT,
+          )
+          print(report.model_dump_json(indent=2))
+          PY
+
+      - name: Capture exact final pre-assembly command receipts
+        run: |
+          set -euo pipefail
+          records="$RUNNER_TEMP/candidate-command-records-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.jsonl"
+          [[ ! -e "$records" ]]
+          record=("$CANDIDATE_PYTHON" -m tools.candidate.record --output "$records")
+          "${record[@]}" --stage compare-python-distributions --cwd "$GITHUB_WORKSPACE" -- \
+            "$CANDIDATE_PYTHON" -m tools.candidate.compare "$ROOT_A/dist" "$ROOT_B/dist"
+          "${record[@]}" --stage compare-web-archives --cwd "$GITHUB_WORKSPACE" -- \
+            "$CANDIDATE_PYTHON" -m tools.candidate.compare \
+            "$ROOT_A/web-artifact" "$ROOT_B/web-artifact"
+          "${record[@]}" --stage compare-vendored-runtime --cwd "$GITHUB_WORKSPACE" -- \
+            "$CANDIDATE_PYTHON" -m tools.candidate.compare "$VENDOR_A" "$VENDOR_B"
+          "${record[@]}" --stage verify-foundation-proof --cwd "$GITHUB_WORKSPACE" -- \
+            uv run stateweaver foundation verify-evidence \
+            "$PROOF_RUN_DIR" --repository-marker "$SOURCE_SHA"
+          "${record[@]}" --stage verify-source-worktree-clean --cwd "$GITHUB_WORKSPACE" -- \
+            "$CANDIDATE_PYTHON" -m tools.candidate.git_clean \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --allow-untracked "$GITHUB_WORKSPACE/artifacts/acceptance" \
+            --allow-untracked "$GITHUB_WORKSPACE/candidate"
+          echo "CANDIDATE_COMMAND_RECORDS=$records" >> "$GITHUB_ENV"
+
+      - name: Assemble and self-verify the fail-closed envelope
+        run: |
+          set -euo pipefail
+          receipt_cutoff_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          "$CANDIDATE_PYTHON" -m tools.candidate.build candidate \
+            --python-lock uv.lock \
+            --node-lock apps/web/package-lock.json \
+            --git-commit-object "$RUNNER_TEMP/git-commit-object" \
+            --command-records "$CANDIDATE_COMMAND_RECORDS" \
+            --repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --source-sha "$SOURCE_SHA" \
+            --tree-sha "$TREE_SHA" \
+            --version "$VERSION" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" \
+            --started-at "$BUILD_STARTED_AT" \
+            --completed-at "$receipt_cutoff_at" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --workflow-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --runner-os "$RUNNER_OS" \
+            --runner-arch "$RUNNER_ARCH" \
+            --python-version "$("$CANDIDATE_PYTHON" --version)" \
+            --python-full-version "$CANDIDATE_PYTHON_FULL_VERSION" \
+            --pip-version "$CANDIDATE_PIP_VERSION" \
+            --node-version "$(node --version)" \
+            --uv-version "$(uv --version)" \
+            --reproducibility-verified
+          "$CANDIDATE_PYTHON" -m tools.candidate.verify candidate \
+            --expected-repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --expected-source-sha "$SOURCE_SHA"
+
+      - name: Derive the payload content address
+        id: address
+        run: |
+          set -euo pipefail
+          manifest_sha256="$(sha256sum candidate/PAYLOAD_MANIFEST.json | awk '{print $1}')"
+          artifact_name="stateweaver-candidate-$manifest_sha256"
+          [[ "$manifest_sha256" =~ ^[0-9a-f]{64}$ ]]
+          {
+            echo "manifest_sha256=$manifest_sha256"
+            echo "artifact_name=$artifact_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Require exact current main immediately before upload
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          [[ "$(git ls-remote --exit-code origin refs/heads/main | awk 'NR == 1 {print $1}')" == "$SOURCE_SHA" ]]
+          git diff --quiet HEAD --
+          git diff --cached --quiet
+          "$CANDIDATE_PYTHON" -m tools.candidate.verify candidate \
+            --expected-repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --expected-source-sha "$SOURCE_SHA"
+
+      - name: Upload the content-addressed candidate
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.address.outputs.artifact_name }}
+          path: candidate
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+  attest_manifest:
+    name: Attest the exact payload manifest with OIDC
+    needs: [preflight, build_upload]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      actions: read  # Download this run's candidate before signing it.
+      attestations: write  # Publish the GitHub artifact attestation.
+      contents: read
+      id-token: write  # Request the short-lived OIDC signing identity.
+
+    steps:
+      - name: Check out verifier source at the bound commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Download the candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.build_upload.outputs.artifact_name }}
+          path: candidate
+
+      - name: Verify before attesting
+        env:
+          EXPECTED_MANIFEST_SHA: ${{ needs.build_upload.outputs.manifest_sha256 }}
+          SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(sha256sum candidate/PAYLOAD_MANIFEST.json | awk '{print $1}')" == \
+            "$EXPECTED_MANIFEST_SHA" ]]
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          python -m tools.candidate.verify candidate \
+            --expected-repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --expected-source-sha "$SOURCE_SHA"
+
+      - name: Attest PAYLOAD_MANIFEST.json
+        id: attest
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: candidate/PAYLOAD_MANIFEST.json
+
+      - name: Retain the Sigstore bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.build_upload.outputs.artifact_name }}-attestation
+          path: ${{ steps.attest.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 90
+
+  fresh_download_verify_install:
+    name: Fresh download, attest, verify, and install
+    needs: [preflight, build_upload, attest_manifest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read  # Download both artifacts produced by this run.
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+      VERSION: ${{ needs.preflight.outputs.version }}
+      UV_NO_CACHE: "1"
+
+    steps:
+      - name: Fresh checkout only for the verifier
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          path: verifier-source
+          persist-credentials: false
+
+      - name: Download candidate into an empty root
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.build_upload.outputs.artifact_name }}
+          path: candidate
+
+      - name: Download detached attestation bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.build_upload.outputs.artifact_name }}-attestation
+          path: attestation
+
+      - name: Verify exact coverage, source SHA, locks, SBOM, and digests
+        env:
+          EXPECTED_MANIFEST_SHA: ${{ needs.build_upload.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          echo "DOWNLOAD_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          records="$RUNNER_TEMP/download-command-records-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.jsonl"
+          [[ ! -e "$records" ]]
+          record=(python -m tools.candidate.record --output "$records")
+          [[ "$(sha256sum candidate/PAYLOAD_MANIFEST.json | awk '{print $1}')" == \
+            "$EXPECTED_MANIFEST_SHA" ]]
+          canonical_source="$RUNNER_TEMP/stateweaver-source-$VERSION.tar.gz"
+          git -C verifier-source archive --format=tar --prefix="stateweaver-$VERSION/" "$SOURCE_SHA" \
+            | gzip -n > "$canonical_source"
+          PYTHONPATH=verifier-source "${record[@]}" \
+            --stage compare-canonical-source-archive --cwd "$GITHUB_WORKSPACE" -- \
+            cmp --silent \
+            "$canonical_source" \
+            "$GITHUB_WORKSPACE/candidate/payload/source/stateweaver-source-$VERSION.tar.gz"
+          PYTHONPATH=verifier-source "${record[@]}" \
+            --stage verify-downloaded-candidate --cwd "$GITHUB_WORKSPACE" -- \
+            python -m tools.candidate.verify "$GITHUB_WORKSPACE/candidate" \
+            --expected-repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --expected-source-sha "$SOURCE_SHA"
+          {
+            echo "CANONICAL_SOURCE_ARCHIVE=$canonical_source"
+            echo "DOWNLOAD_COMMAND_RECORDS=$records"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify the OIDC attestation with constrained identity
+        run: |
+          set -euo pipefail
+          mapfile -t bundles < <(find "$GITHUB_WORKSPACE/attestation" -type f -print)
+          [[ "${#bundles[@]}" -eq 1 ]]
+          bundle="$(realpath "${bundles[0]}")"
+          signer_workflow="${GITHUB_SERVER_URL#https://}/$GITHUB_REPOSITORY/.github/workflows/candidate.yml"
+          PYTHONPATH=verifier-source python -m tools.candidate.record \
+            --output "$DOWNLOAD_COMMAND_RECORDS" \
+            --stage verify-oidc-attestation \
+            --cwd "$GITHUB_WORKSPACE" -- \
+            gh attestation verify "$GITHUB_WORKSPACE/candidate/PAYLOAD_MANIFEST.json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --bundle "$bundle" \
+            --signer-repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$signer_workflow" \
+            --signer-digest "$SOURCE_SHA" \
+            --source-digest "$SOURCE_SHA" \
+            --source-ref refs/heads/main \
+            --deny-self-hosted-runners
+          {
+            echo "ATTESTATION_BUNDLE=$bundle"
+            echo "SIGNER_WORKFLOW=$signer_workflow"
+          } >> "$GITHUB_ENV"
+
+      - name: Install every downloaded wheel into a clean environment
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install and smoke-test the downloaded payload
+        run: |
+          set -euo pipefail
+          record=(python -m tools.candidate.record --output "$DOWNLOAD_COMMAND_RECORDS")
+          PYTHONPATH=verifier-source "${record[@]}" \
+            --stage create-clean-install-environment --cwd "$GITHUB_WORKSPACE" -- \
+            uv venv --python 3.13 "$GITHUB_WORKSPACE/.candidate-install"
+          [[ "$(uname -m)" == "x86_64" ]]
+          declared_python_full_version="$(python -c \
+            'import json; print(json.load(open("candidate/PAYLOAD_MANIFEST.json"))["build"]["runtime_target"]["python_full_version"])')"
+          installed_python_full_version="$("$GITHUB_WORKSPACE/.candidate-install/bin/python" -c \
+            'import sys; print(".".join(str(value) for value in sys.version_info[:3]))')"
+          [[ "$installed_python_full_version" == "$declared_python_full_version" ]]
+          PYTHONPATH=verifier-source "${record[@]}" \
+            --stage install-runtime-closure-offline --cwd "$GITHUB_WORKSPACE" -- \
+            uv pip install --python "$GITHUB_WORKSPACE/.candidate-install/bin/python" \
+            --offline --no-index --no-cache \
+            --find-links "$GITHUB_WORKSPACE/candidate/payload/vendor/python" \
+            --require-hashes \
+            -r "$GITHUB_WORKSPACE/candidate/payload/metadata/runtime-requirements.txt"
+          mapfile -d '' wheels < <(find "$GITHUB_WORKSPACE/candidate/payload/python" \
+            -maxdepth 1 -type f -name '*.whl' -print0 | sort -z)
+          [[ "${#wheels[@]}" -eq 18 ]]
+          PYTHONPATH=verifier-source "${record[@]}" \
+            --stage install-workspace-wheels-offline --cwd "$GITHUB_WORKSPACE" -- \
+            uv pip install --python "$GITHUB_WORKSPACE/.candidate-install/bin/python" \
+            --offline --no-index --no-cache --no-deps "${wheels[@]}"
+          PYTHONPATH=verifier-source "${record[@]}" \
+            --stage check-offline-install --cwd "$GITHUB_WORKSPACE" -- \
+            uv pip check --python "$GITHUB_WORKSPACE/.candidate-install/bin/python"
+          PYTHONPATH=verifier-source "${record[@]}" \
+            --stage smoke-imports --cwd "$GITHUB_WORKSPACE" -- \
+            "$GITHUB_WORKSPACE/.candidate-install/bin/python" -c \
+            "from stateweaver.reporting import RealityPublicationManifest; import statechainbench; import stateweaver_api"
+          PYTHONPATH=verifier-source "${record[@]}" \
+            --stage smoke-doctor --cwd "$GITHUB_WORKSPACE" -- \
+            "$GITHUB_WORKSPACE/.candidate-install/bin/stateweaver" --json doctor
+          PYTHONPATH=verifier-source "${record[@]}" \
+            --stage smoke-foundation --cwd "$GITHUB_WORKSPACE" -- \
+            "$GITHUB_WORKSPACE/.candidate-install/bin/stateweaver" --json foundation verify
+          proof_run="$(find "$GITHUB_WORKSPACE/candidate/payload/evidence/foundation/runs" \
+            -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          [[ -n "$proof_run" ]]
+          PYTHONPATH=verifier-source "${record[@]}" \
+            --stage smoke-foundation-evidence --cwd "$GITHUB_WORKSPACE" -- \
+            "$GITHUB_WORKSPACE/.candidate-install/bin/stateweaver" foundation verify-evidence \
+            "$proof_run" --repository-marker "$SOURCE_SHA"
+          PYTHONPATH=verifier-source "${record[@]}" \
+            --stage verify-verifier-source-clean --cwd "$GITHUB_WORKSPACE" -- \
+            python -m tools.candidate.git_clean \
+            --repository-root "$GITHUB_WORKSPACE/verifier-source"
+          tar -tzf "candidate/payload/web/stateweaver-web-$VERSION.tar.gz" \
+            | grep -Fx "stateweaver-web-$VERSION/index.html"
+
+      - name: Produce detached download verification receipt
+        env:
+          ACTIONS_ARTIFACT_SHA256: ${{ needs.build_upload.outputs.artifact_digest }}
+          MANIFEST_SHA256: ${{ needs.build_upload.outputs.manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          mkdir download-verification
+          PYTHONPATH=verifier-source python -m tools.candidate.download_receipt candidate \
+            --attestation-bundle "$ATTESTATION_BUNDLE" \
+            --command-records "$DOWNLOAD_COMMAND_RECORDS" \
+            --output download-verification/DOWNLOAD_VERIFICATION_RECEIPT.json \
+            --workspace "$GITHUB_WORKSPACE" \
+            --canonical-source-archive "$CANONICAL_SOURCE_ARCHIVE" \
+            --verifier-source "$GITHUB_WORKSPACE/verifier-source" \
+            --install-root "$GITHUB_WORKSPACE/.candidate-install" \
+            --repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --source-sha "$SOURCE_SHA" \
+            --source-ref refs/heads/main \
+            --manifest-sha256 "$MANIFEST_SHA256" \
+            --actions-artifact-sha256 "$ACTIONS_ARTIFACT_SHA256" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --workflow-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --signer-workflow "$SIGNER_WORKFLOW" \
+            --version "$VERSION" \
+            --started-at "$DOWNLOAD_STARTED_AT" \
+            --completed-at "$completed_at" \
+            --runner-os "$RUNNER_OS" \
+            --runner-arch "$RUNNER_ARCH"
+
+      - name: Upload detached download verification receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.build_upload.outputs.artifact_name }}-download-verification
+          path: download-verification/DOWNLOAD_VERIFICATION_RECEIPT.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Report candidate-only status
+        env:
+          MANIFEST_SHA256: ${{ needs.build_upload.outputs.manifest_sha256 }}
+        run: |
+          {
+            echo "## CANDIDATE_READY_FOR_EXTERNAL_QUALIFICATION"
+            echo
+            echo "Payload manifest: $MANIFEST_SHA256"
+            echo "M2 real-provider, M3 end-to-end, and M4-M5 implementation remain incomplete; M6-M8 retain implementation and external-qualification blockers."
+            echo "No tag or GitHub Release was created."
+          } >> "$GITHUB_STEP_SUMMARY"

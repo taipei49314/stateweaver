@@ -16,11 +16,31 @@ from .models import (
     TelemetryIngestError,
     TraceIngestRequest,
 )
+from .runtime import (
+    IssuedRuntimeTrace,
+    ObservedStatePath,
+    RuntimeExecutionReceiptBinding,
+    RuntimeObservationController,
+    RuntimeObservationError,
+    RuntimeObservationReceipt,
+    RuntimeObservationRequest,
+    RuntimeObservationResult,
+    RuntimeStateCapture,
+)
 
 __all__ = [
     "ADAPTER_NAME",
     "ADAPTER_VERSION",
+    "IssuedRuntimeTrace",
+    "ObservedStatePath",
     "OtlpSpan",
+    "RuntimeExecutionReceiptBinding",
+    "RuntimeObservationController",
+    "RuntimeObservationError",
+    "RuntimeObservationReceipt",
+    "RuntimeObservationRequest",
+    "RuntimeObservationResult",
+    "RuntimeStateCapture",
     "SpanAttribute",
     "SpanKind",
     "TelemetryIngestError",

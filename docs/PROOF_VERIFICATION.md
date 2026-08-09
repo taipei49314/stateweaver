@@ -8,19 +8,36 @@ The M0/M1 proof has three independent layers:
 3. The main-branch GitHub workflow uses `actions/attest@v4` to sign the exact-file manifest with
    GitHub Actions OIDC provenance after both Python matrix jobs pass.
 
-The third layer is configured but is not evidence until a public main-branch workflow has actually
-completed and its attestation has been retained.
+The third layer has one retained public baseline example:
+[main-branch run 31239564101](https://github.com/taipei49314/stateweaver/actions/runs/31239564101)
+completed at source SHA `aa60cad5be43f383810bf2e276307c4f4c9cec10`. Its attestation is historical
+evidence for that exact subject and source only; it does not qualify a later commit or release.
 
-## Local semantic verification
+## Historical exact-source rebuild and semantic verification
 
-Download the `acceptance-proof` artifact, install the matching locked StateWeaver wheels on the
-same operating system, Python ABI, and wheel build as the producer, and run:
+The retained run did **not** publish matching StateWeaver wheels. Rebuild the verifier from the
+attested source SHA and its checked-in lock on the producer operating system and Python ABI, then
+download the proof artifact and run:
 
 ```console
-stateweaver foundation verify-evidence \
-  runs/ci-RUN_ID-ATTEMPT \
-  --repository-marker COMMIT_SHA
+git clone https://github.com/taipei49314/stateweaver.git
+cd stateweaver
+git checkout --detach aa60cad5be43f383810bf2e276307c4f4c9cec10
+uv sync --all-packages --group dev --locked
+gh run download 31239564101 \
+  --repo taipei49314/stateweaver \
+  --name acceptance-proof \
+  --dir ../acceptance-proof
+uv run stateweaver foundation verify-evidence \
+  ../acceptance-proof/runs/ci-31239564101-1 \
+  --repository-marker aa60cad5be43f383810bf2e276307c4f4c9cec10
 ```
+
+Do not substitute the current checkout, an unpinned dependency resolution, or wheels from another
+build. A future candidate must carry its own exact source/lock inputs and installable artifacts in
+the candidate payload; verify those bytes with `tools/candidate/verify.py` before invoking the
+candidate's verifier. The historical artifact alone is insufficient to reconstruct an arbitrary
+producer runtime.
 
 The command does not execute content from the bundle. It runs only StateWeaver's fixed local
 synthetic foundation under the process-local network guard, then compares the independently
@@ -44,11 +61,22 @@ producer can concurrently replace paths, then retain or consume exactly the veri
 
 ## GitHub workflow provenance
 
-From the downloaded run directory:
+Download both `acceptance-proof` and `acceptance-proof-attestation`. For the retained baseline,
+verify the offline bundle while constraining repository, signer workflow, source digest, and source
+ref (replace the paths with the download locations):
 
 ```console
-gh attestation verify artifact-manifest.sha256 -R OWNER/REPOSITORY
+gh attestation verify artifact-manifest.sha256 \
+  --bundle ../acceptance-proof-attestation/attestation.json \
+  --repo taipei49314/stateweaver \
+  --signer-workflow taipei49314/stateweaver/.github/workflows/ci.yml \
+  --source-digest aa60cad5be43f383810bf2e276307c4f4c9cec10 \
+  --source-ref refs/heads/main
 ```
+
+The verified subject digest for that baseline is
+`c275c83431e0ae94c8331d1f7998cd3d1956de5126e00f16f497fff378eaf01f`. A candidate
+or release verifier must substitute its own exact merged SHA and must reject any mismatch.
 
 GitHub documents the attestation permissions, OIDC signing model, and verification command in
 [Using artifact attestations to establish provenance for builds](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations).
@@ -60,8 +88,7 @@ request test jobs retain read-only permissions and never receive the attestation
 
 ## Remaining trust boundary
 
-Before a successful attested public run, the proof establishes only local integrity and
-deterministic re-execution. After such a run, the attestation identifies the GitHub workflow,
-repository, commit, and triggering event that produced the manifest. Reviewers must still inspect
-the referenced workflow and source commit; an attestation proves provenance, not that the code is
-correct.
+An attestation identifies the GitHub workflow, repository, commit, triggering event, and subject
+that produced the manifest. Reviewers must still inspect the referenced workflow and source
+commit; an attestation proves provenance, not that the code is correct. It is not a trusted Reality
+Broker signature, independent consumer identity, or M0-M8 certification.

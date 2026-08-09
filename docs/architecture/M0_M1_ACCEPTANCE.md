@@ -4,6 +4,15 @@
 適用範圍：M0 Contracts + Lab、M1 Deterministic Replay Kernel  
 架構基準：StateWeaver Architecture Baseline v1
 
+機器可讀的完整 acceptance requirement set 位於
+`packages/evidence/src/stateweaver/evidence/acceptance-registry.json`。它包含 92 個 required IDs：
+72 個 M0–M8 architecture requirements，加上 20 個不可合併的 qualification gates；其中本文件的
+`M0-C01..C08`、`M0-L01..L10`、`M1-R01..R12` 共 30 列。Loader 對缺列、多列、重複、未知欄位、
+順序、不安全路徑、resource digest 與已宣告 selector fail closed。尚未實作或須外部執行的 gate
+仍保留 required assertion/evidence contract，但其 `tests` 可為空；空 selector 絕不表示 PASS。
+Registry 只定義要求與證據契約，不包含 PASS 狀態，因此它的存在不等於 M0/M1 或全域 release
+qualification。
+
 ## 1. 驗收目標
 
 M0/M1 必須先證明兩件事：

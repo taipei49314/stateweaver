@@ -1,6 +1,23 @@
-"""Offline collection and verification of M0/M1 acceptance evidence."""
+"""Acceptance evidence and the canonical M0-M8 requirement registry."""
 
 from ._io import semantic_sha256
+from .acceptance_registry import (
+    EXPECTED_ACCEPTANCE_REGISTRY_SHA256,
+    EXPECTED_REQUIREMENT_IDS,
+    EXPECTED_TESTLESS_REQUIREMENT_IDS,
+    QUALIFICATION_REQUIREMENT_IDS,
+    AcceptanceRegistry,
+    AcceptanceRegistryError,
+    AcceptanceRequirement,
+    EvidenceMapping,
+    GateClass,
+    RequirementKind,
+    SourceMapping,
+    TestMapping,
+    load_acceptance_registry,
+    parse_acceptance_registry,
+    validate_acceptance_registry_selectors,
+)
 from .collector import (
     ACCEPTANCE_TEST_COMMAND,
     AcceptanceEvidenceError,
@@ -42,10 +59,19 @@ from .verify import ExpectedProvenance, VerificationResult, verify_acceptance_ev
 
 __all__ = [
     "ACCEPTANCE_TEST_COMMAND",
+    "EXPECTED_ACCEPTANCE_REGISTRY_SHA256",
+    "EXPECTED_REQUIREMENT_IDS",
+    "EXPECTED_TESTLESS_REQUIREMENT_IDS",
+    "QUALIFICATION_REQUIREMENT_IDS",
     "AcceptanceEvidenceError",
+    "AcceptanceRegistry",
+    "AcceptanceRegistryError",
+    "AcceptanceRequirement",
     "CollectionInput",
     "CollectionResult",
+    "EvidenceMapping",
     "ExpectedProvenance",
+    "GateClass",
     "RealityAdapterComponent",
     "RealityAdapterLock",
     "RealityArtifactRole",
@@ -69,11 +95,17 @@ __all__ = [
     "RealityTraceEventV2",
     "RealityTraceFact",
     "RealityTraceLane",
+    "RequirementKind",
+    "SourceMapping",
+    "TestMapping",
     "VerificationResult",
     "collect_acceptance_evidence",
     "collect_from_json_file",
     "derive_reality_trace_v2",
+    "load_acceptance_registry",
+    "parse_acceptance_registry",
     "semantic_sha256",
+    "validate_acceptance_registry_selectors",
     "verify_acceptance_evidence",
     "verify_reality_pre_receipt_bundle",
 ]
