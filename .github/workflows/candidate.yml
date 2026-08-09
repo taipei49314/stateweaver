@@ -538,7 +538,6 @@ jobs:
             gh attestation verify "$GITHUB_WORKSPACE/candidate/PAYLOAD_MANIFEST.json" \
             --repo "$GITHUB_REPOSITORY" \
             --bundle "$bundle" \
-            --signer-repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$signer_workflow" \
             --signer-digest "$SOURCE_SHA" \
             --source-digest "$SOURCE_SHA" \
