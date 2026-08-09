@@ -35,6 +35,16 @@ def _append(path: Path, record: dict[str, object]) -> None:
         os.close(descriptor)
 
 
+def _absolute_invocation_path(executable: str) -> str:
+    """Return a normalized absolute path without dereferencing an entrypoint symlink."""
+    # ``Path.resolve`` would dereference a venv's Python entrypoint and execute the base
+    # interpreter, so lexical absolute-path normalization is required here.
+    absolute = Path(os.path.abspath(executable))  # noqa: PTH100
+    if not absolute.is_file():
+        raise FileNotFoundError(executable)
+    return absolute.as_posix()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -55,7 +65,10 @@ def main(argv: list[str] | None = None) -> int:
         if not candidate.is_file():
             return 127
         executable = str(candidate)
-    command[0] = Path(executable).resolve(strict=True).as_posix()
+    try:
+        command[0] = _absolute_invocation_path(executable)
+    except OSError:
+        return 127
     started_at = _now()
     try:
         completed = subprocess.run(command, cwd=arguments.cwd, check=False)

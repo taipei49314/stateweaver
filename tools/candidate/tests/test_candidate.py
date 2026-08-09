@@ -5,14 +5,16 @@ import hashlib
 import io
 import json
 import subprocess
+import sys
 import tarfile
+import venv
 import zipfile
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from .. import common
+from .. import common, record
 from ..build import BuildRequest, build_candidate
 from ..common import CandidateError, canonical_json_bytes, safe_relative_path
 from ..compare import compare_roots
@@ -25,6 +27,37 @@ from ..verify import VerificationResult, verify_candidate
 
 REPOSITORY_URL = "https://github.com/stateweaver/stateweaver"
 WORKSPACE_PACKAGES = tuple(f"stateweaver-package-{index:02d}" for index in range(1, 19))
+
+
+def test_command_recorder_preserves_symlinked_python_entrypoint(tmp_path: Path) -> None:
+    environment = tmp_path / "venv"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
+    scripts = "Scripts" if sys.platform == "win32" else "bin"
+    executable = "python.exe" if sys.platform == "win32" else "python"
+    entrypoint = environment / scripts / executable
+    if not entrypoint.is_symlink():
+        pytest.skip("this platform does not use a symlinked venv Python entrypoint")
+
+    records = tmp_path / "records.jsonl"
+    exit_code = record.main(
+        [
+            "--output",
+            str(records),
+            "--stage",
+            "smoke-imports",
+            "--cwd",
+            str(tmp_path),
+            "--",
+            str(entrypoint),
+            "-c",
+            "import sys; raise SystemExit(sys.prefix == sys.base_prefix)",
+        ]
+    )
+
+    assert exit_code == 0
+    [command_record] = [json.loads(line) for line in records.read_bytes().splitlines()]
+    assert command_record["argv"][0] == entrypoint.absolute().as_posix()
+    assert Path(command_record["argv"][0]).is_symlink()
 
 
 def _tar_gz(
