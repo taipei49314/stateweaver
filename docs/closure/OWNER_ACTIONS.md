@@ -1,5 +1,8 @@
 ﻿# OWNER_ACTIONS — stateweaver dependency queue / source-only candidate
 
+> **HISTORICAL / COMPLETED.** PR #7 and the accepted dependency updates were merged. These are not
+> current owner instructions; current blockers are tracked in the repository-root `BLOCKERS.md`.
+
 Cursor branch: `closure/stateweaver-20260807`  
 Cursor must **not** merge Dependabot PRs, force-push, rewrite tags, publish a
 Release, or change the default branch.

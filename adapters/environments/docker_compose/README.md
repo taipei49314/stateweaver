@@ -2,8 +2,23 @@
 
 This package is a local-only M2 adapter boundary for one repository-owned synthetic Compose
 definition. It accepts no command, environment, image, Compose path, credential, or target address
-from a caller. The production runner admits only a closed Docker argv grammar, fixes the Docker
-endpoint to the local engine, uses `shell=False`, and the Compose network is internal.
+from a caller. At runner construction, the production boundary resolves Docker (and Windows
+`docker-compose`) once from the operator-controlled host `PATH`, rejects missing, relative,
+non-file, or non-executable results, and thereafter invokes the resolved absolute path from the
+fixed fixture directory with `shell=False`. Host `PATH` and the resolved installation directories
+are therefore explicit construction-time trust inputs; later caller changes to `PATH` or cwd cannot
+redirect an admitted argv. The child receives only a derived executable path, the fixed local Linux
+engine endpoint, and required Windows system variables; user Docker configuration variables are not
+forwarded. The Compose network is internal. Health parsing accepts only Compose v2's one-row array
+or Compose v5's one-row object and then applies the same strict identity checks.
+
+Each fixed child runs in an isolated process group with a 60-second deadline and a one-MiB cap on
+each output stream. Any read, write, wait, cancellation, timeout, or overflow failure aborts the
+tree and reaps the direct child while preserving the authoritative exception. POSIX aborts apply a
+fixed grace interval and then signal the process group with `SIGKILL` even when its leader already
+exited. Windows aborts invoke the absolute `%SystemRoot%\\System32\\taskkill.exe /T /F` through a
+closed argv before reaping the leader. The hosted observation also rejects surviving Docker/Compose
+clients, fixed-project or fixture-path processes, and `swm2` Docker resources.
 
 The lifecycle and namespace boundary is covered with a deterministic stateful process emulator. The
 fixed in-container bridge exports a canonical archive for six synthetic components, binds each
@@ -25,15 +40,26 @@ the only intended image bootstrap is:
 docker build --tag stateweaver-synthetic-demo:local adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose
 ```
 
-That command has not been executed in the retained local verification because Docker is unavailable;
-on a clean host it may need to fetch the pinned base image. The emulator proves the archive protocol,
-not live PostgreSQL, Redis, queue, browser-session, filesystem-provider, or controlled-clock capture.
+During 2026-08-09 development, that image build and the following explicit four-sibling test were
+observed on a local Docker Desktop host:
+
+```powershell
+$env:STATEWEAVER_RUN_DOCKER_INTEGRATION = "1"
+uv run pytest -o 'addopts=--strict-config --strict-markers -ra' tests/integration/worlds/test_live_docker_compose.py -m docker_integration -q
+```
+
+This was an ephemeral operator-local diagnostic. No immutable exact-SHA log, artifact inventory,
+or qualification receipt from it is retained in this repository. The 2026-08-09 baseline GitHub
+run failed before the compatibility fixes and is retained as failure evidence; an exact-merged-SHA
+rerun is required. The adapter proves a synthetic archive protocol, not live PostgreSQL, Redis,
+queue, browser-session, filesystem-provider, or controlled-clock capture.
 All six capabilities therefore remain truthfully advertised as `PARTIAL`.
 
-The default suite now requires four emulator siblings to overlap at runner barriers. An explicit
-`docker_integration` test and manual GitHub workflow encode the corresponding live-host observation,
-but neither has been executed or retained here. Their existence, collection, or deselection is not
-evidence.
+The default suite requires four emulator siblings to overlap at runner barriers. During the
+ephemeral diagnostic, the explicit `docker_integration` test was observed to complete four local
+Compose siblings and leave zero `swm2` containers, networks, and volumes. That observation is not
+qualification evidence; the manual GitHub workflow must pass again on the exact merged SHA before
+it can be cited as hosted synthetic evidence.
 
 M2 is not certified until a Docker-equipped clean host builds the fixture and retains a successful
 run proving real mutation, snapshot/restore, four genuinely parallel sibling Compose projects, and

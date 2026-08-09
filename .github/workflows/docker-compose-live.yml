@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -33,8 +35,30 @@ jobs:
         run: |
           mkdir -p artifacts/m2-live
           git rev-parse HEAD > artifacts/m2-live/commit.txt
+          git rev-parse 'HEAD^{tree}' > artifacts/m2-live/tree.txt
+          git status --porcelain=v1 --untracked-files=all > artifacts/m2-live/dirty-before.txt
+          test ! -s artifacts/m2-live/dirty-before.txt
           docker version > artifacts/m2-live/docker-version.txt
           docker compose version > artifacts/m2-live/compose-version.txt
+          docker ps -a --no-trunc > artifacts/m2-live/containers-before.txt
+          docker network ls --no-trunc > artifacts/m2-live/networks-before.txt
+          docker volume ls > artifacts/m2-live/volumes-before.txt
+          ps -eo pid=,ppid=,stat=,etimes=,args= > artifacts/m2-live/processes-before.txt
+          awk '
+            /swm2[0-9a-f]{32}/ ||
+            /(^|[[:space:]\/])docker([[:space:]]|$)/ ||
+            /docker-compose/ ||
+            /adapters\/environments\/docker_compose\/src\/stateweaver\/adapters\/docker_compose\/compose.yaml/
+          ' artifacts/m2-live/processes-before.txt \
+            > artifacts/m2-live/managed-processes-before.txt
+          test ! -s artifacts/m2-live/managed-processes-before.txt
+          sha256sum \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/adapter.py \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/compose.yaml \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/Dockerfile \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/runner.py \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/state_bridge.py \
+            > artifacts/m2-live/source-sha256.txt
 
       - name: Build the fixed digest-pinned fixture
         run: |
@@ -54,6 +78,33 @@ jobs:
             -m docker_integration \
             --junitxml=artifacts/m2-live/junit.xml \
             -q
+
+      - name: Record and enforce cleanup inventory
+        if: always()
+        run: |
+          docker ps -a --no-trunc > artifacts/m2-live/containers-after.txt
+          docker network ls --no-trunc > artifacts/m2-live/networks-after.txt
+          docker volume ls > artifacts/m2-live/volumes-after.txt
+          ps -eo pid=,ppid=,stat=,etimes=,args= > artifacts/m2-live/processes-after.txt
+          awk '
+            /swm2[0-9a-f]{32}/ ||
+            /(^|[[:space:]\/])docker([[:space:]]|$)/ ||
+            /docker-compose/ ||
+            /adapters\/environments\/docker_compose\/src\/stateweaver\/adapters\/docker_compose\/compose.yaml/
+          ' artifacts/m2-live/processes-after.txt \
+            > artifacts/m2-live/managed-processes-after.txt
+          git status --porcelain=v1 --untracked-files=all > artifacts/m2-live/dirty-after.txt
+          docker ps -a --filter 'name=swm2' --format '{{.Names}}' \
+            > artifacts/m2-live/swm2-containers-after.txt
+          docker network ls --filter 'name=swm2' --format '{{.Name}}' \
+            > artifacts/m2-live/swm2-networks-after.txt
+          docker volume ls --filter 'name=swm2' --format '{{.Name}}' \
+            > artifacts/m2-live/swm2-volumes-after.txt
+          test ! -s artifacts/m2-live/swm2-containers-after.txt
+          test ! -s artifacts/m2-live/swm2-networks-after.txt
+          test ! -s artifacts/m2-live/swm2-volumes-after.txt
+          test ! -s artifacts/m2-live/managed-processes-after.txt
+          test ! -s artifacts/m2-live/dirty-after.txt
 
       - name: Retain the observation inputs and result
         if: always()

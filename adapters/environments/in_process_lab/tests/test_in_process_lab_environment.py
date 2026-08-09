@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
@@ -16,6 +19,7 @@ from stateweaver.adapters.in_process_lab import (
     InProcessLabEnvironment,
     LabAction,
     LabExecutionRejectedError,
+    LabExecutionTimeoutError,
     LabIdempotencyConflictError,
     LabPolicyDeniedError,
     LabTargetRejectedError,
@@ -114,7 +118,7 @@ def _policy_request(
         spec=ScopeSpec(
             environmentMode=EnvironmentMode.SOURCE_BACKED,
             targets=ScopeTargets(
-                include=(TargetSelector(host="app.local", ports=(443,), paths=("/v1/lab/**",)),)
+                include=(TargetSelector(host="localhost", ports=(80,), paths=("/v1/lab/**",)),)
             ),
             identities=ScopeIdentities(allowed=("test_user_a", "test_user_b", "test_admin")),
             actions=actions,
@@ -198,7 +202,7 @@ def _envelope(action_id: str, sequence: int, lab_action: LabAction) -> ActionEnv
         scope_action=ScopeAction.HTTP_REQUEST,
         action=HttpRequestAction(
             method=spec.method,
-            target=ActionTarget(scheme="https", host="app.local", port=443, path=spec.path),
+            target=ActionTarget(scheme="http", host="localhost", port=80, path=spec.path),
             body_artifact=lab_action_artifact(lab_action),
             identity_handle=spec.identity_handle,
             expected_statuses=spec.expected_statuses,
@@ -583,6 +587,120 @@ async def test_idempotency_reuses_exact_observations_and_rejects_conflicts() -> 
     with pytest.raises(LabIdempotencyConflictError):
         await environment.execute(conflicting)
     assert await environment.capture() == after_first
+
+
+@pytest.mark.asyncio
+async def test_observed_execution_is_one_actual_asgi_lifecycle_with_server_metadata() -> None:
+    lab_action = RetainSessionLabAction()
+    envelope = _envelope("action.asgi", 1, lab_action)
+    environment = InProcessLabEnvironment(
+        mode=LabMode.VULNERABLE,
+        registry=_registry(((envelope, lab_action),)),
+    )
+    await _root(environment)
+
+    execution = await environment.execute_observed(envelope)
+
+    assert execution.envelope_digest == canonical_sha256(envelope)
+    assert execution.execution_id.startswith("execution.")
+    assert execution.execution_digest == canonical_sha256(
+        execution.model_dump(mode="python", exclude={"execution_digest"})
+    )
+    assert execution.source_digest.startswith("sha256:")
+    assert execution.method is HttpMethod.POST
+    assert execution.route == "/v1/lab/session/retain"
+    assert execution.status == 200
+    assert (
+        execution.before_captured_at_unix_nano
+        <= execution.started_at_unix_nano
+        < execution.ended_at_unix_nano
+        <= execution.after_captured_at_unix_nano
+    )
+    assert execution.before_capture != execution.after_capture
+    assert execution.observations
+    assert len(environment.evidence_records) == 1
+
+    assert await environment.execute_observed(envelope) is execution
+    assert await environment.execute(envelope) == execution.observations
+    assert len(environment.evidence_records) == 1
+
+
+@pytest.mark.asyncio
+async def test_normal_execution_hides_partial_state_until_receipt_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lab_action = RetainSessionLabAction()
+    envelope = _envelope("action.partial-read", 1, lab_action)
+    environment = InProcessLabEnvironment(
+        mode=LabMode.VULNERABLE,
+        registry=_registry(((envelope, lab_action),)),
+    )
+    await _root(environment)
+    state = environment.__dict__["_service"].__dict__["_state"]
+    retain = state.retain_old_session
+    evidence_appended = threading.Event()
+    release_handler = threading.Event()
+
+    def paused_retain(context: object) -> object:
+        result = retain(context)
+        evidence_appended.set()
+        if not release_handler.wait(2.0):
+            raise RuntimeError("test handler release timed out")
+        return result
+
+    monkeypatch.setattr(state, "retain_old_session", paused_retain)
+    execution_task = asyncio.create_task(environment.execute_observed(envelope))
+    assert await asyncio.to_thread(evidence_appended.wait, 1.0)
+    try:
+        with pytest.raises(LabExecutionRejectedError, match="in progress"):
+            _ = environment.evidence_records
+        with pytest.raises(LabExecutionRejectedError, match="in progress"):
+            _ = environment.last_observations
+    finally:
+        release_handler.set()
+        execution = await execution_task
+
+    assert execution.execution_id.startswith("execution.")
+    assert len(environment.evidence_records) == 1
+
+
+@pytest.mark.asyncio
+async def test_actual_asgi_timeout_is_bounded_and_quarantines_unfinished_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lab_action = RetainSessionLabAction()
+    envelope = _envelope("action.timeout", 1, lab_action).model_copy(update={"timeout_ms": 10})
+    environment = InProcessLabEnvironment(
+        mode=LabMode.VULNERABLE,
+        registry=_registry(((envelope, lab_action),)),
+    )
+    root = await _root(environment)
+    state = environment.__dict__["_service"].__dict__["_state"]
+    retain = state.retain_old_session
+
+    def slow_retain(context: object) -> object:
+        time.sleep(0.25)
+        return retain(context)
+
+    monkeypatch.setattr(state, "retain_old_session", slow_retain)
+    started = time.perf_counter()
+    with pytest.raises(LabExecutionTimeoutError) as captured:
+        await environment.execute_observed(envelope)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.15
+    assert captured.value.__cause__ is None
+    with pytest.raises(LabExecutionRejectedError, match="still settling"):
+        await environment.capture()
+    with pytest.raises(LabExecutionRejectedError, match="still settling"):
+        await environment.cleanup()
+
+    await asyncio.sleep(0.3)
+    with pytest.raises(LabExecutionRejectedError, match=r"cleanup|reset"):
+        _ = environment.evidence_records
+    restored = await environment.reset(root)
+    assert restored == root.capture
+    assert not environment.evidence_records
 
 
 @pytest.mark.asyncio

@@ -46,6 +46,9 @@ def test_holdout_comparison_uses_raw_matched_results_and_shows_tiered_gain() -> 
 
     baseline_raw = {item.challenge_id: item for item in comparison.baseline.raw_results}
     full_raw = {item.challenge_id: item for item in comparison.full.raw_results}
+    assert comparison.baseline.system_id == LinearBaseline().system_id
+    assert comparison.baseline.system_config_digest == LinearBaseline().system_config_digest
+    assert comparison.full.system_id == StateWeaverTieredSystem().system_id
     assert baseline_raw.keys() == full_raw.keys()
     assert baseline_raw
     assert all(item.budget == _budget() for item in (*baseline_raw.values(), *full_raw.values()))

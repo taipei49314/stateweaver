@@ -5,6 +5,7 @@ from .environment import (
     ADAPTER_VERSION,
     CANONICAL_RANDOM_SEED,
     InProcessLabEnvironment,
+    InProcessLabRuntimeExecution,
 )
 from .errors import (
     AdapterConfigurationError,
@@ -12,6 +13,7 @@ from .errors import (
     LabCaptureRejectedError,
     LabEvidenceRejectedError,
     LabExecutionRejectedError,
+    LabExecutionTimeoutError,
     LabIdempotencyConflictError,
     LabIdentityRejectedError,
     LabPolicyDeniedError,
@@ -39,10 +41,12 @@ __all__ = [
     "InProcessLabAdapterError",
     "InProcessLabEnvironment",
     "InProcessLabReplayOracle",
+    "InProcessLabRuntimeExecution",
     "LabAction",
     "LabCaptureRejectedError",
     "LabEvidenceRejectedError",
     "LabExecutionRejectedError",
+    "LabExecutionTimeoutError",
     "LabHttpActionSpec",
     "LabIdempotencyConflictError",
     "LabIdentityRejectedError",

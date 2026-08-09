@@ -67,7 +67,16 @@ pythonpath = [
   "packages/reporting/src",
   "packages/search/tests",
 ]
-testpaths = ["packages", "adapters", "apps", "labs", "workflows", "benchmarks", "tests"]
+testpaths = [
+  "packages",
+  "adapters",
+  "apps",
+  "labs",
+  "workflows",
+  "benchmarks",
+  "tests",
+  "tools/candidate/tests",
+]
 xfail_strict = true
 markers = [
   "docker_integration: opt-in fixed synthetic Docker Compose observation; never acceptance proof",

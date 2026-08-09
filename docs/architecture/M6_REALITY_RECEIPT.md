@@ -10,6 +10,11 @@ This is a typed causal-coherence boundary. The evidence package now includes one
 signature, an issuer identity, an authenticated retained-artifact store, or a completed Reality
 Replay Broker.
 
+No producer-external `TRUST_POLICY`, trusted issuer, immutable authenticated store, or separated
+consumer identity is configured in this repository. Repository code and GitHub OIDC provenance
+cannot create that trust root for themselves; M6 remains blocked until an independent authority
+freezes the policy before evidence production and a separate clean consumer completes replay.
+
 ## Finding state machine
 
 | Finding status | Receipt shape |
@@ -146,4 +151,5 @@ reminting, the explicitly unattested kind boundary, and patch replay:
 uv run pytest packages/contracts/tests/test_reality_receipts.py -q
 uv run pytest packages/contracts/tests/test_event_history.py -q
 uv run pytest packages/evidence/tests/test_semantic_trace.py packages/evidence/tests/test_reality_bundle.py -q
+uv run pytest packages/reporting/tests -q
 ```

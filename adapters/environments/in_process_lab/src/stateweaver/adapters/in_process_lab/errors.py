@@ -44,5 +44,9 @@ class LabExecutionRejectedError(InProcessLabAdapterError):
     """The synthetic lab returned an outcome outside the registered contract."""
 
 
+class LabExecutionTimeoutError(LabExecutionRejectedError):
+    """The repository ASGI lifecycle exceeded its action-envelope deadline."""
+
+
 class LabEvidenceRejectedError(InProcessLabAdapterError):
     """Execution evidence was missing, duplicated, or causally inconsistent."""

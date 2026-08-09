@@ -51,26 +51,29 @@ or [proof verification guide](docs/PROOF_VERIFICATION.md) for the trust boundari
 
 ## Current status
 
-StateWeaver is a pre-alpha research implementation. Its fixed synthetic flows pass local
-formatting, typing, unit, integration, race, browser, build, and proof gates; live-provider and
-clean-machine M6 certification remain intentionally unclaimed. This repository is currently a
-source-only preview: no PyPI package or versioned GitHub Release is offered yet.
+StateWeaver is a pre-alpha research implementation. Its fixed synthetic flows have local
+formatting, typing, unit, integration, race, simulated-DOM contract, build, and proof gates. Those
+developer checks are not an exact-SHA release-qualification receipt. The first
+retained Docker workflow exposed compatibility defects that are being fixed through the normal PR
+path; it still exercises a synthetic bridge rather than real providers. Live-provider, trusted
+broker, equal-work benchmark, independent new-user, and clean-machine certification remain
+intentionally unclaimed. No PyPI package or versioned GitHub Release is offered yet.
 
 <details>
 <summary>Implementation and trust-boundary detail (summary)</summary>
 
-Architecture baseline v1 ships milestone-by-milestone. Locally proven today:
+Architecture baseline v1 ships milestone-by-milestone. Current implementation and local-test posture:
 
 | Area | Honest status |
 |---|---|
-| M0/M1 foundation proof | Passes (clean-root differential + negative controls) |
-| M2 world engine | Archive + lifecycle gates pass; **no** live Docker/provider proof |
-| M3 semantic twin | Source + OTLP + state-delta observed-fragment path passes |
+| M0/M1 foundation proof | Synthetic proof exists; canonical 92-row registry (72 architecture + 20 qualification) exists; formal row receipts remain pending |
+| M2 world engine | Archive + lifecycle gates exist; ephemeral local synthetic Docker diagnostic only; **no** retained qualification or real-provider proof |
+| M3 semantic twin | Runtime-derived process-local observation primitive exists; M4/M5 integration remains pending |
 | M4 offline search | 24 → 4 → 2 → 1 flow preserves the observed candidate |
 | M5 chain compiler | Admission bridge for observed fragments; synthetic closure only |
 | M6 reality receipt | Fail-closed `RealityReplayReceipt` + reporting candidate; **no** trusted broker / M6 cert |
 | M7 StateChainBench | Deterministic prototype runner — not equal-work public benchmark |
-| M8 public UX | Fixed loopback API + browser contract pass local QA |
+| M8 public UX | Fixed loopback API + simulated-DOM contract exists; no Playwright/new-user release journey |
 
 Receipts and reports are **internal-coherence** artifacts, not producer
 attestation or Reality Broker signatures. Live-provider and clean-machine M6
@@ -83,15 +86,15 @@ Full matrices: [docs/architecture/TRACEABILITY.md](docs/architecture/TRACEABILIT
 
 | Milestone | Auditable local status | Evidence |
 | --- | --- | --- |
-| M0 Contracts + Lab | Foundation proof passes; release audit pending | `packages/contracts/`, `labs/multitenant-saas/` |
-| M1 Deterministic Replay | Five-run clean-root differential passes | `packages/replay/`, `apps/cli/` |
-| M2 World Engine | Archive + lifecycle authority/concurrency pass; live Docker/provider proof absent | `packages/worlds/`, `tests/integration/worlds/`, adapter `PARTIAL` |
-| M3 Semantic Twin | Source + OTLP + state-delta flow and observed-fragment pipeline pass | `packages/twin/`, `tests/integration/twin/`, `tests/integration/pipeline/` |
+| M0 Contracts + Lab | Foundation proof implementation and exact registry exist; release audit pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/evidence/.../acceptance-registry.json` |
+| M1 Deterministic Replay | Five-run clean-root differential is implemented; formal qualification pending | `packages/replay/`, `apps/cli/` |
+| M2 World Engine | Archive/lifecycle plus synthetic Docker path; real providers remain absent | `packages/worlds/`, `tests/integration/worlds/`, adapter `PARTIAL` |
+| M3 Semantic Twin | Process-local exporter and runtime-derived delta primitive; full observed chain pending | `packages/twin/`, `adapters/telemetry/opentelemetry/`, `tests/integration/observation/` |
 | M4 Search | Offline 24 → 4 → 2 → 1 flow preserves the observed candidate | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
 | M5 Chain Compiler | Three observed fragments cross the admission bridge; synthetic replay closure hardened | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
-| M6 Reality + Proof | V2 event reconstruction + traceable publication candidate pass; trusted broker absent | `packages/contracts/`, `packages/evidence/`, `packages/reporting/`, `tests/e2e/proof_bundle/` |
+| M6 Reality + Proof | V2 event reconstruction + traceable publication candidate exist; trusted broker absent | `packages/contracts/`, `packages/evidence/`, `packages/reporting/`, `tests/e2e/proof_bundle/` |
 | M7 StateChainBench | Trusted built-in synthetic runner hardened; not equal-work or public-certified | `benchmarks/statechainbench/` |
-| M8 Public UX | Read-only fixed API + four-workspace client pass local contract/browser QA | `apps/api/`, `apps/web/` |
+| M8 Public UX | Read-only fixed API + four-workspace client have local simulated-DOM QA only | `apps/api/`, `apps/web/` |
 
 The current M7 numbers are retained only as a deterministic prototype observation. The runner
 accepts only its two exact built-in solver types and closes dataset, evaluator, configuration,
@@ -118,7 +121,7 @@ uv run uvicorn stateweaver_api.app:app --app-dir apps/api/src --host 127.0.0.1 -
 cd apps/web && npm ci && npm run dev -- --host 127.0.0.1 --port 3000 --strictPort
 ```
 
-`foundation verify` is the current clean-machine demo. It performs five vulnerable clean-root
+`foundation verify` is the current source-checkout, process-local demo. It performs five vulnerable clean-root
 replays, an identical-plan patched replay, and the negative-control matrix entirely in process.
 It exits nonzero if the deterministic proof conditions are not met.
 
@@ -128,15 +131,18 @@ an exact-file SHA-256 manifest. `stateweaver foundation verify-evidence <run-dir
 file integrity and causal coherence, then independently re-executes the installed fixed foundation
 without executing bundle contents. The verifier hashes and parses one captured read of every file
 and returns its `snapshot_sha256`; consumers must not reopen mutable paths and assume they are the
-same snapshot. Main-branch CI is configured to sign the exact-file manifest
-with GitHub OIDC provenance; see [proof verification](docs/PROOF_VERIFICATION.md).
+same snapshot. Main-branch
+[CI run 31239564101](https://github.com/taipei49314/stateweaver/actions/runs/31239564101)
+signed the exact-file manifest for SHA `aa60cad5be43f383810bf2e276307c4f4c9cec10` with GitHub
+OIDC provenance; see [proof verification](docs/PROOF_VERIFICATION.md). That historical attestation
+does not qualify later commits or prove trusted Reality.
 
 For repository development:
 
 ```bash
 uv run ruff format --check .
 uv run ruff check .
-uv run mypy packages adapters apps labs workflows benchmarks tests
+uv run mypy packages adapters apps labs workflows benchmarks tests tools/candidate
 uv run pytest
 ```
 

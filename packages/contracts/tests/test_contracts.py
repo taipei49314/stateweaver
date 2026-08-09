@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from math import nan
 
 import pytest
+import stateweaver.contracts as public_contracts
 from pydantic import TypeAdapter, ValidationError
 from stateweaver.contracts import (
     Action,
@@ -166,6 +167,31 @@ def test_contracts_are_frozen() -> None:
     manifest = scope_manifest()
     with pytest.raises(ValidationError, match="Instance is frozen"):
         manifest.kind = "Changed"  # type: ignore[assignment]
+
+
+def test_six_m0_contract_families_are_exported_from_the_public_surface() -> None:
+    families: dict[str, dict[str, object]] = {
+        "scope": {"ScopeManifest": ScopeManifest},
+        "action": {"ActionEnvelope": ActionEnvelope},
+        "security-state-ir": {"Entity": Entity, "Fact": Fact, "Relation": Relation},
+        "transition": {"TransitionFragment": TransitionFragment},
+        "world": {"WorldManifest": WorldManifest},
+        "oracle": {"OracleResult": OracleResult},
+    }
+    exported_names = set(public_contracts.__all__)
+
+    assert set(families) == {
+        "scope",
+        "action",
+        "security-state-ir",
+        "transition",
+        "world",
+        "oracle",
+    }
+    for family in families.values():
+        for name, contract in family.items():
+            assert name in exported_names
+            assert getattr(public_contracts, name) is contract
 
 
 def test_scope_action_sets_are_disjoint_and_default_deny() -> None:

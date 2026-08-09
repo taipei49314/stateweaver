@@ -1,5 +1,9 @@
 ﻿# DEPENDENCY_PR_VERDICTS — stateweaver 2026-08-07
 
+> **HISTORICAL / SUPERSEDED.** This records the pre-merge dependency review at `5df5f57…`.
+> PRs #1, #3, and #4 were subsequently merged; #2, #5, and #6 were closed. Do not use this file as
+> current queue or release evidence.
+
 Inspected each open Dependabot PR **one at a time** with a local rebase onto
 `origin/main` (`5df5f57eb8a588eda420d610603f4689faaf4b05`). Cursor did **not**
 merge, recreate, or close any Dependabot PR. Temp local rebase branches were

@@ -12,15 +12,15 @@ acceptance commands are intentionally local and do not require network access.
 
 | Milestone | Current status | Evidence location |
 |---|---|---|
-| M0 — Contracts + Lab | Proof-producing foundation passes locally; formal exit audit pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/policy/`, `packages/evidence/` |
-| M1 — Deterministic Replay Kernel | Proof-producing foundation passes locally; formal exit audit pending | `packages/replay/`, `adapters/environments/in_process_lab/`, `apps/cli/` |
-| M2 — Materialized World Engine | Synthetic archive + per-world concurrency implemented; live Docker and real-provider proof pending | `packages/worlds/`, `adapters/environments/docker_compose/`, `tests/integration/worlds/` |
-| M3 — Security Semantic Twin | Exit flow and observed-fragment pipeline pass locally; release certification pending | `packages/twin/`, source/OTel adapters, `tests/integration/twin/`, `tests/integration/pipeline/` |
+| M0 — Contracts + Lab | Proof-producing foundation is implemented and locally exercised; formal exit audit pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/policy/`, `packages/evidence/` |
+| M1 — Deterministic Replay Kernel | Proof-producing replay is implemented and locally exercised; formal exit audit pending | `packages/replay/`, `adapters/environments/in_process_lab/`, `apps/cli/` |
+| M2 — Materialized World Engine | Synthetic archive + Docker concurrency path implemented; exact-SHA hosted rerun and real providers pending | `packages/worlds/`, `adapters/environments/docker_compose/`, `tests/integration/worlds/` |
+| M3 — Security Semantic Twin | Runtime-derived observation primitive implemented; full M3→M4→M5 chain pending | `packages/twin/`, source/OTel adapters, `tests/integration/observation/`, `tests/integration/pipeline/` |
 | M4 — Tiered Search Controller | Offline exit flow preserves the observed candidate; materialized certification pending | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
-| M5 — Chain Compiler | Observed admission bridge and synthetic replay closure pass; release evidence pending | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
+| M5 — Chain Compiler | Observed admission bridge and synthetic replay closure are implemented; release evidence pending | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
 | M6 — Reality Anchor + Proof Bundle | V2 event reconstruction + immutable-byte candidate resolver implemented; trusted broker pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
 | M7 — StateChainBench | Trusted built-in synthetic runner hardened; equal-work/public audit pending | `benchmarks/statechainbench/` |
-| M8 — Web UI + Public Release | Fixed synthetic API/client and local browser QA pass; public release pending | `apps/api/`, `apps/web/` |
+| M8 — Web UI + Public Release | Fixed synthetic API/client have local simulated-DOM test coverage; browser/new-user/public release pending | `apps/api/`, `apps/web/` |
 
 ## M0 — Contracts + Lab
 
@@ -91,7 +91,7 @@ namespace, fingerprints, and sibling-isolation tests.
 
 - `adapters/environments/docker_compose/`
 - `packages/worlds/`
-- `tests/integration/worlds/` — explicit live gate; excluded from default tests and not yet run
+- `tests/integration/worlds/` — explicit live synthetic gate; excluded from default tests
 - `.github/workflows/docker-compose-live.yml` — manual observation workflow; not acceptance proof
 
 **Local protocol gate**
@@ -108,9 +108,12 @@ $env:STATEWEAVER_RUN_DOCKER_INTEGRATION = "1"
 uv run pytest -o 'addopts=--strict-config --strict-markers -ra' tests/integration/worlds/test_live_docker_compose.py -m docker_integration -q
 ```
 
-This command has not been run in the retained local verification because Docker is unavailable. The
-test fails rather than skips when explicitly selected without the opt-in. Its code, default
-deselection, or an unrun manual workflow is not a live observation, acceptance artifact, or proof.
+The baseline hosted run first exposed a Compose JSON compatibility defect and failed:
+[run 31306321481](https://github.com/taipei49314/stateweaver/actions/runs/31306321481). The current
+source accepts the closed v2-array and v5-single-object forms, selects Docker Desktop's fixed Linux
+endpoint without loading user Docker configuration, and uses a bounded health timeout that survives
+four concurrent `fsync` imports. A successful exact-merged-SHA hosted rerun is still required; code,
+local output, default deselection, or an older run is not release evidence.
 
 **Exit criterion:** at least four sibling worlds run in parallel without contamination. The strict
 world lifecycle manager, immutable snapshots, namespace uniqueness, timeout/cleanup behavior,
@@ -143,9 +146,12 @@ pending handle/namespace collisions, winner commits during loser cleanup, cross-
 collisions, cleanup quarantine, typed ghost creation, disjoint prepare parallelism,
 failure/cancellation gate release, writer capability checks, and stale-revision rejection. Adapter
 tests add identity-reservation collisions, destroy-versus-waiter revalidation, fork cancellation,
-cross-source restore rejection, and cancellation after destructive restore commits. No Docker host
-was available, so image build/run, genuinely parallel Compose subprocesses, and live cross-world
-contamination checks remain unproved. M2 is therefore **not certified**.
+cross-source restore rejection, and cancellation after destructive restore commits. During
+2026-08-09 development, an ephemeral local diagnostic was observed to complete four sibling
+create/snapshot/restore paths and leave zero `swm2` containers, networks, or volumes. No immutable
+exact-SHA log, artifact inventory, or receipt from that diagnostic is retained in this repository.
+It is therefore not qualification evidence and does not satisfy the real-provider, hosted exact-SHA,
+or independent clean-host gates. M2 is **not certified**.
 
 ## M3 — Security Semantic Twin
 
@@ -157,21 +163,34 @@ state-delta learning, and provenance/fidelity tracking.
 - `packages/twin/`
 - `adapters/source/fastapi_sqlalchemy/`
 - `adapters/telemetry/opentelemetry/`
+- `tests/integration/observation/`
 - `tests/integration/twin/`
 - `tests/integration/pipeline/`
 
 **Acceptance command**
 
 ```powershell
-uv run pytest packages/twin/tests adapters/source/fastapi_sqlalchemy/tests adapters/telemetry/opentelemetry/tests tests/integration/twin -q
+uv run pytest packages/twin/tests adapters/source/fastapi_sqlalchemy/tests adapters/telemetry/opentelemetry/tests tests/integration/observation tests/integration/twin -q
 ```
 
-**Exit criterion:** one real user flow yields a verifiable Transition Fragment. The local synthetic
-integration now executes a real FastAPI route through `TestClient`, extracts the running app's
-OpenAPI/routes and SQLAlchemy metadata, ingests a causally matching OTLP trace and observed state
-delta, and emits an evidence-bound observed `TransitionFragment`. It opens no socket and uses no
-external data. The stated M3 exit flow passes locally; retained release evidence and the formal
-release audit are still pending, so M3 is **implemented but not release-certified**.
+**Exit criterion:** one real user flow yields a verifiable Transition Fragment. The process-local
+`RuntimeObservationController` constructor accepts only an exact `InProcessLabEnvironment`, whose
+import-time-fixed repository FastAPI app and replay service share one `LabState`. It submits one
+existing `ActionEnvelope` through the environment's policy, budget, idempotency, and timeout
+boundary. Before/after capture and one actual socket-free ASGI HTTP lifecycle share the environment
+lock; the canonical server span's route, status, and timing come from that lifecycle, not a second
+service execution. From task creation through receipt commit, public state reads fail closed; a
+timed-out or otherwise uncommitted task quarantines the run until bounded settlement and explicit
+cleanup or reset. The receipt binds action/source/authorization/trace/captures/evidence plus the
+environment-issued execution ID, execution digest, and one-time observation-claim digest. The
+environment owns that claim ledger, so a second controller cannot mint a fresh trusted trace for a
+cached execution. Callers cannot supply app, capture callback, source schema, trace bytes, taint,
+evidence, or before/after values. Substitution, swap, tamper, order, timeout, and secret-like
+attribute controls fail closed. It opens no socket and uses no external data.
+
+That primitive is not yet wired into the 24→4→2→1 materialized search and clean-root compiler
+execution, and it does not create an externally authenticated OTel collector receipt. M3 is
+**partially implemented and not release-certified**.
 
 The horizontal pipeline test adds three socket-free TestClient flows with caller-constructed
 synthetic OTLP and state-delta evidence. Their three resulting `OBSERVED` fragments are preserved
@@ -211,7 +230,8 @@ each candidate is `search_blocked`, or follows `reserved` -> `allocated` -> `cap
 `committed`, or follows `reserved` -> `not_committed`. It is a deterministic audit projection rather
 than operational callback telemetry or a wall-clock transcript. Releasing an uncommitted allocation does not claim
 transactional rollback or reversal of external effects, and the self-contained hash chain provides
-no external freshness attestation. The local 24 → 4 → 2 → 1 synthetic flow passes; real
+no external freshness attestation. The local 24 → 4 → 2 → 1 synthetic flow is implemented and
+covered by a focused test; real
 materialized allocation and retained release evidence are pending, so M4 is **implemented offline,
 not release-certified**.
 
@@ -284,9 +304,11 @@ foundation now has a canonical proof producer and local coherence verifier, incl
 cross-artifact substitution even after manifest hashes are recomputed. The high-level CLI verifier
 also re-executes the installed deterministic foundation and binds its exact semantic output,
 installed source and Oracle bytes, and stable locked runtime dependency bytes. It still does not
-authenticate a producer or prove execution of producer-supplied JUnit by itself. Main-branch CI is
-configured to attest the exact proof manifest with GitHub Actions OIDC, but that trust root is not
-evidence until a public run succeeds and its attestation is retained.
+authenticate a producer or prove execution of producer-supplied JUnit by itself. Main-branch
+[CI run 31239564101](https://github.com/taipei49314/stateweaver/actions/runs/31239564101)
+attested the exact proof manifest for SHA `aa60cad5be43f383810bf2e276307c4f4c9cec10`; constrained
+offline verification matched its signer workflow, source ref/digest, and subject digest. That is
+historical GitHub workflow provenance, not trusted Reality, and it does not qualify later commits.
 
 The core contract now rejects the former bare `replay_run_id + REPRODUCED` promotion path. A
 content-addressed `RealityReplayReceipt` models the necessary input for `REALITY_REPLAYED`, and
@@ -362,14 +384,13 @@ is **a hardened local prototype, not a publishable benchmark or certification**.
 **Architecture deliverables:** a README-led user path to start the lab, run the benchmark, inspect
 the World DAG, and replay a finding.
 
-**Planned paths**
+**Current local paths**
 
 - `apps/api/`
 - `apps/web/`
-- `docs/benchmark/`
 - `tests/e2e/public_release/`
 
-**Planned acceptance command**
+**Local contract command**
 
 ```powershell
 uv run pytest apps/api/tests tests/e2e/public_release -q
@@ -381,17 +402,19 @@ manifest, and run signature before rendering.
 
 **Exit criterion:** a new user can follow only the README to complete the stated lab, benchmark,
 DAG, and replay journey. A localhost-only synthetic API and four-workspace client are implemented.
-API/model closure, browser content-digest substitution tests, all four desktop/mobile routes, the
-World/Twin/Replay interactions, and zero-error browser console checks pass locally. Public hosting,
-the complete external new-user journey, and retained release attestation remain pending, so M8 is
-**locally browser-accepted as a synthetic prototype, not certified**.
+API/model closure and simulated-DOM content-digest substitution/interaction tests exist and are exercised
+by the developer suite; no exact-SHA browser-qualification receipt is retained. The repo has
+no Playwright dependency or reproducible desktop/mobile, keyboard, accessibility, or zero-console
+browser gate. Public hosting, release-asset installation, the complete external new-user journey,
+live-provider use, and retained release attestation remain pending, so M8 is **a local synthetic UI
+prototype, not browser-accepted or certified**.
 
 ## Repository-wide quality gate
 
 ```powershell
 uv run ruff format --check .
 uv run ruff check .
-uv run mypy packages adapters apps labs workflows benchmarks tests
+uv run mypy packages adapters apps labs workflows benchmarks tests tools/candidate
 uv run pytest --cov --cov-report=term-missing
 cd apps/web
 npm run format:check

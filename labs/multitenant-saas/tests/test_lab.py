@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, cast
+import socket
+from typing import Any, Never, cast
 
 import pytest
 from fastapi.testclient import TestClient
@@ -236,6 +237,32 @@ def test_clean_seed_and_reset_are_deterministic() -> None:
         assert first.get("/v1/lab/evidence", headers=ADMIN).json() == {"records": []}
 
 
+def test_vulnerable_and_patched_apps_have_no_process_global_mode_state() -> None:
+    with (
+        TestClient(create_app("vulnerable")) as vulnerable,
+        TestClient(create_app("patched")) as patched,
+    ):
+        patched_initial = patched.get("/v1/lab/state", headers=ADMIN).json()
+
+        assert_setup_succeeded(run_chain_setup(vulnerable))
+        disclosure = vulnerable.get(
+            "/v1/lab/documents/doc-b-protected",
+            headers=OLD_A,
+        )
+        assert disclosure.status_code == 200
+        assert oracle(vulnerable)["violated"] is True
+        assert patched.get("/v1/lab/state", headers=ADMIN).json() == patched_initial
+
+        assert_setup_succeeded(run_chain_setup(patched))
+        blocked = patched.get(
+            "/v1/lab/documents/doc-b-protected",
+            headers=OLD_A,
+        )
+        assert blocked.status_code == 403
+        assert oracle(patched)["violated"] is False
+        assert oracle(vulnerable)["violated"] is True
+
+
 def test_same_plan_has_same_fingerprint() -> None:
     with (
         TestClient(create_app("vulnerable")) as first,
@@ -274,6 +301,23 @@ def test_evidence_and_layered_capture_never_record_bearer_values(
     }
     assert layer_payload["clock"]["mode"] == "controlled"
     assert layer_payload["configuration"]["external_egress_enabled"] is False
+    browser_sessions = layer_payload["browser"]["sessions"]
+    assert browser_sessions
+    assert all(
+        set(session)
+        == {
+            "session_handle",
+            "principal_id",
+            "issued_role",
+            "session_generation",
+            "issued_at",
+            "expires_at",
+            "identity_hash",
+        }
+        for session in browser_sessions
+    )
+    assert all(session["session_handle"].startswith("session-") for session in browser_sessions)
+    assert all(session["identity_hash"].startswith("sha256:") for session in browser_sessions)
     serialized = evidence.text + layers.text
     for bearer in FixtureBearer:
         assert bearer.value not in serialized
@@ -313,7 +357,66 @@ def test_host_header_is_fail_closed(vulnerable_client: TestClient) -> None:
     assert response.status_code == 400
 
 
+def test_local_lab_flow_uses_no_socket_connect_dns_or_wildcard_bind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    forbidden_calls: list[str] = []
+
+    def reject(operation: str) -> Never:
+        forbidden_calls.append(operation)
+        raise AssertionError(f"local in-process lab attempted {operation}")
+
+    def reject_connect(*_args: object, **_kwargs: object) -> None:
+        reject("socket connect")
+
+    def reject_connect_ex(*_args: object, **_kwargs: object) -> int:
+        reject("socket connect_ex")
+
+    def reject_dns(*_args: object, **_kwargs: object) -> object:
+        reject("DNS resolution")
+
+    original_bind = socket.socket.bind
+
+    def reject_wildcard_bind(sock: socket.socket, address: object) -> None:
+        host = address[0] if isinstance(address, tuple) and address else None
+        if host in {"", "0.0.0.0", "::", None}:
+            reject("wildcard bind")
+        original_bind(sock, address)  # type: ignore[arg-type]
+
+    def install_guards(patcher: pytest.MonkeyPatch) -> None:
+        patcher.setattr(socket.socket, "connect", reject_connect)
+        patcher.setattr(socket.socket, "connect_ex", reject_connect_ex)
+        patcher.setattr(socket, "create_connection", reject_connect)
+        patcher.setattr(socket, "getaddrinfo", reject_dns)
+        patcher.setattr(socket, "gethostbyname", reject_dns)
+        patcher.setattr(socket, "gethostbyname_ex", reject_dns)
+        patcher.setattr(socket.socket, "bind", reject_wildcard_bind)
+
+    with monkeypatch.context() as construction_guard:
+        install_guards(construction_guard)
+        app = create_app("vulnerable")
+
+    # Windows TestClient bootstrap needs an internal socketpair for its event loop. Exclude that
+    # harness-only channel, then guard calls made while the app handles the representative flow.
+    with TestClient(app) as client, monkeypatch.context() as flow_guard:
+        install_guards(flow_guard)
+        assert client.get("/healthz").status_code == 200
+        assert_setup_succeeded(run_chain_setup(client))
+        assert (
+            client.get(
+                "/v1/lab/documents/doc-b-protected",
+                headers=OLD_A,
+            ).status_code
+            == 200
+        )
+        assert oracle(client)["violated"] is True
+
+    assert forbidden_calls == []
+
+
 def test_invalid_mode_is_rejected() -> None:
+    with pytest.raises(TypeError, match="mode"):
+        create_app()  # type: ignore[call-arg]
     with pytest.raises(ValueError, match=r"vulnerable.*patched"):
         create_app("unknown")
 
@@ -375,6 +478,14 @@ def test_typed_action_union_rejects_unknown_actions_and_extras() -> None:
                 "action_type": "shell.execute",
                 "actor": FixtureBearer.LAB_ADMIN,
                 "payload": {},
+            }
+        )
+    with pytest.raises(ValidationError):
+        adapter.validate_python(
+            {
+                "action_type": "time.sleep",
+                "actor": FixtureBearer.LAB_ADMIN,
+                "payload": {"seconds": 90},
             }
         )
     with pytest.raises(ValidationError):

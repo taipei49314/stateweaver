@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
+import subprocess
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,7 +17,13 @@ from stateweaver.adapters.docker_compose import (
     DockerComposeEnvironmentAdapter,
     ProcessResult,
 )
-from stateweaver.adapters.docker_compose.runner import SubprocessRunner, require_exact_argv
+from stateweaver.adapters.docker_compose import runner as runner_module
+from stateweaver.adapters.docker_compose.runner import (
+    MAX_PROCESS_STREAM_BYTES,
+    ProcessBoundaryError,
+    SubprocessRunner,
+    require_exact_argv,
+)
 from stateweaver.worlds import CapabilityLevel, EnvironmentHandle, TargetSpec, WorldManager
 
 _IMAGE_ID = f"sha256:{'1' * 64}"
@@ -95,6 +104,7 @@ class FakeRunner:
     retag_on_up: bool = False
     export_override: str | None = None
     ps_override: str | None = None
+    single_object_ps: bool = False
     import_ack_override: str | None = None
     failure_operations: set[tuple[str, ...]] = field(default_factory=set)
     barriers: dict[tuple[str, ...], OperationBarrier] = field(default_factory=dict)
@@ -152,20 +162,17 @@ class FakeRunner:
             if self.ps_override is not None:
                 return ProcessResult(returncode=0, stdout=self.ps_override)
             health = "unhealthy" if self.unhealthy else "healthy"
+            row = {
+                "Service": "synthetic-demo",
+                "Image": _IMAGE,
+                "ID": project.removeprefix("swm2"),
+                "Project": project,
+                "State": "running",
+                "Health": health,
+            }
             return ProcessResult(
                 returncode=0,
-                stdout=json.dumps(
-                    [
-                        {
-                            "Service": "synthetic-demo",
-                            "Image": _IMAGE,
-                            "ID": project.removeprefix("swm2"),
-                            "Project": project,
-                            "State": "running",
-                            "Health": health,
-                        }
-                    ]
-                ),
+                stdout=json.dumps(row if self.single_object_ps else [row]),
             )
         if operation == _EXPORT:
             stdout = self.export_override or _archive(self.states[project])
@@ -190,6 +197,137 @@ class FakeRunner:
 
 def _target() -> TargetSpec:
     return TargetSpec(target_id="synthetic-demo", target_version="1.0.0")
+
+
+class _StaticReader:
+    def __init__(self, content: bytes) -> None:
+        self._content = content
+
+    async def read(self, size: int) -> bytes:
+        result = self._content[:size]
+        self._content = self._content[size:]
+        return result
+
+
+class _ExplodingReader:
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    async def read(self, _size: int) -> bytes:
+        raise self._error
+
+
+class _ExplodingWriter:
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def write(self, _content: bytes) -> None:
+        pass
+
+    async def drain(self) -> None:
+        raise self._error
+
+    def close(self) -> None:
+        pass
+
+    async def wait_closed(self) -> None:
+        pass
+
+
+_NONEXISTENT_TEST_PROCESS_GROUP = 2_000_000_000
+
+
+class _CompletedProcess:
+    stdin = None
+    pid = _NONEXISTENT_TEST_PROCESS_GROUP
+
+    def __init__(self, stdout: bytes, stderr: bytes = b"") -> None:
+        self.returncode: int | None = None
+        self.stdout = _StaticReader(stdout)
+        self.stderr = _StaticReader(stderr)
+
+    async def wait(self) -> int:
+        self.returncode = 0
+        return self.returncode
+
+    def send_signal(self, _signal: int) -> None:
+        self.returncode = 143
+
+    def terminate(self) -> None:
+        self.returncode = 143
+
+    def kill(self) -> None:
+        self.returncode = 137
+
+
+class _BlockingReader:
+    def __init__(self, process: _WaitingProcess) -> None:
+        self._process = process
+
+    async def read(self, _size: int) -> bytes:
+        self._process.reading.set()
+        await self._process.finished.wait()
+        return b""
+
+
+class _WaitingProcess:
+    stdin: _ExplodingWriter | None = None
+    pid = _NONEXISTENT_TEST_PROCESS_GROUP
+
+    def __init__(self, *, lookup_race: bool = False) -> None:
+        self.returncode: int | None = None
+        self.reading = asyncio.Event()
+        self.finished = asyncio.Event()
+        self.terminated = False
+        self.killed = False
+        self.lookup_race = lookup_race
+        self.stdout: _BlockingReader | _StaticReader | _ExplodingReader = _BlockingReader(self)
+        self.stderr: _BlockingReader | _StaticReader | _ExplodingReader = _BlockingReader(self)
+
+    def _finish(self, returncode: int) -> None:
+        self.returncode = returncode
+        self.finished.set()
+
+    def send_signal(self, _signal: int) -> None:
+        self.terminated = True
+        self._finish(0 if self.lookup_race else 143)
+        if self.lookup_race:
+            raise ProcessLookupError
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self._finish(0 if self.lookup_race else 143)
+        if self.lookup_race:
+            raise ProcessLookupError
+
+    def kill(self) -> None:
+        self.killed = True
+        self._finish(137)
+
+    async def wait(self) -> int:
+        await self.finished.wait()
+        assert self.returncode is not None
+        return self.returncode
+
+
+class _ExitedLeaderWithOpenPipes(_WaitingProcess):
+    def __init__(self) -> None:
+        super().__init__()
+        self.returncode = 0
+
+    async def wait(self) -> int:
+        return 0
+
+
+class _ExplodingWaitProcess(_WaitingProcess):
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.stdout = _StaticReader(b"")
+        self.stderr = _StaticReader(b"")
+        self._error = error
+
+    async def wait(self) -> int:
+        raise self._error
 
 
 def test_capabilities_remain_partial_and_world_manager_rejects_promotion() -> None:
@@ -586,6 +724,15 @@ async def test_targets_process_results_and_health_are_strict() -> None:
 
 
 @pytest.mark.asyncio
+async def test_health_accepts_compose_single_object_json() -> None:
+    runner = FakeRunner(single_object_ps=True)
+
+    environment = await DockerComposeEnvironmentAdapter(runner=runner).prepare(_target())
+
+    assert FakeRunner.project(environment) in runner.states
+
+
+@pytest.mark.asyncio
 async def test_import_acknowledgement_rejects_duplicate_keys_and_cleans_child() -> None:
     runner = FakeRunner(
         import_ack_override=('{"accepted":true,"accepted":true,"schema_version":"1.0"}')
@@ -604,49 +751,296 @@ async def test_cancelled_subprocess_is_terminated_and_reaped(
     monkeypatch: pytest.MonkeyPatch,
     lookup_race: bool,
 ) -> None:
-    class WaitingProcess:
-        def __init__(self) -> None:
-            self.returncode: int | None = None
-            self.communicating = asyncio.Event()
-            self.terminated = False
-            self.killed = False
+    process = _WaitingProcess(lookup_race=lookup_race)
 
-        async def communicate(self, input: bytes | None = None) -> tuple[bytes, bytes]:
-            del input
-            self.communicating.set()
-            await asyncio.Event().wait()
-            raise AssertionError("unreachable")
-
-        def terminate(self) -> None:
-            self.terminated = True
-            self.returncode = 0 if lookup_race else 143
-            if lookup_race:
-                raise ProcessLookupError
-
-        def kill(self) -> None:
-            self.killed = True
-            self.returncode = 137
-
-        async def wait(self) -> int:
-            assert self.returncode is not None
-            return self.returncode
-
-    process = WaitingProcess()
-
-    async def create(*args: object, **kwargs: object) -> WaitingProcess:
+    async def create(*args: object, **kwargs: object) -> _WaitingProcess:
         del args, kwargs
         return process
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(runner_module, "_PROCESS_TERMINATION_SECONDS", 0.0)
     task = asyncio.create_task(
         SubprocessRunner().run(("docker", "version", "--format", "{{.Server.Version}}"))
     )
-    await process.communicating.wait()
+    await process.reading.wait()
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
     assert process.terminated is True
-    assert process.killed is False
+    assert process.killed is True
+
+
+@pytest.mark.asyncio
+async def test_subprocess_runner_enforces_deadline_and_reaps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _WaitingProcess()
+
+    async def create(*args: object, **kwargs: object) -> _WaitingProcess:
+        del args, kwargs
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(
+        "stateweaver.adapters.docker_compose.runner.PROCESS_DEADLINE_SECONDS",
+        0.01,
+    )
+    monkeypatch.setattr(runner_module, "_PROCESS_TERMINATION_SECONDS", 0.0)
+
+    with pytest.raises(ProcessBoundaryError, match="process-deadline-exceeded"):
+        await SubprocessRunner().run(("docker", "version", "--format", "{{.Server.Version}}"))
+    assert process.terminated is True
+    assert process.killed is True
+
+
+@pytest.mark.asyncio
+async def test_deadline_signals_group_after_leader_exits_with_open_pipes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _ExitedLeaderWithOpenPipes()
+
+    async def create(*args: object, **kwargs: object) -> _ExitedLeaderWithOpenPipes:
+        del args, kwargs
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(
+        "stateweaver.adapters.docker_compose.runner.PROCESS_DEADLINE_SECONDS",
+        0.01,
+    )
+    monkeypatch.setattr(runner_module, "_PROCESS_TERMINATION_SECONDS", 0.0)
+
+    with pytest.raises(ProcessBoundaryError, match="process-deadline-exceeded"):
+        await SubprocessRunner().run(("docker", "version", "--format", "{{.Server.Version}}"))
+    assert process.terminated is True
+    assert process.killed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_source", ["read", "write", "wait"])
+async def test_unexpected_process_io_failure_aborts_tree_and_preserves_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_source: str,
+) -> None:
+    error = ConnectionAbortedError(f"simulated-{failure_source}-failure")
+    process: _WaitingProcess
+    if failure_source == "wait":
+        process = _ExplodingWaitProcess(error)
+    else:
+        process = _WaitingProcess()
+        if failure_source == "read":
+            process.stdout = _ExplodingReader(error)
+        else:
+            process.stdin = _ExplodingWriter(error)
+
+    async def create(*args: object, **kwargs: object) -> _WaitingProcess:
+        del args, kwargs
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(
+        "stateweaver.adapters.docker_compose.runner._PROCESS_TERMINATION_SECONDS",
+        0.0,
+    )
+    if failure_source == "write":
+        package = Path(__file__).parents[1] / "src/stateweaver/adapters/docker_compose"
+        argv: tuple[str, ...] = (
+            "docker",
+            "compose",
+            "--project-name",
+            f"swm2{'1' * 32}",
+            "--file",
+            str(package / "compose.yaml"),
+            "exec",
+            "--no-TTY",
+            "synthetic-demo",
+            "python",
+            "/opt/stateweaver/state_bridge.py",
+            "import",
+        )
+        stdin = b"{}"
+    else:
+        argv = ("docker", "version", "--format", "{{.Server.Version}}")
+        stdin = None
+
+    with pytest.raises(ConnectionAbortedError, match=f"simulated-{failure_source}-failure"):
+        await SubprocessRunner().run(argv, stdin=stdin)
+    assert process.terminated is True
+    assert process.killed is True
+
+
+def test_windows_taskkill_uses_closed_resolved_system32_argv(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    windows_root = tmp_path / "Windows"
+    taskkill = windows_root / "System32" / "taskkill.exe"
+    taskkill.parent.mkdir(parents=True)
+    taskkill.touch()
+    monkeypatch.setenv("SYSTEMROOT", str(windows_root))
+    monkeypatch.delenv("WINDIR", raising=False)
+    captured: dict[str, object] = {}
+
+    def run(argv: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    resolved = runner_module._resolve_windows_system_binary("taskkill.exe")
+    assert resolved == taskkill.resolve()
+    runner_module._run_windows_taskkill(resolved, 4242)
+
+    assert captured["argv"] == (str(taskkill), "/PID", "4242", "/T", "/F")
+    assert captured["shell"] is False
+    assert captured["cwd"] == str(taskkill.parent)
+    assert captured["stdin"] is subprocess.DEVNULL
+    assert captured["stdout"] is subprocess.DEVNULL
+    assert captured["stderr"] is subprocess.DEVNULL
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert set(environment) == {"PATH", "SYSTEMROOT"}
+    assert environment["PATH"] == str(taskkill.parent)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+async def test_subprocess_runner_caps_each_output_stream_before_return(
+    monkeypatch: pytest.MonkeyPatch,
+    stream: str,
+) -> None:
+    oversized = b"x" * (MAX_PROCESS_STREAM_BYTES + 1)
+    process = _CompletedProcess(
+        oversized if stream == "stdout" else b"",
+        oversized if stream == "stderr" else b"",
+    )
+
+    async def create(*args: object, **kwargs: object) -> _CompletedProcess:
+        del args, kwargs
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    monkeypatch.setattr(runner_module, "_PROCESS_TERMINATION_SECONDS", 0.0)
+
+    with pytest.raises(ProcessBoundaryError, match="process-output-limit-exceeded"):
+        await SubprocessRunner().run(("docker", "version", "--format", "{{.Server.Version}}"))
+
+
+@pytest.mark.asyncio
+async def test_subprocess_runner_uses_fixed_linux_engine_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def create(*args: object, **kwargs: object) -> _CompletedProcess:
+        del args
+        captured.update(kwargs)
+        return _CompletedProcess(b"29.0.0\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+
+    result = await SubprocessRunner().run(("docker", "version", "--format", "{{.Server.Version}}"))
+
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    expected_host = (
+        "npipe:////./pipe/dockerDesktopLinuxEngine"
+        if os.name == "nt"
+        else "unix:///var/run/docker.sock"
+    )
+    assert result.stdout == "29.0.0\n"
+    assert environment["DOCKER_HOST"] == expected_host
+    assert set(environment) <= {"PATH", "DOCKER_HOST", "SYSTEMROOT", "WINDIR"}
+
+
+@pytest.mark.asyncio
+async def test_subprocess_runner_uses_standalone_compose_without_user_config_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def create(*args: object, **kwargs: object) -> _CompletedProcess:
+        captured["argv"] = args
+        captured["env"] = kwargs["env"]
+        captured["cwd"] = kwargs["cwd"]
+        return _CompletedProcess(b"[]\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+    package = Path(__file__).parents[1] / "src/stateweaver/adapters/docker_compose"
+    original = (
+        "docker",
+        "compose",
+        "--project-name",
+        f"swm2{'1' * 32}",
+        "--file",
+        str(package / "compose.yaml"),
+        "ps",
+        "--format",
+        "json",
+    )
+
+    await SubprocessRunner().run(original)
+
+    executed = captured["argv"]
+    assert isinstance(executed, tuple)
+    assert Path(executed[0]).is_absolute()
+    if os.name == "nt":
+        assert Path(executed[0]).name.lower() == "docker-compose.exe"
+        assert executed[1:] == original[2:]
+    else:
+        assert Path(executed[0]).name == "docker"
+        assert executed[1:] == original[1:]
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert "USERPROFILE" not in environment
+    assert "APPDATA" not in environment
+    assert captured.get("cwd") == str(package)
+
+
+@pytest.mark.asyncio
+async def test_subprocess_runner_rejects_relative_executable_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shutil, "which", lambda _name: "relative-tool")
+    runner = SubprocessRunner()
+
+    with pytest.raises(FileNotFoundError, match="trusted docker executable"):
+        await runner.run(("docker", "version", "--format", "{{.Server.Version}}"))
+
+
+@pytest.mark.asyncio
+async def test_subprocess_runner_binds_executable_before_path_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    trusted = tmp_path / ("docker.exe" if os.name == "nt" else "docker")
+    trusted.touch()
+    trusted.chmod(0o755)
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: str(trusted) if name == "docker" else None,
+    )
+    runner = SubprocessRunner()
+    monkeypatch.setenv("PATH", str(tmp_path / "untrusted-later"))
+    captured: dict[str, object] = {}
+
+    async def create(*args: object, **kwargs: object) -> _CompletedProcess:
+        captured["argv"] = args
+        captured.update(kwargs)
+        return _CompletedProcess(b"29.0.0\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+
+    await runner.run(("docker", "version", "--format", "{{.Server.Version}}"))
+
+    argv = captured["argv"]
+    assert isinstance(argv, tuple)
+    assert argv[0] == str(trusted.resolve())
+    environment = captured["env"]
+    assert isinstance(environment, dict)
+    assert str(tmp_path / "untrusted-later") not in environment["PATH"]
 
 
 def test_compose_fixture_is_repository_owned_and_sandboxed() -> None:
@@ -659,6 +1053,7 @@ def test_compose_fixture_is_repository_owned_and_sandboxed() -> None:
     assert "read_only: true" in compose
     assert "cap_drop: [ALL]" in compose
     assert "no-new-privileges:true" in compose
+    assert "timeout: 10s" in compose
     assert "ports:" not in compose
     assert "docker.sock" not in compose
     assert "@sha256:" in dockerfile
