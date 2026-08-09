@@ -335,8 +335,6 @@ def validate_download_command_policy(
             repository_slug,
             "--bundle",
             attestation_bundle,
-            "--signer-repo",
-            repository_slug,
             "--signer-workflow",
             signer_workflow,
             "--signer-digest",

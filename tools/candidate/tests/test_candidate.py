@@ -577,8 +577,6 @@ def _download_records(
                 "stateweaver/stateweaver",
                 "--bundle",
                 bundle.resolve().as_posix(),
-                "--signer-repo",
-                "stateweaver/stateweaver",
                 "--signer-workflow",
                 "github.com/stateweaver/stateweaver/.github/workflows/candidate.yml",
                 "--signer-digest",
