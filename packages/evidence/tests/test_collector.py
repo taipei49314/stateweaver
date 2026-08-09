@@ -313,6 +313,10 @@ def test_rejects_malformed_junit_as_a_safe_evidence_error(tmp_path: Path) -> Non
         ),
         (
             "replay",
+            "packages.evidence.tests.test_acceptance_registry::test_registry_resource_is_canonical_and_exact",
+        ),
+        (
+            "replay",
             "packages.evidence.tests.test_reality_bundle::test_valid_synthetic_bundle_is_a_non_promotable_candidate",
         ),
         (

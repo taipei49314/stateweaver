@@ -90,6 +90,7 @@ _JUNIT_ALLOWED_PREFIXES: dict[str, tuple[str, ...]] = {
         "packages.replay.tests.test_models::",
         "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::",
         "apps.cli.tests.test_foundation::",
+        "packages.evidence.tests.test_acceptance_registry::",
         "packages.evidence.tests.test_collector::",
         "packages.evidence.tests.test_reality_bundle::",
         "packages.evidence.tests.test_semantic_trace::",
