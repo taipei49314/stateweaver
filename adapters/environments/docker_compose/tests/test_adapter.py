@@ -234,9 +234,12 @@ class _ExplodingWriter:
         pass
 
 
+_NONEXISTENT_TEST_PROCESS_GROUP = 2_000_000_000
+
+
 class _CompletedProcess:
     stdin = None
-    pid = 1
+    pid = _NONEXISTENT_TEST_PROCESS_GROUP
 
     def __init__(self, stdout: bytes, stderr: bytes = b"") -> None:
         self.returncode: int | None = None
@@ -269,7 +272,7 @@ class _BlockingReader:
 
 class _WaitingProcess:
     stdin: _ExplodingWriter | None = None
-    pid = 1
+    pid = _NONEXISTENT_TEST_PROCESS_GROUP
 
     def __init__(self, *, lookup_race: bool = False) -> None:
         self.returncode: int | None = None
