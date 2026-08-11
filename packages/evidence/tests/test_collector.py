@@ -76,6 +76,16 @@ LOCAL_REPLAY_IDENTITIES = (
     "packages.search.tests.test_search::test_budget_ledger_is_immutable_and_append_only",
     "packages.search.tests.test_search::"
     "test_model_score_cannot_override_materialization_evidence_gates",
+    "apps.cli.tests.test_materialized_search_qualification::"
+    "test_ghost_batch_is_derived_from_the_exact_m3_observation",
+    "apps.cli.tests.test_materialized_search_qualification::"
+    "test_ghost_scores_change_with_the_admitted_m3_semantic_receipt",
+    "apps.cli.tests.test_materialized_search_qualification::"
+    "test_non_sha_repository_marker_is_rejected_before_docker_execution",
+    "apps.cli.tests.test_materialized_search_qualification::"
+    "test_complete_receipt_conserves_budget_and_never_materializes_the_ghost_set",
+    "apps.cli.tests.test_materialized_search_qualification::"
+    "test_rehashed_stage_substitution_is_rejected",
     "packages.compiler.tests.test_compiler::"
     "test_compiles_three_fragment_minimal_chain_and_replay_plan",
     "tests.integration.compiler.test_clean_room_chain::"

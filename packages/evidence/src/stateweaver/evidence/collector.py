@@ -138,6 +138,16 @@ _M4_IDENTITIES = (
     "packages.search.tests.test_search::test_budget_ledger_is_immutable_and_append_only",
     "packages.search.tests.test_search::"
     "test_model_score_cannot_override_materialization_evidence_gates",
+    "apps.cli.tests.test_materialized_search_qualification::"
+    "test_ghost_batch_is_derived_from_the_exact_m3_observation",
+    "apps.cli.tests.test_materialized_search_qualification::"
+    "test_ghost_scores_change_with_the_admitted_m3_semantic_receipt",
+    "apps.cli.tests.test_materialized_search_qualification::"
+    "test_non_sha_repository_marker_is_rejected_before_docker_execution",
+    "apps.cli.tests.test_materialized_search_qualification::"
+    "test_complete_receipt_conserves_budget_and_never_materializes_the_ghost_set",
+    "apps.cli.tests.test_materialized_search_qualification::"
+    "test_rehashed_stage_substitution_is_rejected",
 )
 _M5_COMPILER_IDENTITY = (
     "packages.compiler.tests.test_compiler::"
@@ -268,6 +278,7 @@ _JUNIT_ALLOWED_PREFIXES: dict[str, tuple[str, ...]] = {
         "packages.replay.tests.test_models::",
         "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::",
         "apps.cli.tests.test_foundation::",
+        "apps.cli.tests.test_materialized_search_qualification::",
         "apps.cli.tests.test_runtime_qualification::",
         "packages.evidence.tests.test_acceptance_registry::",
         "packages.evidence.tests.test_acceptance_results::",
