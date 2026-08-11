@@ -75,14 +75,13 @@ jobs:
       - name: Smoke-test a clean wheel installation
         if: matrix.python-version == '3.13'
         run: |
-          rm -rf .packaging-smoke
-          mkdir -p .packaging-smoke
+          packaging_smoke="${RUNNER_TEMP}/stateweaver-packaging-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           UV_OFFLINE=1 uv export --locked --no-dev --package stateweaver-cli --no-emit-local --no-editable \
             --output-file dist/runtime-requirements.txt
-          uv venv .packaging-smoke
-          uv pip install --python .packaging-smoke/bin/python --require-hashes --no-deps \
+          uv venv "${packaging_smoke}"
+          uv pip install --python "${packaging_smoke}/bin/python" --require-hashes --no-deps \
             -r dist/runtime-requirements.txt
-          uv pip install --python .packaging-smoke/bin/python --no-deps --no-index --find-links dist \
+          uv pip install --python "${packaging_smoke}/bin/python" --no-deps --no-index --find-links dist \
             dist/stateweaver_cli-*.whl \
             dist/stateweaver_adapter_in_process_lab-*.whl \
             dist/stateweaver_contracts-*.whl \
@@ -91,15 +90,15 @@ jobs:
             dist/stateweaver_policy-*.whl \
             dist/stateweaver_replay-*.whl \
             dist/stateweaver_reporting-*.whl
-          uv pip check --python .packaging-smoke/bin/python
-          .packaging-smoke/bin/python -c "from stateweaver.reporting import RealityPublicationManifest"
-          .packaging-smoke/bin/stateweaver --json doctor
-          .packaging-smoke/bin/stateweaver --json foundation verify
+          uv pip check --python "${packaging_smoke}/bin/python"
+          "${packaging_smoke}/bin/python" -c "from stateweaver.reporting import RealityPublicationManifest"
+          "${packaging_smoke}/bin/stateweaver" --json doctor
+          "${packaging_smoke}/bin/stateweaver" --json foundation verify
           qualification_cwd="${RUNNER_TEMP}/stateweaver-package-install-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "${qualification_cwd}"
           (
             cd "${qualification_cwd}"
-            "${GITHUB_WORKSPACE}/.packaging-smoke/bin/stateweaver" \
+            "${packaging_smoke}/bin/stateweaver" \
               foundation qualify-package-install \
               --output "${GITHUB_WORKSPACE}/artifacts/qualification-inputs/m0/package-install.json" \
               --repository-marker "${GITHUB_SHA}" \
@@ -110,6 +109,7 @@ jobs:
         if: matrix.python-version == '3.13'
         run: |
           set -o pipefail
+          packaging_smoke="${RUNNER_TEMP}/stateweaver-packaging-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           uv run stateweaver foundation collect-evidence \
             --output-root artifacts/acceptance/runs \
             --run-id "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
@@ -124,7 +124,7 @@ jobs:
           uv run stateweaver foundation verify-evidence \
             "artifacts/acceptance/runs/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --repository-marker "${GITHUB_SHA}"
-          .packaging-smoke/bin/stateweaver foundation verify-evidence \
+          "${packaging_smoke}/bin/stateweaver" foundation verify-evidence \
             "artifacts/acceptance/runs/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --repository-marker "${GITHUB_SHA}"
 
