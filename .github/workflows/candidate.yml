@@ -296,6 +296,16 @@ jobs:
           uv pip check --python "$proof_env/bin/python"
           proof_run_id="candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           proof_stateweaver="$proof_env/bin/stateweaver"
+          package_install_receipt="$GITHUB_WORKSPACE/artifacts/qualification-inputs/m0/package-install.json"
+          qualification_cwd="$RUNNER_TEMP/stateweaver-candidate-package-install-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -p "$(dirname "$package_install_receipt")" "$qualification_cwd"
+          (
+            cd "$qualification_cwd"
+            "$proof_stateweaver" foundation qualify-package-install \
+              --output "$package_install_receipt" \
+              --repository-marker "$SOURCE_SHA" \
+              --source-root "$GITHUB_WORKSPACE"
+          )
           "$proof_stateweaver" foundation collect-evidence \
             --output-root artifacts/acceptance/runs \
             --run-id "$proof_run_id" \
@@ -305,6 +315,7 @@ jobs:
             --junit-policy artifacts/acceptance/junit/policy.xml \
             --junit-lab artifacts/acceptance/junit/lab.xml \
             --junit-replay artifacts/acceptance/junit/replay.xml \
+            --package-install-receipt "$package_install_receipt" \
             | tee artifacts/acceptance/collection.json
           "$proof_stateweaver" foundation verify-evidence \
             "artifacts/acceptance/runs/$proof_run_id" \

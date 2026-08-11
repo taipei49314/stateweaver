@@ -29,6 +29,24 @@ REPOSITORY_URL = "https://github.com/stateweaver/stateweaver"
 WORKSPACE_PACKAGES = tuple(f"stateweaver-package-{index:02d}" for index in range(1, 19))
 
 
+def test_candidate_proof_includes_clean_wheel_qualification_receipt() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[3] / ".github" / "workflows" / "candidate.yml"
+    ).read_text(encoding="utf-8")
+    step = workflow.split(
+        "      - name: Produce exact-SHA foundation proof from candidate distributions\n", 1
+    )[1].split("\n      - name: ", 1)[0]
+
+    qualifier = '"$proof_stateweaver" foundation qualify-package-install'
+    collector = '"$proof_stateweaver" foundation collect-evidence'
+    assert qualifier in step
+    assert collector in step
+    assert step.index(qualifier) < step.index(collector)
+    assert '--package-install-receipt "$package_install_receipt"' in step
+    assert '--source-root "$GITHUB_WORKSPACE"' in step
+    assert 'qualification_cwd="$RUNNER_TEMP/' in step
+
+
 def test_command_recorder_preserves_symlinked_python_entrypoint(tmp_path: Path) -> None:
     environment = tmp_path / "venv"
     venv.EnvBuilder(with_pip=False, symlinks=True).create(environment)
