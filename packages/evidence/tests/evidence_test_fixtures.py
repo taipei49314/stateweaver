@@ -85,8 +85,102 @@ def _capture(tick: int) -> StateCapture:
     )
 
 
-def root(*, target_version: str = "lab-vulnerable") -> RootSeed:
-    capture = _capture(0)
+def _layered_root_capture(mode: str) -> StateCapture:
+    sessions: list[JsonValue] = [
+        {
+            "session_handle": handle,
+            "principal_id": principal,
+            "issued_role": role,
+            "session_generation": 1,
+            "issued_at": "2025-12-31T23:55:00Z",
+            "expires_at": "2026-01-01T01:00:00Z",
+            "identity_hash": canonical_sha256({"identity": principal, "fixture": handle}),
+        }
+        for handle, principal, role in (
+            ("session-a-old", "principal-a", "editor"),
+            ("session-b-viewer", "principal-b", "viewer"),
+            ("session-lab-admin", "principal-admin", "admin"),
+        )
+    ]
+    artifacts = (
+        StateArtifact.from_payload(
+            layer=CaptureLayer.APPLICATION,
+            payload={
+                "evidence_count": 0,
+                "reference_claimed_by_session_handle": None,
+                "reference_id": "ref-b-to-a",
+                "reference_published": False,
+                "replay_window_closes_at": None,
+                "replay_window_opens_at": None,
+                "retained_session_handles": [],
+                "role_downgraded_at": None,
+                "source_state_fingerprint": canonical_sha256(
+                    {"fixture": "layered-root", "mode": mode}
+                ),
+            },
+        ),
+        StateArtifact.from_payload(
+            layer=CaptureLayer.DATABASE,
+            payload={
+                "document_ownership": [
+                    {"document_id": "doc-a-owned", "tenant_id": "tenant-a"},
+                    {"document_id": "doc-b-protected", "tenant_id": "tenant-b"},
+                ],
+                "policy_generation": 1,
+                "principals": [
+                    {
+                        "principal_id": "principal-a",
+                        "role": "editor",
+                        "tenant_id": "tenant-a",
+                    },
+                    {
+                        "principal_id": "principal-admin",
+                        "role": "admin",
+                        "tenant_id": "platform",
+                    },
+                    {
+                        "principal_id": "principal-b",
+                        "role": "viewer",
+                        "tenant_id": "tenant-b",
+                    },
+                ],
+            },
+        ),
+        StateArtifact.from_payload(layer=CaptureLayer.CACHE, payload={"entry": None}),
+        StateArtifact.from_payload(layer=CaptureLayer.QUEUE, payload={"entry": None}),
+        StateArtifact.from_payload(
+            layer=CaptureLayer.BROWSER,
+            payload={"sessions": sessions},
+        ),
+        StateArtifact.from_payload(
+            layer=CaptureLayer.CONFIGURATION,
+            payload={
+                "arbitrary_actions_enabled": False,
+                "external_egress_enabled": False,
+                "mode": mode,
+                "network_scope": "in-process-only",
+                "seed": "m0-canonical-v1",
+            },
+        ),
+        StateArtifact.from_payload(
+            layer=CaptureLayer.CLOCK,
+            payload={
+                "epoch": "2026-01-01T00:00:00Z",
+                "mode": "controlled",
+                "now": "2026-01-01T00:00:00Z",
+            },
+        ),
+    )
+    return StateCapture.from_artifacts(
+        capture_id=f"capture.root.{mode}",
+        controlled_at=EPOCH,
+        artifacts=artifacts,
+    )
+
+
+def root(*, target_version: str = "lab-vulnerable", layered: bool = False) -> RootSeed:
+    mode = "patched" if target_version == "lab-patched" else "vulnerable"
+    capture = _layered_root_capture(mode) if layered else _capture(0)
     return RootSeed(
         root_seed_id="root.evidence",
         target_version=target_version,
@@ -371,9 +465,9 @@ def policy_record(replay_plan: ReplayPlan, scope_manifest: ScopeManifest) -> dic
     }
 
 
-def foundation() -> dict[str, object]:
+def foundation(*, layered_root: bool = False) -> dict[str, object]:
     canonical_plan = plan()
-    canonical_root = root()
+    canonical_root = root(layered=layered_root)
     scope_manifest = scope()
     attempts = [
         scenario(
@@ -390,7 +484,7 @@ def foundation() -> dict[str, object]:
         name="canonical_patched",
         run_id="run.patched.1",
         replay_plan=canonical_plan,
-        root_seed=root(target_version="lab-patched"),
+        root_seed=root(target_version="lab-patched", layered=layered_root),
         oracle_outcome=OracleOutcome.SATISFIED,
         response_status=403,
         failed=True,

@@ -3,6 +3,11 @@
 Offline M0/M1 proof collection and verification. The collector executes no target and no test
 command: it accepts the typed foundation JSON plus caller-produced JUnit files, validates their
 cross-artifact causal bindings, writes an immutable per-run tree, and hashes every required file.
+It also derives eight M0/M1 qualification receipts from the validated seven-layer root plus exact
+JUnit testcase identities. The verifier independently regenerates those receipts; changing one and
+rehashing the file manifest is insufficient to validate it. M0-C07 is optional and remains
+`NOT_RUN` unless the collector receives a separately produced, valid clean-wheel package-install
+receipt.
 
 Use the repository-level `stateweaver foundation collect-evidence` workflow when available. The
 lower-level `stateweaver-acceptance-evidence verify <run-directory>` command only verifies an

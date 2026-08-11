@@ -132,11 +132,12 @@ uv run stateweaver foundation collect-evidence `
   --junit-contracts $staging/contracts.xml `
   --junit-policy $staging/policy.xml `
   --junit-lab $staging/lab.xml `
-  --junit-replay $staging/replay.xml
+  --junit-replay $staging/replay.xml `
+  --package-install-receipt <clean-wheel-package-install.json>
 uv run stateweaver foundation verify-evidence artifacts/acceptance/runs/<run-id>
 ~~~
 
-JUnit 先寫入 staging，且 `--started-at` 必須在第一個 normative 測試前擷取；因此 bundle 的 run window 同時涵蓋四組 JUnit 與後續 foundation verification。collector 會以 `exist_ok=false` 原子建立最終 run 目錄，拒絕覆寫或混入既有檔案。collector 使用同一次 foundation verification 產生 `source.json`、五次 vulnerable replay、patched replay、negative controls、policy decisions 與所有 derived views；verifier 不只重算 SHA-256，也重新驗證跨檔案的 root／plan／action／Oracle／policy 因果綁定。
+JUnit 先寫入 staging，且 `--started-at` 必須在第一個 normative 測試前擷取；因此 bundle 的 run window 同時涵蓋四組 JUnit 與後續 foundation verification。collector 會以 `exist_ok=false` 原子建立最終 run 目錄，拒絕覆寫或混入既有檔案。collector 使用同一次 foundation verification 產生 `source.json`、五次 vulnerable replay、patched replay、negative controls、policy decisions 與所有 derived views；verifier 不只重算 SHA-256，也重新驗證跨檔案的 root／plan／action／Oracle／policy 因果綁定。M0-C08、M0-L02、M0-L10、M1-R02、M1-R04、M1-R05、M1-R10 與 M1-R11 的 receipt 由已驗證 foundation 與 exact JUnit identity 重建；修改 receipt 後重算 manifest 仍會被拒絕。M0-C07 另要求 clean-wheel 環境執行 `foundation qualify-package-install`，source/editable 安裝不能產生有效 receipt；省略 `--package-install-receipt` 時該列保持 NOT RUN。
 
 若 adapter integration suite 尚未存在，M1 為 NOT RUN，而不是 PASS。測試檔可重構，但下表的 requirement ID、assertion 與 evidence contract 必須保持穩定。
 
@@ -152,8 +153,8 @@ JUnit 先寫入 staging，且 `--started-at` 必須在第一個 normative 測試
 | M0-C04 | Yes | Transition Fragment 明示 preconditions → action → effects → observables → evidence | 缺少任一必要段落拒絕；source 與 evidence/fidelity 一致性受驗證 | contracts.xml；fragment fixture hash | fragment 可被機器解析，不依賴自然語言結論 |
 | M0-C05 | Yes | World Manifest pin root、seed、clock、capability、snapshot、lineage 與 fingerprint | parent/root 關係、tier enum、snapshot reference、status enum 驗證；時間欄位不污染 semantic fingerprint | contracts.xml；兩次 canonical hash 比較 | 相同 semantic input 得到相同 fingerprint |
 | M0-C06 | Yes | OracleResult 包含 invariant、result、observed、evidence 與 deterministic flag | 支援至少 SATISFIED／VIOLATED；deterministic=true 時缺 evidence 或 machine-readable observation 必須拒絕 | contracts.xml；OracleResult fixtures | Oracle 結果不需要 LLM 欄位或模型呼叫 |
-| M0-C07 | Yes | Public import surface 穩定 | 由 stateweaver.contracts 匯入 M0 六種契約；package-local tests 在乾淨環境可執行 | contracts.xml；package install log | 不需從 adapter 或 app 私有模組匯入 domain contract |
-| M0-C08 | Yes | Canonicalization 對 key order 與非語意 metadata 穩定 | property test 隨機改變 mapping order、產生時間與展示 label；semantic hash 不變；語意欄位變更時 hash 必變 | contracts.xml；property seed | 100 個以上生成案例無碰撞或漂移 |
+| M0-C07 | Yes | Public import surface 穩定 | 由 stateweaver.contracts 匯入 M0 六種契約；package-local tests 在乾淨環境可執行 | contracts.xml；`qualification/m0/package-install.json` | 不需從 adapter 或 app 私有模組匯入 domain contract |
+| M0-C08 | Yes | Canonicalization 對 key order 與非語意 metadata 穩定 | property test 隨機改變 mapping order、產生時間與展示 label；semantic hash 不變；語意欄位變更時 hash 必變 | contracts.xml；`qualification/m0/property-seed.json` | 100 個以上生成案例無碰撞或漂移 |
 
 ### 5.2 合成多租戶 SaaS Lab
 

@@ -5,7 +5,7 @@ from math import inf, nan
 from string import ascii_lowercase, digits
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import given, seed, settings
 from hypothesis import strategies as st
 from stateweaver.contracts import (
     CanonicalSecurityState,
@@ -121,6 +121,7 @@ safe_token = st.builds(
 
 
 @settings(max_examples=150, deadline=None)
+@seed(982341)
 @given(
     principal_names=st.lists(safe_token, min_size=1, max_size=10, unique=True),
     tenant_names=st.lists(safe_token, min_size=1, max_size=8, unique=True),
@@ -155,6 +156,7 @@ def test_fingerprint_property_is_permutation_invariant(
 
 
 @settings(max_examples=150, deadline=None)
+@seed(982341)
 @given(
     generation=st.integers(min_value=0, max_value=2**31 - 2),
     delta=st.integers(min_value=1, max_value=10_000),

@@ -66,7 +66,7 @@ Architecture baseline v1 ships milestone-by-milestone. Current implementation an
 
 | Area | Honest status |
 |---|---|
-| M0/M1 foundation proof | Synthetic proof and canonical 92-row registry exist; each proof now derives a manifest-bound row ledger, while unresolved and external rows remain `NOT_RUN` or `BLOCKED` |
+| M0/M1 foundation proof | Synthetic proof and canonical 92-row registry exist; CI derives manifest-bound local qualification receipts and admits M0-C07 only from a clean wheel installation, while unresolved and external rows remain `NOT_RUN` or `BLOCKED` |
 | M2 world engine | Archive + lifecycle gates exist; ephemeral local synthetic Docker diagnostic only; **no** retained qualification or real-provider proof |
 | M3 semantic twin | Runtime-derived process-local observation primitive exists; M4/M5 integration remains pending |
 | M4 offline search | 24 → 4 → 2 → 1 flow preserves the observed candidate |
