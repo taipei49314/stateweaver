@@ -57,10 +57,11 @@ acceptance collector can derive 58 `PASS` rows from exact passing JUnit identiti
 bindings, a clean-wheel package-install receipt, a separately reproduced M3 runtime-observation
 receipt, and seven non-promotable M3–M7 implementation receipts. It keeps the remaining 34 rows
 `BLOCKED`; these developer checks are not a complete release qualification. The hosted Docker
-workflow retains an exact-SHA synthetic diagnostic with zero managed residue. A separate
-real-provider adapter and four-sibling gate now exercise PostgreSQL, Redis, RabbitMQ, Chromium
-session state, filesystem state, and a controlled clock locally; exact-merged-SHA hosted admission
-is still pending. Trusted broker,
+workflow retains exact-SHA synthetic and six-provider M2 diagnostics with zero managed residue.
+M4 now derives 24 Ghost candidates from the admitted M3 observation, materializes only the
+4-to-2-to-1 promoted subset in those fixed real-provider worlds, and retains a conserved-ledger,
+machine-oracle, winner, and cleanup receipt. The local live M4 gate passes; exact-merged-SHA hosted
+M4 artifact read-back is still pending. Trusted broker,
 independently measured equal-work benchmark,
 independent new-user, and clean-machine certification remain intentionally unclaimed. No PyPI
 package or versioned GitHub Release is offered yet.
@@ -75,7 +76,7 @@ Architecture baseline v1 ships milestone-by-milestone. Current implementation an
 | M0/M1 foundation proof | Synthetic proof and canonical 92-row registry exist; CI derives manifest-bound receipts and admits M0-C07 only from a clean wheel installation |
 | M2 world engine | Six-provider adapter and four-sibling capture/mutate/restore gate pass locally; exact-merged-SHA hosted qualification is pending |
 | M3 semantic twin | Clean-wheel runtime execution binds the repo-owned ASGI lifecycle, source, authorization, trace, captures, state delta, evidence, and one `OBSERVED` fragment; five M3 runtime rows are admitted only after independent semantic re-execution |
-| M4 offline search | Proof-bound 24 → 4 → 2 → 1 local flow preserves the observed candidate; materialized exit blocked |
+| M4 tiered search | M3-derived 24-to-4-to-2-to-1 flow has a production six-provider materializer, seven bound provider receipts, peak-live cap four, and zero-residue local gate; hosted exact-SHA read-back pending |
 | M5 chain compiler | Proof-bound compiler and authorized synthetic clean-root replay; materialized exit blocked |
 | M6 reality receipt | Proof-bound non-promotable synthetic candidate; **no** trusted broker / clean-machine M6 cert |
 | M7 StateChainBench | Proof-bound deterministic built-in runner — not an independently measured equal-work benchmark |
@@ -100,7 +101,7 @@ Full matrices: [docs/architecture/TRACEABILITY.md](docs/architecture/TRACEABILIT
 | M1 Deterministic Replay | Five-run clean-root differential is implemented; formal qualification pending | `packages/replay/`, `apps/cli/` |
 | M2 World Engine | Synthetic diagnostics plus a six-provider materialized path pass locally; hosted receipt admission remains pending | `packages/worlds/`, `tests/integration/worlds/`, `RealDockerComposeEnvironmentAdapter` |
 | M3 Semantic Twin | Application lifecycle, emitted trace, runtime captures, state delta, evidence, and `OBSERVED` fragment are bound in a reproducible clean-wheel receipt; M4/M5 materialization remains separate | `packages/twin/`, `adapters/telemetry/opentelemetry/`, `packages/evidence/src/stateweaver/evidence/runtime_observation.py`, `apps/cli/src/stateweaver/cli/runtime_qualification.py` |
-| M4 Search | Offline 24 → 4 → 2 → 1 flow preserves the observed candidate | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
+| M4 Search | Exactly 24 Ghost evaluations admit only 4, 2, and 1 real six-provider siblings; budget, provider-oracle, winner, and cleanup bindings are retained | `packages/search/`, `workflows/world/`, `apps/cli/src/stateweaver/cli/materialized_search_qualification.py`, `tests/integration/worlds/test_live_materialized_search.py` |
 | M5 Chain Compiler | Three observed fragments cross the admission bridge; synthetic replay closure hardened | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
 | M6 Reality + Proof | V2 event reconstruction + traceable publication candidate exist; trusted broker absent | `packages/contracts/`, `packages/evidence/`, `packages/reporting/`, `tests/e2e/proof_bundle/` |
 | M7 StateChainBench | Trusted built-in synthetic runner hardened; not equal-work or public-certified | `benchmarks/statechainbench/` |
@@ -122,6 +123,7 @@ uv sync --all-packages --group dev --locked
 uv run stateweaver --json doctor
 uv run stateweaver --json foundation verify
 uv run stateweaver foundation collect-evidence --help
+uv run stateweaver foundation qualify-materialized-search --help
 ```
 
 The read-only synthetic public workspace runs on two fixed loopback ports:

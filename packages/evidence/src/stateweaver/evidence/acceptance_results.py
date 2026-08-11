@@ -25,7 +25,7 @@ from .acceptance_registry import (
 
 REGISTRY_CLOSURE_SCHEMA_VERSION = "stateweaver-acceptance-registry-closure-v1"
 ACCEPTANCE_RESULTS_SCHEMA_VERSION = "stateweaver-acceptance-results-v2"
-EXPECTED_ACCEPTANCE_SELECTOR_COUNT = 65
+EXPECTED_ACCEPTANCE_SELECTOR_COUNT = 66
 
 _LOCAL_RESULT_GATES = frozenset({GateClass.LOCAL_OFFLINE, GateClass.LOCAL_IN_PROCESS})
 _PATH_PART_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")

@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from threading import Lock
@@ -26,6 +28,7 @@ from stateweaver.worlds import (
 )
 
 from .errors import ComposeAdapterError, ComposeUnavailableError
+from .materialization import MaterializedCandidateRequest, MaterializedProviderReceipt
 from .runner import (
     MAX_PROCESS_STREAM_BYTES,
     MAX_STATE_ARCHIVE_BYTES,
@@ -272,6 +275,66 @@ class _FixedDockerComposeEnvironmentAdapter:
                 await self._assert_project_clean(live.project)
             if not self._discard_live(live):
                 raise ComposeAdapterError("environment ownership changed during destroy")
+
+    async def _materialize_observed_candidate(
+        self,
+        env: EnvironmentHandle,
+        request: MaterializedCandidateRequest,
+    ) -> MaterializedProviderReceipt:
+        if self._profile is not _REAL_PROFILE:
+            raise ComposeAdapterError("M4 materialization requires the fixed real-provider profile")
+        try:
+            closed_request = MaterializedCandidateRequest.model_validate(
+                request.model_dump(mode="python")
+            )
+        except (AttributeError, TypeError, ValueError):
+            raise ComposeAdapterError("materialization request is invalid") from None
+        live = self._require_live(env)
+        async with live.operation_lock:
+            live = self._require_same_live(env, live)
+            await self._health(live.project, expected_image_identity=live.image_identity)
+            before_archive, before = await self._export_state(live)
+            _require_materialized_archive(before_archive, marker="baseline", tick=0)
+            payload = json.dumps(
+                {"marker": closed_request.marker, "tick": closed_request.tick},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            started_ns = time.perf_counter_ns()
+            result = await self._compose(
+                live.project,
+                *self._profile.state_bridge,
+                "mutate",
+                stdin=payload,
+            )
+            elapsed_ns = time.perf_counter_ns() - started_ns
+            try:
+                acknowledgement = json.loads(
+                    result.stdout,
+                    object_pairs_hook=_unique_object,
+                    parse_constant=_reject_json_constant,
+                )
+            except (json.JSONDecodeError, ValueError):
+                raise ComposeAdapterError("fixed candidate mutation response is invalid") from None
+            if acknowledgement != {"accepted": True, "schema_version": "2.0"}:
+                raise ComposeAdapterError("fixed candidate mutation was not acknowledged")
+            await self._health(live.project, expected_image_identity=live.image_identity)
+            after_archive, after = await self._export_state(live)
+            _require_materialized_archive(
+                after_archive,
+                marker=closed_request.marker,
+                tick=closed_request.tick,
+            )
+            try:
+                return MaterializedProviderReceipt.create(
+                    request=closed_request,
+                    environment_id=live.handle.environment_id,
+                    before=before,
+                    after=after,
+                    elapsed_ns=elapsed_ns,
+                )
+            except ValueError:
+                raise ComposeAdapterError("materialized provider oracle failed") from None
 
     async def _create_world(
         self,
@@ -636,6 +699,15 @@ class RealDockerComposeEnvironmentAdapter(_FixedDockerComposeEnvironmentAdapter)
     def __init__(self, *, runner: ProcessRunner | None = None) -> None:
         super().__init__(profile=_REAL_PROFILE, runner=runner)
 
+    async def materialize_observed_candidate(
+        self,
+        env: EnvironmentHandle,
+        request: MaterializedCandidateRequest,
+    ) -> MaterializedProviderReceipt:
+        """Apply one fixed request and atomically attest six provider changes."""
+
+        return await self._materialize_observed_candidate(env, request)
+
 
 @dataclass(frozen=True)
 class _LiveWorld:
@@ -728,3 +800,34 @@ def _hash(value: object) -> str:
         "utf-8"
     )
     return f"sha256:{sha256(encoded).hexdigest()}"
+
+
+def _require_materialized_archive(archive: bytes, *, marker: str, tick: int) -> None:
+    """Require the exact six-provider semantic state promised by an M4 mutation."""
+
+    try:
+        document = json.loads(
+            archive,
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        raise ComposeAdapterError("materialized provider oracle failed") from None
+    expected_clock = (
+        (datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=tick))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
+    expected = {
+        "cache": {"entries": {"sw:marker": marker}},
+        "clock": {"iso8601": expected_clock, "tick": tick},
+        "database": {"rows": [{"id": 1, "tenant": "alpha", "value": marker}]},
+        "filesystem": {"files": {"marker.txt": marker, "tenant.txt": "alpha"}},
+        "queue": {"messages": [marker]},
+        "session": {
+            "cookies": [{"name": "sw_marker", "path": "/", "value": marker}],
+            "local_storage": {"sw.marker": marker},
+        },
+    }
+    if not isinstance(document, dict) or document.get("components") != expected:
+        raise ComposeAdapterError("materialized provider oracle failed")

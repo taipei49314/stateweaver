@@ -10,13 +10,19 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
+  "pydantic>=2.12,<3",
+  "stateweaver-adapter-docker-compose==0.1.0",
   "stateweaver-adapter-in-process-lab==0.1.0",
   "stateweaver-adapter-opentelemetry==0.1.0",
+  "stateweaver-compiler==0.1.0",
   "stateweaver-contracts==0.1.0",
   "stateweaver-evidence==0.1.0",
   "stateweaver-policy==0.1.0",
   "stateweaver-replay==0.1.0",
+  "stateweaver-search==0.1.0",
   "stateweaver-twin==0.1.0",
+  "stateweaver-world-workflow==0.1.0",
+  "stateweaver-worlds==0.1.0",
 ]
 
 [project.scripts]
@@ -26,13 +32,18 @@ stateweaver = "stateweaver.cli.__main__:main"
 packages = ["src/stateweaver"]
 
 [tool.uv.sources]
+stateweaver-adapter-docker-compose = { workspace = true }
 stateweaver-adapter-in-process-lab = { workspace = true }
 stateweaver-adapter-opentelemetry = { workspace = true }
+stateweaver-compiler = { workspace = true }
 stateweaver-contracts = { workspace = true }
 stateweaver-evidence = { workspace = true }
 stateweaver-policy = { workspace = true }
 stateweaver-replay = { workspace = true }
+stateweaver-search = { workspace = true }
 stateweaver-twin = { workspace = true }
+stateweaver-world-workflow = { workspace = true }
+stateweaver-worlds = { workspace = true }
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers -ra"
@@ -40,9 +51,14 @@ testpaths = ["tests"]
 pythonpath = [
   "src",
   "../../packages/contracts/src",
+  "../../packages/compiler/src",
   "../../packages/evidence/src",
   "../../packages/policy/src",
   "../../packages/replay/src",
+  "../../packages/search/src",
+  "../../packages/worlds/src",
+  "../../workflows/world/src",
+  "../../adapters/environments/docker_compose/src",
   "../../adapters/environments/in_process_lab/src",
   "../../adapters/telemetry/opentelemetry/src",
   "../../packages/twin/src",

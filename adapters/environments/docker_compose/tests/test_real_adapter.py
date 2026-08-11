@@ -3,16 +3,19 @@ from __future__ import annotations
 import json
 from copy import deepcopy
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from stateweaver.adapters.docker_compose import (
     ComposeAdapterError,
+    MaterializedCandidateRequest,
     ProcessResult,
     RealDockerComposeEnvironmentAdapter,
 )
 from stateweaver.adapters.docker_compose import runner as runner_module
 from stateweaver.adapters.docker_compose.runner import require_exact_argv
+from stateweaver.contracts import WorldTier, sha256_digest
 from stateweaver.worlds import CapabilityLevel, EnvironmentHandle, TargetSpec
 
 _IMAGE_ID = f"sha256:{'4' * 64}"
@@ -27,6 +30,11 @@ _BRIDGE = (
 
 
 def _components(marker: str = "baseline", *, tick: int = 0) -> dict[str, object]:
+    timestamp = (
+        (datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=tick))
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
     return {
         "filesystem": {"files": {"marker.txt": marker, "tenant.txt": "alpha"}},
         "database": {"rows": [{"id": 1, "tenant": "alpha", "value": marker}]},
@@ -36,7 +44,7 @@ def _components(marker: str = "baseline", *, tick: int = 0) -> dict[str, object]
             "cookies": [{"name": "sw_marker", "path": "/", "value": marker}],
             "local_storage": {"sw.marker": marker},
         },
-        "clock": {"iso8601": f"2026-01-01T00:00:{tick:02d}Z", "tick": tick},
+        "clock": {"iso8601": timestamp, "tick": tick},
     }
 
 
@@ -59,6 +67,7 @@ class _RealRunner:
     calls: list[tuple[tuple[str, ...], bytes | None]] = field(default_factory=list)
     image_id: str = _IMAGE_ID
     cleanup_residue: bool = False
+    unchanged_provider: str | None = None
 
     async def run(
         self,
@@ -114,6 +123,18 @@ class _RealRunner:
             assert stdin is not None
             value = json.loads(stdin)
             self.states[project] = deepcopy(value["components"])
+            return ProcessResult(
+                returncode=0,
+                stdout='{"accepted":true,"schema_version":"2.0"}',
+            )
+        if operation == (*_BRIDGE, "mutate"):
+            assert stdin is not None
+            request = json.loads(stdin)
+            before = deepcopy(self.states[project])
+            changed = _components(request["marker"], tick=request["tick"])
+            if self.unchanged_provider is not None:
+                changed[self.unchanged_provider] = before[self.unchanged_provider]
+            self.states[project] = changed
             return ProcessResult(
                 returncode=0,
                 stdout='{"accepted":true,"schema_version":"2.0"}',
@@ -242,6 +263,74 @@ async def test_real_profile_snapshots_forks_restores_and_destroys_all_components
     await adapter.destroy(root)
     assert runner.states == {}
     assert runner.running == {}
+
+
+@pytest.mark.asyncio
+async def test_real_profile_materializes_one_closed_observed_candidate() -> None:
+    runner = _RealRunner()
+    adapter = RealDockerComposeEnvironmentAdapter(runner=runner)
+    root = await adapter.prepare(_target())
+    root_snapshot = await adapter.snapshot(root)
+    child = await adapter.fork(root_snapshot)
+    request = MaterializedCandidateRequest(
+        allocation_id="allocation.m4.replay.aaaaaaaaaaaaaaaa.23",
+        candidate_id="candidate.m4.aaaaaaaaaaaaaaaa.23",
+        source_tier=WorldTier.GHOST,
+        target_tier=WorldTier.REPLAY,
+        candidate_fingerprint=sha256_digest({"candidate": 23}),
+        observed_transition_digest=sha256_digest({"transition": "observed"}),
+        evidence_ref="evidence.m3.observed",
+        oracle_ref="oracle.m4.provider-delta.aaaaaaaaaaaaaaaa.23",
+        ordinal=23,
+    )
+
+    receipt = await adapter.materialize_observed_candidate(child, request)
+
+    assert receipt.environment_id == child.environment_id
+    assert receipt.request_digest == sha256_digest(request)
+    assert receipt.oracle_passed is True
+    assert receipt.changed_provider_count == 6
+    assert {item.provider for item in receipt.providers} == {
+        "filesystem",
+        "database",
+        "cache",
+        "queue",
+        "session",
+        "clock",
+    }
+    assert all(item.before_sha256 != item.after_sha256 for item in receipt.providers)
+    assert receipt.provider_state_digest == sha256_digest(
+        {item.provider: item.after_sha256 for item in receipt.providers}
+    )
+
+    await adapter.destroy(child)
+    await adapter.destroy(root)
+
+
+@pytest.mark.asyncio
+async def test_materialization_fails_closed_when_any_provider_did_not_change() -> None:
+    runner = _RealRunner(unchanged_provider="queue")
+    adapter = RealDockerComposeEnvironmentAdapter(runner=runner)
+    root = await adapter.prepare(_target())
+    root_snapshot = await adapter.snapshot(root)
+    child = await adapter.fork(root_snapshot)
+    request = MaterializedCandidateRequest(
+        allocation_id="allocation.m4.replay.aaaaaaaaaaaaaaaa.22",
+        candidate_id="candidate.m4.aaaaaaaaaaaaaaaa.22",
+        source_tier=WorldTier.GHOST,
+        target_tier=WorldTier.REPLAY,
+        candidate_fingerprint=sha256_digest({"candidate": 22}),
+        observed_transition_digest=sha256_digest({"transition": "observed"}),
+        evidence_ref="evidence.m3.observed",
+        oracle_ref="oracle.m4.provider-delta.aaaaaaaaaaaaaaaa.22",
+        ordinal=22,
+    )
+
+    with pytest.raises(ComposeAdapterError, match="provider oracle"):
+        await adapter.materialize_observed_candidate(child, request)
+
+    await adapter.destroy(child)
+    await adapter.destroy(root)
 
 
 @pytest.mark.asyncio

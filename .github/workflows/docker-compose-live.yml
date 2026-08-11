@@ -111,6 +111,19 @@ jobs:
             --junitxml=artifacts/m2-live/real-provider-junit.xml \
             -q
 
+      - name: Run the M3-derived M4 materialized search
+        env:
+          STATEWEAVER_M4_REPOSITORY_MARKER: ${{ github.sha }}
+          STATEWEAVER_RUN_REAL_DOCKER_INTEGRATION: "1"
+        run: |
+          mkdir -p artifacts/m4-live
+          uv run pytest \
+            -o 'addopts=--strict-config --strict-markers -ra' \
+            tests/integration/worlds/test_live_materialized_search.py \
+            -m docker_integration \
+            --junitxml=artifacts/m4-live/junit.xml \
+            -q
+
       - name: Record and enforce cleanup inventory
         if: always()
         run: |
@@ -144,5 +157,14 @@ jobs:
         with:
           name: docker-compose-live-observation-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/m2-live
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Retain the M4 materialized-search receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m4-materialized-search-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/m4-live
           if-no-files-found: error
           retention-days: 30

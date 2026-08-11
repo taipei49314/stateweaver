@@ -42,7 +42,17 @@ uv run pytest -o 'addopts=--strict-config --strict-markers -ra' tests/integratio
 
 $env:STATEWEAVER_RUN_REAL_DOCKER_INTEGRATION = "1"
 uv run pytest -o 'addopts=--strict-config --strict-markers -ra' tests/integration/worlds/test_live_real_providers.py -m docker_integration -q
+
+$env:STATEWEAVER_M4_REPOSITORY_MARKER = (git rev-parse HEAD)
+uv run pytest -o 'addopts=--strict-config --strict-markers -ra' tests/integration/worlds/test_live_materialized_search.py -m docker_integration -q
 ```
+
+The M4 path accepts no provider command or mutation body. A closed request binds the candidate,
+source/target tier, observed M3 transition, evidence, oracle, ordinal, and allocation; the adapter
+derives its own marker and controlled tick. It captures before and after state under one world lock
+and issues a receipt only if all six provider semantic digests changed. The 24 Ghost candidates are
+never allocated; only the 4, 2, and 1 promoted candidates are forked, with a peak of four live
+allocations and explicit zero-residue cleanup.
 
 On 2026-08-11 the current development tree completed all four real-provider paths locally (`4 passed
 in 437.75s`) and returned the complete `swm2` container/network/volume inventory to empty after the
