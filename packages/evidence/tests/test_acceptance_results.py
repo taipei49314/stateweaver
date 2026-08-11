@@ -54,6 +54,40 @@ def test_nonlocal_gate_stays_blocked_even_when_declared_inputs_are_present() -> 
     assert row.tests_missing == ()
     assert row.evidence_missing == ()
     assert row.status == "BLOCKED"
+    assert row.qualification_admission_digest is None
+
+
+def test_nonlocal_gate_pass_requires_complete_inputs_and_verified_admission() -> None:
+    digest = "sha256:" + "d" * 64
+    selector = (
+        "tests.integration.observation.test_runtime_observation::"
+        "test_controller_issues_trace_and_derives_state_delta_from_authorized_lab_action"
+    )
+    results = derive_acceptance_results(
+        load_acceptance_registry(),
+        passing_test_identities=(selector,),
+        observed_evidence_paths=("qualification/m3/runtime-observation-receipt.json",),
+        verified_admission_digests={"M3-T03": digest},
+    )
+    row = _by_id(results, "M3-T03")
+
+    assert row.status == "PASS"
+    assert row.qualification_admission_digest == digest
+
+    with pytest.raises(AcceptanceResultsError, match="complete proof inputs"):
+        derive_acceptance_results(
+            load_acceptance_registry(),
+            passing_test_identities=(),
+            observed_evidence_paths=(),
+            verified_admission_digests={"M3-T03": digest},
+        )
+    with pytest.raises(AcceptanceResultsError, match="admissions are invalid"):
+        derive_acceptance_results(
+            load_acceptance_registry(),
+            passing_test_identities=(),
+            observed_evidence_paths=(),
+            verified_admission_digests={"M0-C01": digest},
+        )
 
 
 def test_closure_rejects_selector_count_tampering() -> None:

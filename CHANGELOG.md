@@ -15,6 +15,11 @@ All notable changes are recorded here. The project has no published tag or GitHu
 - Seven registry-bound, non-promotable local-deliverable receipts covering 22 repo-controlled
   M3–M7 rows, with exact JUnit and source bindings and explicit exit-criterion limitations.
 - A process-local runtime observation controller that issues its own trace and derives state deltas.
+- A clean-wheel M3 qualification producer that binds the repo-owned ASGI lifecycle, authorization,
+  trace, captures, evidence-derived delta and `OBSERVED` fragment, plus independent semantic
+  re-execution during collection and verification.
+- Fail-closed non-local result admissions: the M3 receipt digest promotes exactly five runtime
+  rows, yielding 58 `PASS` / 34 `BLOCKED` only when every declared test and evidence input exists.
 - Candidate payload, checksum, SBOM, receipt, reproducibility, and fresh-downloader tooling.
 - A historical fresh-clone narrative snapshot and explicit qualification blocker records.
 
@@ -26,6 +31,7 @@ All notable changes are recorded here. The project has no published tag or GitHu
 - Vitest worker startup portability on Windows/constrained runners.
 - The transitive `nanoid` advisory reported by the baseline lockfile.
 - Stale proof-attestation and closure documentation.
+- Mutable-proof replacement during M3 independent re-execution now invalidates the final snapshot.
 
 ### Security
 

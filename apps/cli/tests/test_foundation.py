@@ -6,6 +6,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 import pytest
+from stateweaver.evidence import RuntimeObservationQualificationReceipt
 from stateweaver.evidence.collector import _JUNIT_REQUIRED_IDENTITIES
 from stateweaver.replay import ReplayPlan, ReplayRunResult, RootSeed, canonical_sha256
 
@@ -17,6 +18,7 @@ from stateweaver.cli.network_guard import (
     NetworkEgressDenied,
     deny_network_egress,
 )
+from stateweaver.cli.runtime_qualification import qualify_runtime_observation
 
 
 def test_foundation_verification_meets_all_acceptance_conditions() -> None:
@@ -177,9 +179,7 @@ def test_package_install_qualification_rejects_workspace_source_environment(
     assert not output.exists()
 
 
-def test_console_collects_and_rechecks_causally_bound_evidence(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def _required_junit_paths(tmp_path: Path) -> dict[str, Path]:
     required_identities = {
         name: tuple(sorted(identities)) for name, identities in _JUNIT_REQUIRED_IDENTITIES.items()
     }
@@ -197,6 +197,13 @@ def test_console_collects_and_rechecks_causally_bound_evidence(
             encoding="utf-8",
         )
         junit_paths[name] = path
+    return junit_paths
+
+
+def test_console_collects_and_rechecks_causally_bound_evidence(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    junit_paths = _required_junit_paths(tmp_path)
 
     run_id = "cli-proof.1"
     output_root = tmp_path / "evidence"
@@ -235,6 +242,123 @@ def test_console_collects_and_rechecks_causally_bound_evidence(
     assert verification["errors"] == []
     assert verification["valid"] is True
     assert verification["snapshot_sha256"].startswith("sha256:")
+
+
+def test_console_collects_and_independently_reexecutes_runtime_observation(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = "d" * 40
+    runtime_receipt = tmp_path / "runtime-observation.json"
+    assert (
+        main(
+            [
+                "foundation",
+                "qualify-runtime-observation",
+                "--repository-marker",
+                marker,
+                "--output",
+                str(runtime_receipt),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    junit_paths = _required_junit_paths(tmp_path)
+    run_id = "cli-runtime-proof.1"
+    output_root = tmp_path / "evidence"
+
+    assert (
+        main(
+            [
+                "foundation",
+                "collect-evidence",
+                "--output-root",
+                str(output_root),
+                "--run-id",
+                run_id,
+                "--repository-marker",
+                marker,
+                "--started-at",
+                "2026-01-01T00:00:00Z",
+                "--junit-contracts",
+                str(junit_paths["contracts"]),
+                "--junit-policy",
+                str(junit_paths["policy"]),
+                "--junit-lab",
+                str(junit_paths["lab"]),
+                "--junit-replay",
+                str(junit_paths["replay"]),
+                "--runtime-observation-receipt",
+                str(runtime_receipt),
+            ]
+        )
+        == 0
+    )
+    collection = json.loads(capsys.readouterr().out)
+    assert collection["collected"] is True
+
+    run_directory = output_root / run_id
+    assert (
+        main(
+            [
+                "foundation",
+                "verify-evidence",
+                str(run_directory),
+                "--repository-marker",
+                marker,
+            ]
+        )
+        == 0
+    )
+    verification = json.loads(capsys.readouterr().out)
+    results = json.loads(
+        (run_directory / "qualification" / "registry" / "results.json").read_text(encoding="utf-8")
+    )
+
+    assert verification["valid"] is True
+    assert results["summary"] == {
+        "blocked": 34,
+        "failed": 0,
+        "not_run": 15,
+        "passed": 43,
+        "required": 92,
+    }
+
+    original_qualifier = qualify_runtime_observation
+
+    def mutate_during_reexecution(
+        repository_marker: str,
+    ) -> RuntimeObservationQualificationReceipt:
+        reproduced = original_qualifier(repository_marker)
+        replay_junit = run_directory / "junit" / "replay.xml"
+        replay_junit.write_bytes(replay_junit.read_bytes() + b" ")
+        return reproduced
+
+    monkeypatch.setattr(
+        cli_evidence,
+        "qualify_runtime_observation",
+        mutate_during_reexecution,
+    )
+    assert (
+        main(
+            [
+                "foundation",
+                "verify-evidence",
+                str(run_directory),
+                "--repository-marker",
+                marker,
+            ]
+        )
+        == 1
+    )
+    raced = json.loads(capsys.readouterr().out)
+    assert raced == {
+        "errors": ["evidence bundle changed during independent runtime verification"],
+        "snapshot_sha256": None,
+        "valid": False,
+    }
 
 
 def test_network_guard_denies_connect_bind_and_restores_socket_class() -> None:

@@ -38,11 +38,15 @@ def test_candidate_proof_includes_clean_wheel_qualification_receipt() -> None:
     )[1].split("\n      - name: ", 1)[0]
 
     qualifier = '"$proof_stateweaver" foundation qualify-package-install'
+    runtime_qualifier = '"$proof_stateweaver" foundation qualify-runtime-observation'
     collector = '"$proof_stateweaver" foundation collect-evidence'
     assert qualifier in step
+    assert runtime_qualifier in step
     assert collector in step
     assert step.index(qualifier) < step.index(collector)
+    assert step.index(runtime_qualifier) < step.index(collector)
     assert '--package-install-receipt "$package_install_receipt"' in step
+    assert '--runtime-observation-receipt "$runtime_observation_receipt"' in step
     assert '--source-root "$GITHUB_WORKSPACE"' in step
     assert 'qualification_cwd="$RUNNER_TEMP/' in step
 

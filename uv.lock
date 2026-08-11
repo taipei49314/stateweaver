@@ -897,19 +897,23 @@ version = "0.1.0"
 source = { editable = "apps/cli" }
 dependencies = [
     { name = "stateweaver-adapter-in-process-lab" },
+    { name = "stateweaver-adapter-opentelemetry" },
     { name = "stateweaver-contracts" },
     { name = "stateweaver-evidence" },
     { name = "stateweaver-policy" },
     { name = "stateweaver-replay" },
+    { name = "stateweaver-twin" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "stateweaver-adapter-in-process-lab", editable = "adapters/environments/in_process_lab" },
+    { name = "stateweaver-adapter-opentelemetry", editable = "adapters/telemetry/opentelemetry" },
     { name = "stateweaver-contracts", editable = "packages/contracts" },
     { name = "stateweaver-evidence", editable = "packages/evidence" },
     { name = "stateweaver-policy", editable = "packages/policy" },
     { name = "stateweaver-replay", editable = "packages/replay" },
+    { name = "stateweaver-twin", editable = "packages/twin" },
 ]
 
 [[package]]
@@ -956,6 +960,7 @@ name = "stateweaver-evidence"
 version = "0.1.0"
 source = { editable = "packages/evidence" }
 dependencies = [
+    { name = "stateweaver-adapter-opentelemetry" },
     { name = "stateweaver-contracts" },
     { name = "stateweaver-policy" },
     { name = "stateweaver-replay" },
@@ -963,6 +968,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "stateweaver-adapter-opentelemetry", editable = "adapters/telemetry/opentelemetry" },
     { name = "stateweaver-contracts", editable = "packages/contracts" },
     { name = "stateweaver-policy", editable = "packages/policy" },
     { name = "stateweaver-replay", editable = "packages/replay" },

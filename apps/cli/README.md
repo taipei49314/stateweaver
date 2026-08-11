@@ -11,6 +11,7 @@ After installation, run:
 stateweaver --json doctor
 stateweaver --json foundation verify
 stateweaver foundation qualify-package-install --help
+stateweaver foundation qualify-runtime-observation --help
 stateweaver foundation collect-evidence --help
 stateweaver foundation verify-evidence --help
 ```
@@ -45,8 +46,19 @@ and the caller-supplied repository marker, then writes canonical
 `qualification/m0/package-install.json` input. Passing that file to `collect-evidence` with
 `--package-install-receipt` is the only path that promotes M0-C07; source or editable installs fail
 closed.
-Because that fingerprint includes platform-specific installed bytes, deterministic re-execution
-requires the producer's operating system, Python ABI, and wheel build. A mismatch is reported as a
+
+`foundation qualify-runtime-observation` is the narrow M3 producer. It accepts no target, callback,
+trace, state delta, or evidence from the caller. It executes one fixed authorized HTTP action once
+through the repo-owned socket-free ASGI app, retains canonical before/after captures plus the
+application lifecycle span and evidence-derived `TransitionFragment`, and writes a canonical
+source-bound receipt. Passing that file with `--runtime-observation-receipt` admits exactly
+M3-T03/T04/T05/X01 and SW-M3-OBSERVED only after collection and verification independently rerun
+the operation and match its stable semantic projection. Generated IDs and clocks may differ;
+source, action, authorization, captured state, trace route/status, delta, fidelity, and transition
+semantics may not.
+
+Because the installed-runtime fingerprint includes platform-specific bytes, deterministic
+re-execution requires the producer's operating system, Python ABI, and wheel build. A mismatch is reported as a
 provenance failure, separately from bundle causal-coherence failures.
 Collection requires `--started-at` with an absolute timestamp captured immediately before the
 first normative JUnit command, so the retained run window covers both the tests and differential.

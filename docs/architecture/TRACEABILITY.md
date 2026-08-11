@@ -15,7 +15,7 @@ acceptance commands are intentionally local and do not require network access.
 | M0 — Contracts + Lab | Proof-producing foundation is implemented and locally exercised; formal exit audit pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/policy/`, `packages/evidence/` |
 | M1 — Deterministic Replay Kernel | Proof-producing replay is implemented and locally exercised; formal exit audit pending | `packages/replay/`, `adapters/environments/in_process_lab/`, `apps/cli/` |
 | M2 — Materialized World Engine | Synthetic archive + exact-SHA hosted Docker concurrency diagnostic implemented; real providers pending | `packages/worlds/`, `adapters/environments/docker_compose/`, `tests/integration/worlds/` |
-| M3 — Security Semantic Twin | Runtime-derived observation primitive implemented; full M3→M4→M5 chain pending | `packages/twin/`, source/OTel adapters, `tests/integration/observation/`, `tests/integration/pipeline/` |
+| M3 — Security Semantic Twin | Clean-wheel observed-flow receipt implemented and independently reproduced; M4/M5 materialized chain remains separate | `packages/twin/`, source/OTel adapters, `packages/evidence/src/stateweaver/evidence/runtime_observation.py`, `apps/cli/src/stateweaver/cli/runtime_qualification.py` |
 | M4 — Tiered Search Controller | Offline exit flow preserves the observed candidate; materialized certification pending | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
 | M5 — Chain Compiler | Observed admission bridge and synthetic replay closure are implemented; release evidence pending | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
 | M6 — Reality Anchor + Proof Bundle | V2 event reconstruction + immutable-byte candidate resolver implemented; trusted broker pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
@@ -24,10 +24,12 @@ acceptance commands are intentionally local and do not require network access.
 
 The acceptance collector derives seven local-deliverable receipts for 22 repo-controlled M3–M7
 rows from exact passing JUnit identities, canonical registry statements and evidence roles, and
-the proof's source/run bindings. Together with a valid clean-wheel package-install receipt, the
-local projection is 53 `PASS`, zero `NOT_RUN`, and 39 `BLOCKED`. Each new receipt is explicitly
-non-authoritative, non-promotable, not release-eligible, and insufficient for its milestone exit.
-The 39 non-local gates remain fail closed.
+the proof's source/run bindings. Together with valid clean-wheel package-install and independently
+reproduced runtime-observation receipts, the projection is 58 `PASS`, zero `NOT_RUN`, and 34
+`BLOCKED`. The seven local-deliverable receipts remain explicitly
+non-authoritative, non-promotable, not release-eligible, and insufficient for their milestone exits.
+The distinct M3 receipt admits only five runtime-observation rows and remains non-release-eligible;
+the other 34 unresolved gates remain fail closed.
 
 ## M0 — Contracts + Lab
 
@@ -177,7 +179,15 @@ state-delta learning, and provenance/fidelity tracking.
 **Acceptance command**
 
 ```powershell
-uv run pytest packages/twin/tests adapters/source/fastapi_sqlalchemy/tests adapters/telemetry/opentelemetry/tests tests/integration/observation tests/integration/twin -q
+uv run pytest `
+  packages/twin/tests `
+  adapters/source/fastapi_sqlalchemy/tests `
+  adapters/telemetry/opentelemetry/tests `
+  tests/integration/observation `
+  tests/integration/twin `
+  apps/cli/tests/test_runtime_qualification.py `
+  packages/evidence/tests `
+  -q
 ```
 
 **Exit criterion:** one real user flow yields a verifiable Transition Fragment. The process-local
@@ -195,9 +205,17 @@ cached execution. Callers cannot supply app, capture callback, source schema, tr
 evidence, or before/after values. Substitution, swap, tamper, order, timeout, and secret-like
 attribute controls fail closed. It opens no socket and uses no external data.
 
-That primitive is not yet wired into the 24→4→2→1 materialized search and clean-root compiler
-execution, and it does not create an externally authenticated OTel collector receipt. M3 is
-**partially implemented and not release-certified**.
+The clean-wheel `foundation qualify-runtime-observation` producer retains the canonical adapter
+receipt plus an adapter-independent projection. Collection accepts it only after re-parsing the
+adapter receipt and executing the same operation again with an identical semantic digest. The
+result ledger then attaches the receipt digest to exactly M3-T03, M3-T04, M3-T05, M3-X01, and
+SW-M3-OBSERVED; simply adding their evidence paths cannot promote them. `verify-evidence` repeats
+the adapter validation and execution and rejects a proof tree that changes while it does so.
+
+This closes the repository-side, process-local M3 observed-flow contract. It is not yet wired into
+the 24→4→2→1 materialized search and clean-root compiler execution, and it does not create an
+externally authenticated OTel collector or live-target receipt. Those are M4/M5 and later trust
+boundaries, not claims made by M3.
 
 The horizontal pipeline test adds three socket-free TestClient flows with caller-constructed
 synthetic OTLP and state-delta evidence. Their three resulting `OBSERVED` fragments are preserved

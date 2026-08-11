@@ -42,6 +42,14 @@ from .package_install import (
     PackageInstallQualificationError,
     validate_package_install_receipt,
 )
+from .runtime_observation import (
+    OBSERVED_FRAGMENT_QUALIFICATION_PATH,
+    RUNTIME_OBSERVATION_QUALIFICATION_PATH,
+    RuntimeObservationQualificationError,
+    observed_fragment_qualification_payload,
+    runtime_observation_admissions,
+    validate_runtime_observation_qualification,
+)
 
 _RUN_MANIFEST_FIELDS = frozenset(
     {
@@ -118,6 +126,16 @@ def verify_acceptance_evidence(
     required = set(_REQUIRED_RELATIVE)
     if PACKAGE_INSTALL_QUALIFICATION_PATH in expected:
         required.add(PACKAGE_INSTALL_QUALIFICATION_PATH)
+    if (
+        RUNTIME_OBSERVATION_QUALIFICATION_PATH in expected
+        or OBSERVED_FRAGMENT_QUALIFICATION_PATH in expected
+    ):
+        required.update(
+            {
+                RUNTIME_OBSERVATION_QUALIFICATION_PATH,
+                OBSERVED_FRAGMENT_QUALIFICATION_PATH,
+            }
+        )
     if set(expected) != required:
         errors.append("artifact manifest does not cover exactly the required artifacts")
     if actual != required:
@@ -219,6 +237,7 @@ def _verify_coherence(
                     "derived qualification artifact does not match its validated inputs"
                 )
         observed_evidence_paths: tuple[str, ...] = _REQUIRED_RELATIVE
+        verified_admission_digests: dict[str, str] = {}
         package_receipt = parsed.get(PACKAGE_INSTALL_QUALIFICATION_PATH, _INVALID)
         if package_receipt is not _INVALID:
             if not _string_mapping(package_receipt):
@@ -241,6 +260,47 @@ def _verify_coherence(
                 *_REQUIRED_RELATIVE,
                 PACKAGE_INSTALL_QUALIFICATION_PATH,
             )
+        runtime_receipt_payload = parsed.get(
+            RUNTIME_OBSERVATION_QUALIFICATION_PATH,
+            _INVALID,
+        )
+        observed_fragment_payload = parsed.get(
+            OBSERVED_FRAGMENT_QUALIFICATION_PATH,
+            _INVALID,
+        )
+        if runtime_receipt_payload is not _INVALID or observed_fragment_payload is not _INVALID:
+            if not _string_mapping(runtime_receipt_payload) or not _string_mapping(
+                observed_fragment_payload
+            ):
+                raise AcceptanceEvidenceError(
+                    "runtime observation qualification artifacts are invalid"
+                )
+            repository_marker = metadata.get("repository_marker")
+            if not isinstance(repository_marker, str):
+                raise AcceptanceEvidenceError("runtime observation qualification marker is invalid")
+            try:
+                expected_runtime_receipt = validate_runtime_observation_qualification(
+                    runtime_receipt_payload,
+                    expected_repository_marker=repository_marker,
+                )
+            except RuntimeObservationQualificationError:
+                raise AcceptanceEvidenceError(
+                    "runtime observation qualification is invalid"
+                ) from None
+            if canonical_json_bytes(runtime_receipt_payload) != canonical_json_bytes(
+                expected_runtime_receipt.model_dump(mode="json")
+            ) or canonical_json_bytes(observed_fragment_payload) != canonical_json_bytes(
+                observed_fragment_qualification_payload(expected_runtime_receipt)
+            ):
+                raise AcceptanceEvidenceError(
+                    "runtime observation qualification artifacts are inconsistent"
+                )
+            observed_evidence_paths = (
+                *observed_evidence_paths,
+                RUNTIME_OBSERVATION_QUALIFICATION_PATH,
+                OBSERVED_FRAGMENT_QUALIFICATION_PATH,
+            )
+            verified_admission_digests = runtime_observation_admissions(expected_runtime_receipt)
         registry = load_acceptance_registry()
         expected_closure = build_acceptance_registry_closure(registry)
         passing_test_identities = tuple(
@@ -252,6 +312,7 @@ def _verify_coherence(
             registry,
             passing_test_identities=passing_test_identities,
             observed_evidence_paths=observed_evidence_paths,
+            verified_admission_digests=verified_admission_digests,
         )
         if canonical_json_bytes(parsed["qualification/registry/closure.json"]) != (
             canonical_json_bytes(expected_closure.model_dump(mode="json"))

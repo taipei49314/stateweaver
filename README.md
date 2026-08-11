@@ -53,12 +53,13 @@ or [proof verification guide](docs/PROOF_VERIFICATION.md) for the trust boundari
 
 StateWeaver is a pre-alpha research implementation. Its fixed synthetic flows have local
 formatting, typing, unit, integration, race, simulated-DOM contract, build, and proof gates. The
-acceptance collector can derive 53 local `PASS` rows from exact passing JUnit identities, source
-bindings, the clean-wheel package-install receipt, and seven non-promotable M3–M7 implementation
-receipts. It keeps the remaining 39 non-local rows `BLOCKED`; these developer checks are not a
-complete release qualification. The hosted Docker workflow now retains an exact-SHA synthetic
-diagnostic with zero managed residue, but it still exercises a synthetic bridge rather than real
-providers. Live-provider, trusted broker, independently measured equal-work benchmark,
+acceptance collector can derive 58 `PASS` rows from exact passing JUnit identities, source
+bindings, a clean-wheel package-install receipt, a separately reproduced M3 runtime-observation
+receipt, and seven non-promotable M3–M7 implementation receipts. It keeps the remaining 34 rows
+`BLOCKED`; these developer checks are not a complete release qualification. The hosted Docker
+workflow now retains an exact-SHA synthetic diagnostic with zero managed residue, but it still
+exercises a synthetic bridge rather than real providers. Live-provider, trusted broker,
+independently measured equal-work benchmark,
 independent new-user, and clean-machine certification remain intentionally unclaimed. No PyPI
 package or versioned GitHub Release is offered yet.
 
@@ -71,7 +72,7 @@ Architecture baseline v1 ships milestone-by-milestone. Current implementation an
 |---|---|
 | M0/M1 foundation proof | Synthetic proof and canonical 92-row registry exist; CI derives manifest-bound receipts and admits M0-C07 only from a clean wheel installation |
 | M2 world engine | Archive + lifecycle gates and retained exact-SHA synthetic Docker diagnostics exist; **no** real-provider proof |
-| M3 semantic twin | Local source ingest/extraction are proof-bound; runtime observation remains process-local and the full exit is blocked |
+| M3 semantic twin | Clean-wheel runtime execution binds the repo-owned ASGI lifecycle, source, authorization, trace, captures, state delta, evidence, and one `OBSERVED` fragment; five M3 runtime rows are admitted only after independent semantic re-execution |
 | M4 offline search | Proof-bound 24 → 4 → 2 → 1 local flow preserves the observed candidate; materialized exit blocked |
 | M5 chain compiler | Proof-bound compiler and authorized synthetic clean-root replay; materialized exit blocked |
 | M6 reality receipt | Proof-bound non-promotable synthetic candidate; **no** trusted broker / clean-machine M6 cert |
@@ -82,7 +83,9 @@ The seven M3–M7 local-deliverable receipts are derived from exact passing test
 canonical registry. They are explicitly `authoritative=false`, `promotable=false`,
 `release_eligible=false`, and `exit_criterion_satisfied=false`. Receipts and reports are
 **internal-coherence** artifacts, not Reality Broker signatures. Live-provider and clean-machine
-M6 certification remain intentionally unclaimed.
+M6 certification remain intentionally unclaimed. The separate M3 runtime receipt satisfies only
+the process-local M3 observed-flow exit; it remains `release_eligible=false`, requires exact-SHA
+workflow provenance, and does not qualify M4, M5, a live target, or an external OTel collector.
 
 Full matrices: [docs/architecture/TRACEABILITY.md](docs/architecture/TRACEABILITY.md),
 [docs/PROOF_VERIFICATION.md](docs/PROOF_VERIFICATION.md), [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -94,7 +97,7 @@ Full matrices: [docs/architecture/TRACEABILITY.md](docs/architecture/TRACEABILIT
 | M0 Contracts + Lab | Foundation proof, exact registry, and fail-closed derived row ledger exist; external release qualification remains pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/evidence/` |
 | M1 Deterministic Replay | Five-run clean-root differential is implemented; formal qualification pending | `packages/replay/`, `apps/cli/` |
 | M2 World Engine | Archive/lifecycle plus synthetic Docker path; real providers remain absent | `packages/worlds/`, `tests/integration/worlds/`, adapter `PARTIAL` |
-| M3 Semantic Twin | Process-local exporter and runtime-derived delta primitive; full observed chain pending | `packages/twin/`, `adapters/telemetry/opentelemetry/`, `tests/integration/observation/` |
+| M3 Semantic Twin | Application lifecycle, emitted trace, runtime captures, state delta, evidence, and `OBSERVED` fragment are bound in a reproducible clean-wheel receipt; M4/M5 materialization remains separate | `packages/twin/`, `adapters/telemetry/opentelemetry/`, `packages/evidence/src/stateweaver/evidence/runtime_observation.py`, `apps/cli/src/stateweaver/cli/runtime_qualification.py` |
 | M4 Search | Offline 24 → 4 → 2 → 1 flow preserves the observed candidate | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
 | M5 Chain Compiler | Three observed fragments cross the admission bridge; synthetic replay closure hardened | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
 | M6 Reality + Proof | V2 event reconstruction + traceable publication candidate exist; trusted broker absent | `packages/contracts/`, `packages/evidence/`, `packages/reporting/`, `tests/e2e/proof_bundle/` |
@@ -135,13 +138,13 @@ negative controls, full typed action log, policy bindings, Oracle evidence, four
 exact 92-row registry closure and derived result ledger, and an exact-file SHA-256 manifest.
 `stateweaver foundation verify-evidence <run-directory>` validates
 file integrity and causal coherence, then independently re-executes the installed fixed foundation
-without executing bundle contents. The verifier hashes and parses one captured read of every file
-and returns its `snapshot_sha256`; consumers must not reopen mutable paths and assume they are the
-same snapshot. Main-branch
-[CI run 31239564101](https://github.com/taipei49314/stateweaver/actions/runs/31239564101)
-signed the exact-file manifest for SHA `aa60cad5be43f383810bf2e276307c4f4c9cec10` with GitHub
-OIDC provenance; see [proof verification](docs/PROOF_VERIFICATION.md). That historical attestation
-does not qualify later commits or prove trusted Reality.
+without executing bundle contents. When an M3 receipt is present, the high-level verifier also
+re-parses the retained adapter receipt, independently re-executes the fixed operation, compares its
+stable semantic projection, and confirms the proof snapshot did not change during re-execution.
+The verifier returns `snapshot_sha256`; consumers must not reopen mutable paths and assume they are
+the same snapshot. Main-branch CI signs the exact-file manifest with GitHub OIDC provenance; see
+[proof verification](docs/PROOF_VERIFICATION.md). Any attestation qualifies only its exact subject
+and source SHA and does not by itself prove trusted Reality.
 
 For repository development:
 
