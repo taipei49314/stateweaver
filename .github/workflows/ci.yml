@@ -91,15 +91,20 @@ jobs:
             -r dist/runtime-requirements.txt
           uv pip install --python "${packaging_smoke}/bin/python" --no-deps --no-index --find-links dist \
             dist/stateweaver_cli-*.whl \
+            dist/stateweaver_adapter_docker_compose-*.whl \
             dist/stateweaver_adapter_in_process_lab-*.whl \
             dist/stateweaver_adapter_opentelemetry-*.whl \
+            dist/stateweaver_compiler-*.whl \
             dist/stateweaver_contracts-*.whl \
             dist/stateweaver_evidence-*.whl \
             dist/stateweaver_lab_multitenant_saas-*.whl \
             dist/stateweaver_policy-*.whl \
             dist/stateweaver_replay-*.whl \
             dist/stateweaver_reporting-*.whl \
-            dist/stateweaver_twin-*.whl
+            dist/stateweaver_search-*.whl \
+            dist/stateweaver_twin-*.whl \
+            dist/stateweaver_world_workflow-*.whl \
+            dist/stateweaver_worlds-*.whl
           uv pip check --python "${packaging_smoke}/bin/python"
           "${packaging_smoke}/bin/python" -c "from stateweaver.reporting import RealityPublicationManifest"
           "${packaging_smoke}/bin/stateweaver" --json doctor
