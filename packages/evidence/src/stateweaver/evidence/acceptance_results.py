@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import ClassVar
@@ -24,11 +24,12 @@ from .acceptance_registry import (
 )
 
 REGISTRY_CLOSURE_SCHEMA_VERSION = "stateweaver-acceptance-registry-closure-v1"
-ACCEPTANCE_RESULTS_SCHEMA_VERSION = "stateweaver-acceptance-results-v1"
+ACCEPTANCE_RESULTS_SCHEMA_VERSION = "stateweaver-acceptance-results-v2"
 EXPECTED_ACCEPTANCE_SELECTOR_COUNT = 65
 
 _LOCAL_RESULT_GATES = frozenset({GateClass.LOCAL_OFFLINE, GateClass.LOCAL_IN_PROCESS})
 _PATH_PART_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_ADMISSION_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 class AcceptanceResultsError(ValueError):
@@ -92,6 +93,7 @@ class AcceptanceRequirementResult(_ResultModel):
     evidence_missing: tuple[str, ...]
     evidence_observed: tuple[str, ...]
     gate_class: GateClass
+    qualification_admission_digest: str | None = None
     requirement_id: str
     status: AcceptanceResultStatus
     tests_missing: tuple[str, ...]
@@ -118,15 +120,23 @@ class AcceptanceRequirementResult(_ResultModel):
         if set(self.tests_missing) & set(self.tests_observed):
             raise ValueError("acceptance test result sets overlap")
         has_missing = bool(self.evidence_missing or self.tests_missing)
-        expected_status = (
-            AcceptanceResultStatus.PASS
-            if self.gate_class in _LOCAL_RESULT_GATES and not has_missing
-            else (
-                AcceptanceResultStatus.NOT_RUN
-                if self.gate_class in _LOCAL_RESULT_GATES
+        admission = self.qualification_admission_digest
+        if admission is not None and _ADMISSION_DIGEST_RE.fullmatch(admission) is None:
+            raise ValueError("acceptance qualification admission digest is invalid")
+        if self.gate_class in _LOCAL_RESULT_GATES:
+            if admission is not None:
+                raise ValueError("local acceptance rows cannot carry non-local admission")
+            expected_status = (
+                AcceptanceResultStatus.PASS if not has_missing else AcceptanceResultStatus.NOT_RUN
+            )
+        else:
+            if admission is not None and has_missing:
+                raise ValueError("non-local admission requires complete evidence and tests")
+            expected_status = (
+                AcceptanceResultStatus.PASS
+                if admission is not None
                 else AcceptanceResultStatus.BLOCKED
             )
-        )
         if self.status is not expected_status:
             raise ValueError("acceptance result status is inconsistent with its observed inputs")
         return self
@@ -282,8 +292,9 @@ def derive_acceptance_results(
     *,
     passing_test_identities: Sequence[str],
     observed_evidence_paths: Iterable[str],
+    verified_admission_digests: Mapping[str, str] | None = None,
 ) -> AcceptanceResults:
-    """Derive every row without allowing local inputs to promote non-local gates."""
+    """Derive every row; non-local PASS requires a separately verified admission digest."""
 
     _require_exact_registry(registry)
     if any(not isinstance(identity, str) or not identity for identity in passing_test_identities):
@@ -299,6 +310,17 @@ def derive_acceptance_results(
     if len(set(raw_paths)) != len(raw_paths):
         raise AcceptanceResultsError("observed evidence paths must be unique")
     observed_paths = frozenset(raw_paths)
+    admissions = dict(verified_admission_digests or {})
+    requirements_by_id = {requirement.id: requirement for requirement in registry.requirements}
+    if any(
+        not isinstance(requirement_id, str)
+        or requirement_id not in requirements_by_id
+        or requirements_by_id[requirement_id].gate_class in _LOCAL_RESULT_GATES
+        or not isinstance(digest, str)
+        or _ADMISSION_DIGEST_RE.fullmatch(digest) is None
+        for requirement_id, digest in admissions.items()
+    ):
+        raise AcceptanceResultsError("verified qualification admissions are invalid")
 
     rows: list[AcceptanceRequirementResult] = []
     for requirement in registry.requirements:
@@ -310,22 +332,28 @@ def derive_acceptance_results(
         required_evidence = tuple(sorted({mapping.path for mapping in requirement.evidence}))
         evidence_observed = tuple(path for path in required_evidence if path in observed_paths)
         evidence_missing = tuple(sorted(set(required_evidence) - set(evidence_observed)))
-        status = (
-            AcceptanceResultStatus.PASS
-            if requirement.gate_class in _LOCAL_RESULT_GATES
-            and not tests_missing
-            and not evidence_missing
-            else (
-                AcceptanceResultStatus.NOT_RUN
-                if requirement.gate_class in _LOCAL_RESULT_GATES
+        admission_digest = admissions.get(requirement.id)
+        has_missing = bool(tests_missing or evidence_missing)
+        if admission_digest is not None and has_missing:
+            raise AcceptanceResultsError(
+                "verified qualification admission does not have complete proof inputs"
+            )
+        if requirement.gate_class in _LOCAL_RESULT_GATES:
+            status = (
+                AcceptanceResultStatus.PASS if not has_missing else AcceptanceResultStatus.NOT_RUN
+            )
+        else:
+            status = (
+                AcceptanceResultStatus.PASS
+                if admission_digest is not None
                 else AcceptanceResultStatus.BLOCKED
             )
-        )
         rows.append(
             AcceptanceRequirementResult(
                 evidence_missing=evidence_missing,
                 evidence_observed=evidence_observed,
                 gate_class=requirement.gate_class,
+                qualification_admission_digest=admission_digest,
                 requirement_id=requirement.id,
                 status=status,
                 tests_missing=tests_missing,

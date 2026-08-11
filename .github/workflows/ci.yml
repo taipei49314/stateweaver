@@ -92,12 +92,14 @@ jobs:
           uv pip install --python "${packaging_smoke}/bin/python" --no-deps --no-index --find-links dist \
             dist/stateweaver_cli-*.whl \
             dist/stateweaver_adapter_in_process_lab-*.whl \
+            dist/stateweaver_adapter_opentelemetry-*.whl \
             dist/stateweaver_contracts-*.whl \
             dist/stateweaver_evidence-*.whl \
             dist/stateweaver_lab_multitenant_saas-*.whl \
             dist/stateweaver_policy-*.whl \
             dist/stateweaver_replay-*.whl \
-            dist/stateweaver_reporting-*.whl
+            dist/stateweaver_reporting-*.whl \
+            dist/stateweaver_twin-*.whl
           uv pip check --python "${packaging_smoke}/bin/python"
           "${packaging_smoke}/bin/python" -c "from stateweaver.reporting import RealityPublicationManifest"
           "${packaging_smoke}/bin/stateweaver" --json doctor
@@ -111,6 +113,10 @@ jobs:
               --output "${GITHUB_WORKSPACE}/artifacts/qualification-inputs/m0/package-install.json" \
               --repository-marker "${GITHUB_SHA}" \
               --source-root "${GITHUB_WORKSPACE}"
+            "${packaging_smoke}/bin/stateweaver" \
+              foundation qualify-runtime-observation \
+              --output "${GITHUB_WORKSPACE}/artifacts/qualification-inputs/m3/runtime-observation.json" \
+              --repository-marker "${GITHUB_SHA}"
           )
 
       - name: Collect and verify causal acceptance proof
@@ -128,7 +134,19 @@ jobs:
             --junit-lab artifacts/acceptance/junit/lab.xml \
             --junit-replay artifacts/acceptance/junit/replay.xml \
             --package-install-receipt artifacts/qualification-inputs/m0/package-install.json \
+            --runtime-observation-receipt artifacts/qualification-inputs/m3/runtime-observation.json \
             | tee artifacts/acceptance/collection.json
+          "${packaging_smoke}/bin/python" - \
+            "artifacts/acceptance/runs/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/qualification/registry/results.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["summary"]
+          expected = {"blocked": 34, "failed": 0, "not_run": 0, "passed": 58, "required": 92}
+          if summary != expected:
+              raise SystemExit(f"unexpected acceptance summary: {summary!r}")
+          PY
           uv run stateweaver foundation verify-evidence \
             "artifacts/acceptance/runs/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --repository-marker "${GITHUB_SHA}"

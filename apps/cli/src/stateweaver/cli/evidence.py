@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.resources
+import json
 import platform
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -23,18 +24,30 @@ from stateweaver.evidence import (
     verify_acceptance_evidence,
 )
 from stateweaver.evidence.package_install import load_package_install_receipt
+from stateweaver.evidence.runtime_observation import (
+    RUNTIME_OBSERVATION_QUALIFICATION_PATH,
+    RuntimeObservationQualificationError,
+    RuntimeObservationQualificationReceipt,
+    load_runtime_observation_qualification,
+)
 from stateweaver.replay import canonical_sha256
 
 from .foundation import verify_foundation
 from .network_guard import NETWORK_GUARD_VERSION
+from .runtime_qualification import (
+    qualify_runtime_observation,
+    validate_runtime_qualification_against_adapter,
+)
 
 _APP_SOURCE_PACKAGES: Final = (
     "stateweaver.adapters.in_process_lab",
+    "stateweaver.adapters.telemetry.opentelemetry",
     "stateweaver.cli",
     "stateweaver.contracts",
     "stateweaver.evidence",
     "stateweaver.policy",
     "stateweaver.replay",
+    "stateweaver.twin",
     "stateweaver_lab",
 )
 _ORACLE_SOURCE_PACKAGES: Final = (
@@ -72,6 +85,7 @@ def collect_foundation_evidence(
     junit_replay: Path,
     started_at: datetime,
     package_install_receipt: Path | None = None,
+    runtime_observation_receipt: Path | None = None,
 ) -> dict[str, object]:
     """Generate the proof once, bind supplied JUnit, then verify the resulting bundle."""
 
@@ -98,6 +112,18 @@ def collect_foundation_evidence(
         if package_install_receipt is not None
         else None
     )
+    runtime_qualification: RuntimeObservationQualificationReceipt | None = None
+    if runtime_observation_receipt is not None:
+        runtime_qualification = load_runtime_observation_qualification(
+            runtime_observation_receipt,
+            expected_repository_marker=repository_marker,
+        )
+        validate_runtime_qualification_against_adapter(runtime_qualification)
+        fresh_runtime_qualification = qualify_runtime_observation(repository_marker)
+        if fresh_runtime_qualification.semantic_digest != runtime_qualification.semantic_digest:
+            raise AcceptanceEvidenceError(
+                "runtime observation qualification did not reproduce installed semantics"
+            )
 
     result = collect_acceptance_evidence(
         input=CollectionInput(
@@ -129,6 +155,11 @@ def collect_foundation_evidence(
                 "completed_at": completed_at.isoformat(),
             },
             package_install_receipt=installed_contracts,
+            runtime_observation_receipt=(
+                runtime_qualification.model_dump(mode="json")
+                if runtime_qualification is not None
+                else None
+            ),
         ),
         output_root=output_root,
         run_id=run_id,
@@ -159,16 +190,67 @@ def verify_foundation_evidence(
     trusted_foundation = verify_foundation()
     if not trusted_foundation.accepted:
         return VerificationResult(False, ("trusted foundation re-execution was not accepted",))
-    return verify_acceptance_evidence(
-        run_directory,
-        expected_provenance=ExpectedProvenance(
-            repository_marker=repository_marker,
-            app_source_digest=_source_digest(_APP_SOURCE_PACKAGES),
-            oracle_definition_hash=_source_digest(_ORACLE_SOURCE_PACKAGES),
-            runtime_dependency_fingerprint=_runtime_dependency_fingerprint(),
-            foundation_semantic_sha256=semantic_sha256(trusted_foundation.to_json()),
-        ),
+    expected_provenance = ExpectedProvenance(
+        repository_marker=repository_marker,
+        app_source_digest=_source_digest(_APP_SOURCE_PACKAGES),
+        oracle_definition_hash=_source_digest(_ORACLE_SOURCE_PACKAGES),
+        runtime_dependency_fingerprint=_runtime_dependency_fingerprint(),
+        foundation_semantic_sha256=semantic_sha256(trusted_foundation.to_json()),
     )
+    verification = verify_acceptance_evidence(
+        run_directory,
+        expected_provenance=expected_provenance,
+    )
+    if not verification.valid:
+        return verification
+    runtime_receipt_path = run_directory / RUNTIME_OBSERVATION_QUALIFICATION_PATH
+    if not runtime_receipt_path.exists():
+        return verification
+    try:
+        if repository_marker is None:
+            raw: object = json.loads(runtime_receipt_path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                raise RuntimeObservationQualificationError(
+                    "runtime observation qualification receipt is invalid"
+                )
+            projection = raw.get("projection")
+            if not isinstance(projection, dict) or not isinstance(
+                projection.get("repository_marker"), str
+            ):
+                raise RuntimeObservationQualificationError(
+                    "runtime observation qualification receipt is invalid"
+                )
+            marker = projection["repository_marker"]
+        else:
+            marker = repository_marker
+        retained = load_runtime_observation_qualification(
+            runtime_receipt_path,
+            expected_repository_marker=marker,
+        )
+        validate_runtime_qualification_against_adapter(retained)
+        reproduced = qualify_runtime_observation(marker)
+        if reproduced.semantic_digest != retained.semantic_digest:
+            raise RuntimeObservationQualificationError(
+                "runtime observation semantic projection did not reproduce"
+            )
+    except (OSError, RuntimeObservationQualificationError):
+        return VerificationResult(
+            False,
+            ("runtime observation qualification did not independently verify",),
+        )
+    final_verification = verify_acceptance_evidence(
+        run_directory,
+        expected_provenance=expected_provenance,
+    )
+    if (
+        not final_verification.valid
+        or final_verification.snapshot_sha256 != verification.snapshot_sha256
+    ):
+        return VerificationResult(
+            False,
+            ("evidence bundle changed during independent runtime verification",),
+        )
+    return final_verification
 
 
 def _source_digest(package_names: tuple[str, ...]) -> str:

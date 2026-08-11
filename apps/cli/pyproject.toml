@@ -11,10 +11,12 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
   "stateweaver-adapter-in-process-lab==0.1.0",
+  "stateweaver-adapter-opentelemetry==0.1.0",
   "stateweaver-contracts==0.1.0",
   "stateweaver-evidence==0.1.0",
   "stateweaver-policy==0.1.0",
   "stateweaver-replay==0.1.0",
+  "stateweaver-twin==0.1.0",
 ]
 
 [project.scripts]
@@ -25,10 +27,12 @@ packages = ["src/stateweaver"]
 
 [tool.uv.sources]
 stateweaver-adapter-in-process-lab = { workspace = true }
+stateweaver-adapter-opentelemetry = { workspace = true }
 stateweaver-contracts = { workspace = true }
 stateweaver-evidence = { workspace = true }
 stateweaver-policy = { workspace = true }
 stateweaver-replay = { workspace = true }
+stateweaver-twin = { workspace = true }
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers -ra"
@@ -40,6 +44,8 @@ pythonpath = [
   "../../packages/policy/src",
   "../../packages/replay/src",
   "../../adapters/environments/in_process_lab/src",
+  "../../adapters/telemetry/opentelemetry/src",
+  "../../packages/twin/src",
   "../../labs/multitenant-saas",
 ]
 
@@ -64,5 +70,7 @@ mypy_path = [
   "../../packages/policy/src",
   "../../packages/replay/src",
   "../../adapters/environments/in_process_lab/src",
+  "../../adapters/telemetry/opentelemetry/src",
+  "../../packages/twin/src",
   "../../labs/multitenant-saas",
 ]

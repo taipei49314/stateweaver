@@ -13,6 +13,7 @@ from xml.etree import ElementTree
 import pytest
 from evidence_test_fixtures import EPOCH
 from evidence_test_fixtures import foundation as fixture_foundation
+from stateweaver.cli.runtime_qualification import qualify_runtime_observation
 from stateweaver.contracts import ScopeManifest
 from stateweaver.evidence import (
     ACCEPTANCE_TEST_COMMAND,
@@ -65,6 +66,9 @@ LOCAL_REPLAY_IDENTITIES = (
     "test_controller_issues_trace_and_derives_state_delta_from_authorized_lab_action",
     "packages.twin.tests.test_twin::"
     "test_builds_canonical_evidence_bound_twin_and_observed_transition",
+    "apps.cli.tests.test_runtime_qualification::"
+    "test_runtime_qualification_reexecutes_with_stable_semantics",
+    "apps.cli.tests.test_runtime_qualification::test_adapter_receipt_substitution_fails_closed",
     "packages.search.tests.test_search::"
     "test_strict_models_reject_unknown_fields_bool_integers_and_duplicate_candidates",
     "packages.search.tests.test_search::test_materialized_source_tier_is_not_promotable",
@@ -223,6 +227,7 @@ def _input(
     sources: dict[str, Path] | None = None,
     metadata: dict[str, object] | None = None,
     package_install_receipt: dict[str, object] | None = None,
+    runtime_observation_receipt: dict[str, object] | None = None,
 ) -> CollectionInput:
     accepted_proof = foundation() if proof is None else proof
     return CollectionInput(
@@ -230,6 +235,7 @@ def _input(
         junit_sources=_junit_sources(tmp_path) if sources is None else sources,
         run_metadata=_metadata(accepted_proof) if metadata is None else metadata,
         package_install_receipt=package_install_receipt,
+        runtime_observation_receipt=runtime_observation_receipt,
     )
 
 
@@ -601,6 +607,86 @@ def test_clean_wheel_receipt_promotes_only_m0_c07(tmp_path: Path) -> None:
         "failed": 0,
         "not_run": 14,
         "passed": 39,
+        "required": 92,
+    }
+
+
+def test_runtime_receipt_admits_only_the_five_exact_m3_rows(tmp_path: Path) -> None:
+    marker = "d" * 40
+    proof = foundation()
+    metadata = _metadata(proof)
+    metadata["repository_marker"] = marker
+    runtime_receipt = qualify_runtime_observation(marker)
+    result = collect_acceptance_evidence(
+        input=_input(
+            tmp_path,
+            proof=proof,
+            metadata=metadata,
+            runtime_observation_receipt=runtime_receipt.model_dump(mode="json"),
+        ),
+        output_root=tmp_path / "artifacts",
+        run_id="runtime-observation",
+    )
+    run = result.run_directory
+    results = json.loads(
+        (run / "qualification" / "registry" / "results.json").read_text(encoding="utf-8")
+    )
+    by_id = {row["requirement_id"]: row for row in results["requirements"]}
+    admitted = {"M3-T03", "M3-T04", "M3-T05", "M3-X01", "SW-M3-OBSERVED"}
+
+    assert verify_acceptance_evidence(run).valid
+    assert (run / "qualification" / "m3" / "runtime-observation-receipt.json").is_file()
+    assert (run / "qualification" / "m3" / "observed-fragment-receipt.json").is_file()
+    assert results["summary"] == {
+        "blocked": 34,
+        "failed": 0,
+        "not_run": 15,
+        "passed": 43,
+        "required": 92,
+    }
+    assert {
+        requirement_id
+        for requirement_id, row in by_id.items()
+        if row["qualification_admission_digest"] is not None
+    } == admitted
+    assert all(by_id[requirement_id]["status"] == "PASS" for requirement_id in admitted)
+    assert all(
+        by_id[requirement_id]["qualification_admission_digest"] == runtime_receipt.receipt_digest
+        for requirement_id in admitted
+    )
+
+
+def test_clean_wheel_and_runtime_receipts_combine_without_cross_promotion(tmp_path: Path) -> None:
+    marker = "d" * 40
+    proof = foundation()
+    metadata = _metadata(proof)
+    metadata["repository_marker"] = marker
+    package_receipt = _package_install_receipt()
+    package_receipt["repository_marker"] = marker
+
+    result = collect_acceptance_evidence(
+        input=_input(
+            tmp_path,
+            proof=proof,
+            metadata=metadata,
+            package_install_receipt=package_receipt,
+            runtime_observation_receipt=qualify_runtime_observation(marker).model_dump(mode="json"),
+        ),
+        output_root=tmp_path / "artifacts",
+        run_id="complete-current-projection",
+    )
+    results = json.loads(
+        (result.run_directory / "qualification" / "registry" / "results.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert verify_acceptance_evidence(result.run_directory).valid
+    assert results["summary"] == {
+        "blocked": 34,
+        "failed": 0,
+        "not_run": 14,
+        "passed": 44,
         "required": 92,
     }
 

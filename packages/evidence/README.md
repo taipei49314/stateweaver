@@ -8,14 +8,20 @@ testcase identities. It also derives seven local-deliverable receipts covering 2
 M3–M7 rows from exact passing identities, canonical registry statements and roles, and source/run
 bindings. The verifier independently regenerates every derived receipt; changing one and rehashing
 the file manifest is insufficient to validate it. M0-C07 is optional and remains `NOT_RUN` unless
-the collector receives a separately produced, valid clean-wheel package-install receipt.
+the collector receives a separately produced, valid clean-wheel package-install receipt. Five M3
+runtime rows remain `BLOCKED` unless the collector also receives a canonical runtime-observation
+receipt that the high-level CLI re-parses and independently reproduces.
 
-With that clean-wheel receipt, the local acceptance projection is 53 `PASS`, zero `NOT_RUN`, and
-39 `BLOCKED`. The M3–M7 receipts use status `LOCAL_IMPLEMENTATION_QUALIFIED` and permanently state
+With both clean-wheel receipts, the acceptance projection is 58 `PASS`, zero `NOT_RUN`, and 34
+`BLOCKED`. Every non-local `PASS` row carries the exact separately verified
+`qualification_admission_digest`; an evidence path alone cannot promote it. The seven M3–M7 local
+deliverable receipts use status `LOCAL_IMPLEMENTATION_QUALIFIED` and permanently state
 `authoritative=false`, `promotable=false`, `release_eligible=false`, and
 `exit_criterion_satisfied=false`. They qualify only the named local implementation surfaces; they
 do not satisfy live-provider, materialized-runtime, trusted-broker, independent-benchmark, or
-external-new-user gates.
+external-new-user gates. The distinct M3 runtime receipt sets its narrow observed-flow exit true
+while remaining non-release-eligible and explicitly excluding materialized, live-provider, and
+trusted-broker claims.
 
 Use the repository-level `stateweaver foundation collect-evidence` workflow when available. The
 lower-level `stateweaver-acceptance-evidence verify <run-directory>` command only verifies an
@@ -28,6 +34,9 @@ files and caller-supplied independent provenance. A producer able to author ever
 author a new coherent bundle. The repository-level CLI adds a stronger layer: it re-executes the
 installed deterministic foundation and requires its independently derived semantic hash, installed
 source digest, Oracle digest, and stable runtime dependency-byte fingerprint to match the bundle.
+For an M3-qualified proof it additionally revalidates the embedded adapter receipt, reruns the
+fixed authorized ASGI operation under the network-deny guard, compares the stable semantic
+projection, and rejects a proof snapshot that changes during that re-execution.
 
 Neither layer proves that a malicious producer actually executed testcases whose names appear in
 JUnit, nor authenticates the producer. Public release artifacts therefore require an external CI

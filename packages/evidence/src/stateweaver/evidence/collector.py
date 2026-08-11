@@ -59,6 +59,14 @@ from .package_install import (
     PackageInstallQualificationError,
     validate_package_install_receipt,
 )
+from .runtime_observation import (
+    OBSERVED_FRAGMENT_QUALIFICATION_PATH,
+    RUNTIME_OBSERVATION_QUALIFICATION_PATH,
+    RuntimeObservationQualificationError,
+    observed_fragment_qualification_payload,
+    runtime_observation_admissions,
+    validate_runtime_observation_qualification,
+)
 
 _JUNIT_NAMES = ("contracts", "policy", "lab", "replay")
 _M0_PROPERTY_SEED = 982341
@@ -116,6 +124,11 @@ _M3_RUNTIME_IDENTITY = (
 _M3_TWIN_IDENTITY = (
     "packages.twin.tests.test_twin::"
     "test_builds_canonical_evidence_bound_twin_and_observed_transition"
+)
+_M3_QUALIFICATION_IDENTITIES = (
+    "apps.cli.tests.test_runtime_qualification::"
+    "test_runtime_qualification_reexecutes_with_stable_semantics",
+    "apps.cli.tests.test_runtime_qualification::test_adapter_receipt_substitution_fails_closed",
 )
 _M4_IDENTITIES = (
     "packages.search.tests.test_search::"
@@ -231,6 +244,7 @@ _JUNIT_REQUIRED_IDENTITIES: dict[str, frozenset[str]] = {
             *_M3_SOURCE_IDENTITIES,
             _M3_RUNTIME_IDENTITY,
             _M3_TWIN_IDENTITY,
+            *_M3_QUALIFICATION_IDENTITIES,
             *_M4_IDENTITIES,
             _M5_COMPILER_IDENTITY,
             _M5_CLEAN_ROOM_IDENTITY,
@@ -254,6 +268,7 @@ _JUNIT_ALLOWED_PREFIXES: dict[str, tuple[str, ...]] = {
         "packages.replay.tests.test_models::",
         "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::",
         "apps.cli.tests.test_foundation::",
+        "apps.cli.tests.test_runtime_qualification::",
         "packages.evidence.tests.test_acceptance_registry::",
         "packages.evidence.tests.test_acceptance_results::",
         "packages.evidence.tests.test_collector::",
@@ -612,6 +627,7 @@ class CollectionInput:
     junit_sources: Mapping[str, Path]
     run_metadata: Mapping[str, Any]
     package_install_receipt: Mapping[str, object] | None = None
+    runtime_observation_receipt: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -688,6 +704,7 @@ def collect_acceptance_evidence(
         _local_deliverable_qualification_payloads(junit_results, input.run_metadata)
     )
     observed_evidence_paths: tuple[str, ...] = _REQUIRED_RELATIVE
+    verified_admission_digests: dict[str, str] = {}
     if input.package_install_receipt is not None:
         repository_marker = input.run_metadata.get("repository_marker")
         if not isinstance(repository_marker, str):
@@ -703,6 +720,31 @@ def collect_acceptance_evidence(
             ) from None
         qualification_payloads[PACKAGE_INSTALL_QUALIFICATION_PATH] = package_install_receipt
         observed_evidence_paths = (*_REQUIRED_RELATIVE, PACKAGE_INSTALL_QUALIFICATION_PATH)
+    if input.runtime_observation_receipt is not None:
+        repository_marker = input.run_metadata.get("repository_marker")
+        if not isinstance(repository_marker, str):
+            raise AcceptanceEvidenceError("runtime observation qualification marker is invalid")
+        try:
+            runtime_receipt = validate_runtime_observation_qualification(
+                input.runtime_observation_receipt,
+                expected_repository_marker=repository_marker,
+            )
+        except RuntimeObservationQualificationError:
+            raise AcceptanceEvidenceError(
+                "runtime observation qualification receipt is invalid"
+            ) from None
+        qualification_payloads[RUNTIME_OBSERVATION_QUALIFICATION_PATH] = runtime_receipt.model_dump(
+            mode="json"
+        )
+        qualification_payloads[OBSERVED_FRAGMENT_QUALIFICATION_PATH] = (
+            observed_fragment_qualification_payload(runtime_receipt)
+        )
+        observed_evidence_paths = (
+            *observed_evidence_paths,
+            RUNTIME_OBSERVATION_QUALIFICATION_PATH,
+            OBSERVED_FRAGMENT_QUALIFICATION_PATH,
+        )
+        verified_admission_digests = runtime_observation_admissions(runtime_receipt)
     try:
         registry = load_acceptance_registry()
         registry_closure = build_acceptance_registry_closure(registry)
@@ -715,6 +757,7 @@ def collect_acceptance_evidence(
             registry,
             passing_test_identities=passing_test_identities,
             observed_evidence_paths=observed_evidence_paths,
+            verified_admission_digests=verified_admission_digests,
         )
     except AcceptanceResultsError:
         raise AcceptanceEvidenceError("acceptance registry results could not be derived") from None

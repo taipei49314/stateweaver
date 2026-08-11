@@ -15,9 +15,14 @@ from stateweaver.evidence.package_install import (
     PackageInstallQualificationError,
     write_package_install_receipt,
 )
+from stateweaver.evidence.runtime_observation import (
+    RuntimeObservationQualificationError,
+    write_runtime_observation_qualification,
+)
 
 from .evidence import collect_foundation_evidence, verify_foundation_evidence
 from .foundation import verify_foundation
+from .runtime_qualification import qualify_runtime_observation
 
 _VERSION: Final = "0.1.0"
 _COMPONENTS: Final = (
@@ -26,7 +31,9 @@ _COMPONENTS: Final = (
     ("policy", "stateweaver.policy"),
     ("replay", "stateweaver.replay"),
     ("in_process_lab", "stateweaver.adapters.in_process_lab"),
+    ("opentelemetry", "stateweaver.adapters.telemetry.opentelemetry"),
     ("synthetic_lab", "stateweaver_lab"),
+    ("twin", "stateweaver.twin"),
 )
 
 
@@ -69,6 +76,7 @@ def _parser() -> argparse.ArgumentParser:
     collect.add_argument("--junit-lab", type=Path, required=True)
     collect.add_argument("--junit-replay", type=Path, required=True)
     collect.add_argument("--package-install-receipt", type=Path)
+    collect.add_argument("--runtime-observation-receipt", type=Path)
     package_install = foundation_commands.add_parser(
         "qualify-package-install",
         help="retain a clean-wheel public-contract import receipt",
@@ -76,6 +84,12 @@ def _parser() -> argparse.ArgumentParser:
     package_install.add_argument("--output", type=Path, required=True)
     package_install.add_argument("--repository-marker", required=True)
     package_install.add_argument("--source-root", type=Path, required=True)
+    runtime_observation = foundation_commands.add_parser(
+        "qualify-runtime-observation",
+        help="execute and retain one application-emitted runtime observation",
+    )
+    runtime_observation.add_argument("--output", type=Path, required=True)
+    runtime_observation.add_argument("--repository-marker", required=True)
     check = foundation_commands.add_parser(
         "verify-evidence", help="verify hashes and causal bindings in a proof bundle"
     )
@@ -152,6 +166,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
+    if arguments.foundation_command == "qualify-runtime-observation":
+        try:
+            runtime_receipt = qualify_runtime_observation(arguments.repository_marker)
+            write_runtime_observation_qualification(arguments.output, runtime_receipt)
+        except (OSError, RuntimeObservationQualificationError):
+            print(
+                json.dumps(
+                    {
+                        "qualified": False,
+                        "error": {"code": "runtime_observation_not_qualified"},
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 1
+        print(
+            json.dumps(
+                {
+                    "qualified": True,
+                    "semantic_digest": runtime_receipt.semantic_digest,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
     if arguments.foundation_command == "collect-evidence":
         try:
             result = collect_foundation_evidence(
@@ -164,8 +206,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 junit_replay=arguments.junit_replay,
                 started_at=arguments.started_at,
                 package_install_receipt=arguments.package_install_receipt,
+                runtime_observation_receipt=arguments.runtime_observation_receipt,
             )
-        except (AcceptanceEvidenceError, OSError, PackageInstallQualificationError):
+        except (
+            AcceptanceEvidenceError,
+            OSError,
+            PackageInstallQualificationError,
+            RuntimeObservationQualificationError,
+        ):
             result = {"collected": False, "error": {"code": "evidence_collection_error"}}
             print(json.dumps(result, sort_keys=True, separators=(",", ":")))
             return 1

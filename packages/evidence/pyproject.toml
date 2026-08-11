@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
+  "stateweaver-adapter-opentelemetry==0.1.0",
   "stateweaver-contracts==0.1.0",
   "stateweaver-policy==0.1.0",
   "stateweaver-replay==0.1.0",
@@ -22,6 +23,7 @@ stateweaver-acceptance-evidence = "stateweaver.evidence.cli:main"
 packages = ["src/stateweaver"]
 
 [tool.uv.sources]
+stateweaver-adapter-opentelemetry = { workspace = true }
 stateweaver-contracts = { workspace = true }
 stateweaver-policy = { workspace = true }
 stateweaver-replay = { workspace = true }
