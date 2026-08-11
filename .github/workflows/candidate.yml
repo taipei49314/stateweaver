@@ -7,6 +7,10 @@ on:
         description: Exact lowercase 40-character SHA currently at refs/heads/main
         required: true
         type: string
+      qualification_run_id:
+        description: Successful M2 Docker Compose workflow run for the exact source SHA
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -123,11 +127,100 @@ jobs:
           npm run build
           npm audit --audit-level=high
 
+  admit_hosted_qualification:
+    name: Admit exact-SHA hosted M2-M4 receipts
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read # Download the named artifacts from the qualified workflow run.
+      contents: read # Check out and bind the exact source SHA.
+    env:
+      GH_TOKEN: ${{ github.token }}
+      QUALIFICATION_RUN_ID: ${{ inputs.qualification_run_id }}
+      SOURCE_SHA: ${{ needs.preflight.outputs.source_sha }}
+
+    steps:
+      - name: Check out the bound source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Install the exact verifier
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: false
+          python-version: "3.13"
+
+      - name: Install the locked workspace
+        run: uv sync --all-packages --locked
+
+      - name: Verify the source workflow identity and download exact artifacts
+        run: |
+          set -euo pipefail
+          [[ "$QUALIFICATION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QUALIFICATION_RUN_ID" \
+            > "$RUNNER_TEMP/qualification-run.json"
+          readarray -t identity < <(python - "$RUNNER_TEMP/qualification-run.json" "$SOURCE_SHA" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          run = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          expected_sha = sys.argv[2]
+          checks = {
+              "event": run.get("event") == "workflow_dispatch",
+              "head_branch": run.get("head_branch") == "main",
+              "head_sha": run.get("head_sha") == expected_sha,
+              "path": run.get("path") == ".github/workflows/docker-compose-live.yml",
+              "repository": run.get("repository", {}).get("full_name") == "taipei49314/stateweaver",
+              "status": run.get("status") == "completed",
+              "conclusion": run.get("conclusion") == "success",
+          }
+          attempt = run.get("run_attempt")
+          if not all(checks.values()) or not isinstance(attempt, int) or attempt < 1:
+              raise SystemExit("hosted qualification workflow identity is invalid")
+          print(attempt)
+          print(run.get("html_url", ""))
+          PY
+          )
+          [[ "${#identity[@]}" -eq 2 ]]
+          attempt="${identity[0]}"
+          [[ "${identity[1]}" == \
+            "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$QUALIFICATION_RUN_ID" ]]
+          receipt_name="hosted-docker-qualification-$QUALIFICATION_RUN_ID-$attempt"
+          bundle_name="$receipt_name-attestation"
+          mkdir -p downloaded-hosted/receipt downloaded-hosted/attestation
+          gh run download "$QUALIFICATION_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$receipt_name" --dir downloaded-hosted/receipt
+          gh run download "$QUALIFICATION_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "$bundle_name" --dir downloaded-hosted/attestation
+          mapfile -t receipts < <(find downloaded-hosted/receipt -type f -print)
+          mapfile -t bundles < <(find downloaded-hosted/attestation -type f -print)
+          [[ "${#receipts[@]}" -eq 1 && "${#bundles[@]}" -eq 1 ]]
+          uv run stateweaver foundation admit-hosted-docker \
+            --qualification-receipt "${receipts[0]}" \
+            --attestation-bundle "${bundles[0]}" \
+            --repository-marker "$SOURCE_SHA" \
+            --output hosted-qualification-admission.json
+
+      - name: Upload the admitted hosted qualification
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hosted-qualification-admission-${{ needs.preflight.outputs.source_sha }}
+          path: hosted-qualification-admission.json
+          if-no-files-found: error
+          retention-days: 30
+
   build_upload:
     name: Reproduce, assemble, verify, and upload candidate
-    needs: [preflight, source_gates]
+    needs: [preflight, source_gates, admit_hosted_qualification]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      actions: read # Download this run's admitted hosted qualification.
+      contents: read
     outputs:
       artifact_name: ${{ steps.address.outputs.artifact_name }}
       artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
@@ -243,6 +336,12 @@ jobs:
             tests/integration/compiler \
             --junitxml=artifacts/acceptance/junit/replay.xml
 
+      - name: Download the exact-SHA hosted M2-M4 admission
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: hosted-qualification-admission-${{ needs.preflight.outputs.source_sha }}
+          path: artifacts/qualification-inputs/hosted
+
       - name: Derive and vendor the exact locked runtime closure
         run: |
           set -euo pipefail
@@ -305,11 +404,10 @@ jobs:
           proof_run_id="candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           proof_stateweaver="$proof_env/bin/stateweaver"
           package_install_receipt="$GITHUB_WORKSPACE/artifacts/qualification-inputs/m0/package-install.json"
-          runtime_observation_receipt="$GITHUB_WORKSPACE/artifacts/qualification-inputs/m3/runtime-observation.json"
+          hosted_qualification_admission="$GITHUB_WORKSPACE/artifacts/qualification-inputs/hosted/hosted-qualification-admission.json"
           qualification_cwd="$RUNNER_TEMP/stateweaver-candidate-package-install-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           mkdir -p \
             "$(dirname "$package_install_receipt")" \
-            "$(dirname "$runtime_observation_receipt")" \
             "$qualification_cwd"
           (
             cd "$qualification_cwd"
@@ -317,9 +415,6 @@ jobs:
               --output "$package_install_receipt" \
               --repository-marker "$SOURCE_SHA" \
               --source-root "$GITHUB_WORKSPACE"
-            "$proof_stateweaver" foundation qualify-runtime-observation \
-              --output "$runtime_observation_receipt" \
-              --repository-marker "$SOURCE_SHA"
           )
           "$proof_stateweaver" foundation collect-evidence \
             --output-root artifacts/acceptance/runs \
@@ -331,7 +426,7 @@ jobs:
             --junit-lab artifacts/acceptance/junit/lab.xml \
             --junit-replay artifacts/acceptance/junit/replay.xml \
             --package-install-receipt "$package_install_receipt" \
-            --runtime-observation-receipt "$runtime_observation_receipt" \
+            --hosted-qualification-admission "$hosted_qualification_admission" \
             | tee artifacts/acceptance/collection.json
           "$proof_env/bin/python" - \
             "artifacts/acceptance/runs/$proof_run_id/qualification/registry/results.json" <<'PY'
@@ -340,7 +435,7 @@ jobs:
           from pathlib import Path
 
           summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["summary"]
-          expected = {"blocked": 34, "failed": 0, "not_run": 0, "passed": 58, "required": 92}
+          expected = {"blocked": 23, "failed": 0, "not_run": 0, "passed": 69, "required": 92}
           if summary != expected:
               raise SystemExit(f"unexpected acceptance summary: {summary!r}")
           PY
@@ -718,6 +813,6 @@ jobs:
             echo "## CANDIDATE_READY_FOR_EXTERNAL_QUALIFICATION"
             echo
             echo "Payload manifest: $MANIFEST_SHA256"
-            echo "M2 real-provider, M3 end-to-end, and M4 materialization are implemented but their separate exact-SHA qualifications are not admitted by this candidate; M5 remains incomplete and M6-M8 retain implementation and external-qualification blockers."
+            echo "The exact-SHA hosted M2 four-way/provider/cleanup rows, M3 observed chain, and M4 materialization row are admitted by this candidate proof. SW-M2-LIVE still needs a separate clean host; M5 exact-byte actual-ASGI replay is implemented but its Docker-materialized exit remains pending; M6-M8 retain implementation and external-qualification blockers."
             echo "No tag or GitHub Release was created."
           } >> "$GITHUB_STEP_SUMMARY"

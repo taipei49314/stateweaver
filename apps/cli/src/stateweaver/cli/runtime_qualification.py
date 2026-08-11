@@ -62,17 +62,40 @@ from stateweaver.policy import BudgetSnapshot, PolicyRequest, evaluate_policy
 from stateweaver.replay import canonical_sha256
 from stateweaver.twin import SecuritySemanticTwinBuilder, TelemetryFlow, TwinBuildInput
 from stateweaver_lab import LabMode
-from stateweaver_lab.models import RetainSessionLabAction
+from stateweaver_lab.models import (
+    DocumentId,
+    DowngradeRoleLabAction,
+    PrimeAuthorizationCacheLabAction,
+    PrimeAuthorizationCacheRequest,
+    PrincipalId,
+    RetainSessionLabAction,
+    Role,
+    RoleDowngradeRequest,
+)
 
 from .network_guard import deny_network_egress
 
 _EVALUATED_AT = datetime(2026, 7, 29, tzinfo=UTC)
-_LAB_ACTION = RetainSessionLabAction()
+_LAB_ACTIONS = (
+    RetainSessionLabAction(),
+    PrimeAuthorizationCacheLabAction(
+        payload=PrimeAuthorizationCacheRequest(document_id=DocumentId.TENANT_A_OWNED)
+    ),
+    DowngradeRoleLabAction(
+        payload=RoleDowngradeRequest(
+            principal_id=PrincipalId.A_EDITOR,
+            new_role=Role.VIEWER,
+            propagation="queued",
+        )
+    ),
+)
+_OBSERVED_CHAIN_LENGTH = 3
 
 
-def _action_envelope() -> ActionEnvelope:
-    spec = lab_http_action_spec(_LAB_ACTION)
-    action_id = "action.runtime.qualification.retain"
+def _action_envelope(ordinal: int = 1) -> ActionEnvelope:
+    lab_action = _LAB_ACTIONS[ordinal - 1]
+    spec = lab_http_action_spec(lab_action)
+    action_id = f"action.runtime.qualification.observed-{ordinal:02d}"
     return ActionEnvelope(
         action_id=action_id,
         experiment_id="experiment.runtime.qualification",
@@ -86,7 +109,7 @@ def _action_envelope() -> ActionEnvelope:
                 port=80,
                 path=spec.path,
             ),
-            body_artifact=lab_action_artifact(_LAB_ACTION),
+            body_artifact=lab_action_artifact(lab_action),
             identity_handle=spec.identity_handle,
             expected_statuses=spec.expected_statuses,
         ),
@@ -98,12 +121,12 @@ def _action_envelope() -> ActionEnvelope:
             type=RequesterType.WORKFLOW,
             role="runtime_qualification",
         ),
-        policy_decision_ref="decision.runtime.qualification.retain",
+        policy_decision_ref=f"decision.runtime.qualification.observed-{ordinal:02d}",
         timeout_ms=1_000,
     )
 
 
-def _policy_request(envelope: ActionEnvelope) -> PolicyRequest:
+def _policy_request(envelope: ActionEnvelope, ordinal: int = 1) -> PolicyRequest:
     scope = ScopeManifest(
         metadata=ScopeMetadata(name="runtime-qualification"),
         spec=ScopeSpec(
@@ -117,7 +140,7 @@ def _policy_request(envelope: ActionEnvelope) -> PolicyRequest:
                     ),
                 )
             ),
-            identities=ScopeIdentities(allowed=("test_user_a",)),
+            identities=ScopeIdentities(allowed=("test_user_a", "test_admin")),
             actions=ScopeActions(allow=(ScopeAction.HTTP_REQUEST,)),
             limits=ScopeLimits(
                 requestsPerSecond=10.0,
@@ -134,29 +157,29 @@ def _policy_request(envelope: ActionEnvelope) -> PolicyRequest:
         scope_manifest=scope,
         action_envelope=envelope,
         budget=BudgetSnapshot(
-            requests_in_window=0,
+            requests_in_window=ordinal - 1,
             request_window_seconds=1.0,
-            write_requests_used=0,
+            write_requests_used=ordinal - 1,
         ),
         evaluated_at=_EVALUATED_AT,
     )
 
 
-def _request(envelope: ActionEnvelope) -> RuntimeObservationRequest:
+def _request(envelope: ActionEnvelope, ordinal: int = 1) -> RuntimeObservationRequest:
     from stateweaver.adapters.telemetry.opentelemetry import ObservedStatePath
 
     return RuntimeObservationRequest(
         world_id=envelope.world_id,
-        transition_id="transition.runtime.qualification.retain",
-        name="retain synthetic old session",
+        transition_id=f"transition.runtime.qualification.observed-{ordinal:02d}",
+        name=f"actual ASGI observation {ordinal}",
         action_envelope=envelope,
-        expected_route="/v1/lab/session/retain",
+        expected_route=lab_http_action_spec(_LAB_ACTIONS[ordinal - 1]).path,
         observed_paths=(
             ObservedStatePath(
-                delta_id="delta.runtime.qualification.evidence-count",
+                delta_id=f"delta.runtime.qualification.evidence-count-{ordinal:02d}",
                 subject="resource.lab.application",
                 capture_path="application.evidence_count",
-                state_path="session.evidence_count",
+                state_path=f"chain.observed_step_{ordinal:02d}",
             ),
         ),
     )
@@ -272,20 +295,30 @@ def _projection(
         ) from None
 
 
-async def _execute_runtime_qualification(
+async def _execute_runtime_qualifications(
     repository_marker: str,
-) -> RuntimeObservationQualificationReceipt:
-    envelope = _action_envelope()
-    policy_request = _policy_request(envelope)
-    authorization = PolicyAuthorization.bind(
-        envelope,
-        policy_request,
-        evaluate_policy(policy_request),
+    *,
+    count: int,
+) -> tuple[RuntimeObservationQualificationReceipt, ...]:
+    lab_actions = _LAB_ACTIONS[:count]
+    envelopes = tuple(_action_envelope(ordinal) for ordinal in range(1, count + 1))
+    policy_requests = tuple(
+        _policy_request(envelope, ordinal) for ordinal, envelope in enumerate(envelopes, start=1)
+    )
+    authorizations = tuple(
+        PolicyAuthorization.bind(envelope, request, evaluate_policy(request))
+        for envelope, request in zip(envelopes, policy_requests, strict=True)
     )
     registry = FixedLabActionRegistry(
-        by_action_id={envelope.action_id: _LAB_ACTION},
-        by_body_artifact={lab_action_artifact(_LAB_ACTION): _LAB_ACTION},
-        policy_authorizations={envelope.policy_decision_ref: authorization},
+        by_action_id={
+            envelope.action_id: lab_action
+            for envelope, lab_action in zip(envelopes, lab_actions, strict=True)
+        },
+        by_body_artifact={lab_action_artifact(item): item for item in lab_actions},
+        policy_authorizations={
+            envelope.policy_decision_ref: authorization
+            for envelope, authorization in zip(envelopes, authorizations, strict=True)
+        },
     )
     environment = InProcessLabEnvironment(mode=LabMode.VULNERABLE, registry=registry)
     try:
@@ -294,17 +327,22 @@ async def _execute_runtime_qualification(
             random_seed=CANONICAL_RANDOM_SEED,
         )
         controller = RuntimeObservationController(environment)
-        result = await controller.observe(_request(envelope))
-        verified = controller.verify(result.receipt)
-        if verified != result.receipt:
-            raise RuntimeObservationQualificationError(
-                "runtime observation process-local verification failed"
+        qualifications: list[RuntimeObservationQualificationReceipt] = []
+        for ordinal, envelope in enumerate(envelopes, start=1):
+            result = await controller.observe(_request(envelope, ordinal))
+            verified = controller.verify(result.receipt)
+            if verified != result.receipt:
+                raise RuntimeObservationQualificationError(
+                    "runtime observation process-local verification failed"
+                )
+            projection = _projection(repository_marker=repository_marker, result=result)
+            qualifications.append(
+                build_runtime_observation_qualification(
+                    adapter_receipt=verified.model_dump(mode="json"),
+                    projection=projection,
+                )
             )
-        projection = _projection(repository_marker=repository_marker, result=result)
-        return build_runtime_observation_qualification(
-            adapter_receipt=verified.model_dump(mode="json"),
-            projection=projection,
-        )
+        return tuple(qualifications)
     finally:
         await environment.cleanup()
 
@@ -369,7 +407,7 @@ def qualify_runtime_observation(
 
     async def guarded() -> tuple[RuntimeObservationQualificationReceipt, int]:
         with deny_network_egress() as guard:
-            receipt = await _execute_runtime_qualification(repository_marker)
+            receipt = (await _execute_runtime_qualifications(repository_marker, count=1))[0]
         return receipt, guard.denied_attempts
 
     receipt, denied_attempts = asyncio.run(guarded())
@@ -380,7 +418,29 @@ def qualify_runtime_observation(
     return validate_runtime_qualification_against_adapter(receipt)
 
 
+def qualify_runtime_observation_chain(
+    repository_marker: str,
+) -> tuple[RuntimeObservationQualificationReceipt, ...]:
+    """Execute three sequential, actual-ASGI observations in one clean lab root."""
+
+    async def guarded() -> tuple[tuple[RuntimeObservationQualificationReceipt, ...], int]:
+        with deny_network_egress() as guard:
+            receipts = await _execute_runtime_qualifications(
+                repository_marker,
+                count=_OBSERVED_CHAIN_LENGTH,
+            )
+        return receipts, guard.denied_attempts
+
+    receipts, denied_attempts = asyncio.run(guarded())
+    if denied_attempts or len(receipts) != _OBSERVED_CHAIN_LENGTH:
+        raise RuntimeObservationQualificationError(
+            "runtime observation chain did not remain offline and complete"
+        )
+    return tuple(validate_runtime_qualification_against_adapter(item) for item in receipts)
+
+
 __all__ = [
     "qualify_runtime_observation",
+    "qualify_runtime_observation_chain",
     "validate_runtime_qualification_against_adapter",
 ]

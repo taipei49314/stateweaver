@@ -124,6 +124,15 @@ jobs:
             --junitxml=artifacts/m4-live/junit.xml \
             -q
 
+      - name: Compile retained M4 bytes and replay five clean roots
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/m5-clean-root
+          uv run stateweaver foundation qualify-observed-chain \
+            --m4-receipt artifacts/m4-live/materialized-search-receipt.json \
+            --repository-marker "$GITHUB_SHA" \
+            --output artifacts/m5-clean-root/observed-chain-receipt.json
+
       - name: Record and enforce cleanup inventory
         if: always()
         run: |
@@ -151,6 +160,22 @@ jobs:
           test ! -s artifacts/m2-live/managed-processes-after.txt
           test ! -s artifacts/m2-live/dirty-after.txt
 
+      - name: Build the exact hosted M2-M4 producer receipt
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/hosted-qualification
+          uv run stateweaver foundation qualify-hosted-docker \
+            --m2-root artifacts/m2-live \
+            --m4-root artifacts/m4-live \
+            --repository-marker "$GITHUB_SHA" \
+            --tree-sha "$(git rev-parse 'HEAD^{tree}')" \
+            --workflow-run-id "$GITHUB_RUN_ID" \
+            --workflow-run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --workflow-run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --runner-os "$RUNNER_OS" \
+            --runner-arch "$RUNNER_ARCH" \
+            --output artifacts/hosted-qualification/hosted-docker-qualification.json
+
       - name: Retain the observation inputs and result
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -168,3 +193,66 @@ jobs:
           path: artifacts/m4-live
           if-no-files-found: error
           retention-days: 30
+
+      - name: Retain the M5 clean-root replay receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m5-clean-root-replay-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/m5-clean-root
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Retain the hosted M2-M4 producer receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hosted-docker-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/hosted-qualification/hosted-docker-qualification.json
+          if-no-files-found: error
+          retention-days: 90
+
+  attest-hosted-qualification:
+    name: Attest hosted M2-M4 qualification
+    needs: live-provider-worlds
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      actions: read # Download this run's exact producer receipt.
+      attestations: write # Publish the GitHub artifact attestation.
+      contents: read # Bind the repository source identity.
+      id-token: write # Request the short-lived OIDC signing identity.
+
+    steps:
+      - name: Check out the qualified source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download the producer receipt
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: hosted-docker-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: hosted-qualification
+
+      - name: Require the exact subject and source
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          mapfile -t subjects < <(find hosted-qualification -maxdepth 1 -type f -print)
+          [[ "${#subjects[@]}" -eq 1 ]]
+          [[ "$(basename "${subjects[0]}")" == "hosted-docker-qualification.json" ]]
+
+      - name: Attest the hosted qualification receipt
+        id: attest
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: hosted-qualification/hosted-docker-qualification.json
+
+      - name: Retain the hosted qualification attestation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hosted-docker-qualification-${{ github.run_id }}-${{ github.run_attempt }}-attestation
+          path: ${{ steps.attest.outputs.bundle-path }}
+          if-no-files-found: error
+          retention-days: 90

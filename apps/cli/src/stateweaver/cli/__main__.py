@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Final
 
 from stateweaver.evidence import AcceptanceEvidenceError
+from stateweaver.evidence.hosted_qualification import HostedQualificationError
 from stateweaver.evidence.package_install import (
     PackageInstallQualificationError,
     write_package_install_receipt,
@@ -22,9 +23,19 @@ from stateweaver.evidence.runtime_observation import (
 
 from .evidence import collect_foundation_evidence, verify_foundation_evidence
 from .foundation import verify_foundation
+from .hosted_qualification import (
+    admit_hosted_qualification,
+    build_hosted_docker_qualification,
+    write_hosted_receipt,
+)
 from .materialized_search_qualification import (
     qualify_materialized_search,
     write_materialized_search_qualification,
+)
+from .observed_chain_qualification import (
+    ObservedChainQualificationError,
+    qualify_observed_chain,
+    write_observed_chain_qualification,
 )
 from .runtime_qualification import qualify_runtime_observation
 
@@ -86,6 +97,7 @@ def _parser() -> argparse.ArgumentParser:
     collect.add_argument("--junit-replay", type=Path, required=True)
     collect.add_argument("--package-install-receipt", type=Path)
     collect.add_argument("--runtime-observation-receipt", type=Path)
+    collect.add_argument("--hosted-qualification-admission", type=Path)
     package_install = foundation_commands.add_parser(
         "qualify-package-install",
         help="retain a clean-wheel public-contract import receipt",
@@ -105,6 +117,35 @@ def _parser() -> argparse.ArgumentParser:
     )
     materialized_search.add_argument("--output", type=Path, required=True)
     materialized_search.add_argument("--repository-marker", required=True)
+    hosted_docker = foundation_commands.add_parser(
+        "qualify-hosted-docker",
+        help="validate and retain exact hosted M2-M4 Docker artifacts",
+    )
+    hosted_docker.add_argument("--m2-root", type=Path, required=True)
+    hosted_docker.add_argument("--m4-root", type=Path, required=True)
+    hosted_docker.add_argument("--repository-marker", required=True)
+    hosted_docker.add_argument("--tree-sha", required=True)
+    hosted_docker.add_argument("--workflow-run-id", type=int, required=True)
+    hosted_docker.add_argument("--workflow-run-attempt", type=int, required=True)
+    hosted_docker.add_argument("--workflow-run-url", required=True)
+    hosted_docker.add_argument("--runner-os", choices=("Linux",), required=True)
+    hosted_docker.add_argument("--runner-arch", choices=("X64",), required=True)
+    hosted_docker.add_argument("--output", type=Path, required=True)
+    hosted_admission = foundation_commands.add_parser(
+        "admit-hosted-docker",
+        help="verify hosted receipt attestation and retain its acceptance admission",
+    )
+    hosted_admission.add_argument("--qualification-receipt", type=Path, required=True)
+    hosted_admission.add_argument("--attestation-bundle", type=Path, required=True)
+    hosted_admission.add_argument("--repository-marker", required=True)
+    hosted_admission.add_argument("--output", type=Path, required=True)
+    observed_chain = foundation_commands.add_parser(
+        "qualify-observed-chain",
+        help="compile exact retained M4 bytes and replay five clean roots",
+    )
+    observed_chain.add_argument("--m4-receipt", type=Path, required=True)
+    observed_chain.add_argument("--repository-marker", required=True)
+    observed_chain.add_argument("--output", type=Path, required=True)
     check = foundation_commands.add_parser(
         "verify-evidence", help="verify hashes and causal bindings in a proof bundle"
     )
@@ -238,6 +279,97 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0
 
+    if arguments.foundation_command == "qualify-hosted-docker":
+        try:
+            hosted_receipt = build_hosted_docker_qualification(
+                m2_root=arguments.m2_root,
+                m4_root=arguments.m4_root,
+                repository_marker=arguments.repository_marker,
+                tree_sha=arguments.tree_sha,
+                workflow_run_id=arguments.workflow_run_id,
+                workflow_run_attempt=arguments.workflow_run_attempt,
+                workflow_run_url=arguments.workflow_run_url,
+                runner_os=arguments.runner_os,
+                runner_arch=arguments.runner_arch,
+            )
+            write_hosted_receipt(arguments.output, hosted_receipt)
+        except (OSError, HostedQualificationError, ValueError):
+            print(
+                json.dumps(
+                    {"qualified": False, "error": {"code": "hosted_docker_not_qualified"}},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 1
+        print(
+            json.dumps(
+                {
+                    "qualified": True,
+                    "receipt_digest": hosted_receipt.receipt_digest,
+                    "workflow_run_id": hosted_receipt.workflow_run_id,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
+    if arguments.foundation_command == "admit-hosted-docker":
+        try:
+            admission = admit_hosted_qualification(
+                qualification_receipt_path=arguments.qualification_receipt,
+                attestation_bundle_path=arguments.attestation_bundle,
+                expected_repository_marker=arguments.repository_marker,
+            )
+            write_hosted_receipt(arguments.output, admission)
+        except (OSError, HostedQualificationError, ValueError):
+            print(
+                json.dumps(
+                    {"admitted": False, "error": {"code": "hosted_docker_not_admitted"}},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 1
+        print(
+            json.dumps(
+                {"admission_digest": admission.admission_digest, "admitted": True},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
+    if arguments.foundation_command == "qualify-observed-chain":
+        try:
+            chain_receipt = qualify_observed_chain(
+                m4_receipt_path=arguments.m4_receipt,
+                repository_marker=arguments.repository_marker,
+            )
+            write_observed_chain_qualification(arguments.output, chain_receipt)
+        except (OSError, ObservedChainQualificationError, ValueError):
+            print(
+                json.dumps(
+                    {"qualified": False, "error": {"code": "observed_chain_not_qualified"}},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 1
+        print(
+            json.dumps(
+                {
+                    "clean_root_replays": len(chain_receipt.runs),
+                    "qualified": True,
+                    "receipt_digest": chain_receipt.receipt_digest,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
     if arguments.foundation_command == "collect-evidence":
         try:
             result = collect_foundation_evidence(
@@ -251,12 +383,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 started_at=arguments.started_at,
                 package_install_receipt=arguments.package_install_receipt,
                 runtime_observation_receipt=arguments.runtime_observation_receipt,
+                hosted_qualification_admission=arguments.hosted_qualification_admission,
             )
         except (
             AcceptanceEvidenceError,
             OSError,
             PackageInstallQualificationError,
             RuntimeObservationQualificationError,
+            HostedQualificationError,
         ):
             result = {"collected": False, "error": {"code": "evidence_collection_error"}}
             print(json.dumps(result, sort_keys=True, separators=(",", ":")))

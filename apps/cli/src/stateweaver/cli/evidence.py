@@ -23,6 +23,10 @@ from stateweaver.evidence import (
     semantic_sha256,
     verify_acceptance_evidence,
 )
+from stateweaver.evidence.hosted_qualification import (
+    HostedQualificationAdmissionReceipt,
+    load_hosted_qualification_admission,
+)
 from stateweaver.evidence.package_install import load_package_install_receipt
 from stateweaver.evidence.runtime_observation import (
     RUNTIME_OBSERVATION_QUALIFICATION_PATH,
@@ -86,6 +90,7 @@ def collect_foundation_evidence(
     started_at: datetime,
     package_install_receipt: Path | None = None,
     runtime_observation_receipt: Path | None = None,
+    hosted_qualification_admission: Path | None = None,
 ) -> dict[str, object]:
     """Generate the proof once, bind supplied JUnit, then verify the resulting bundle."""
 
@@ -113,6 +118,16 @@ def collect_foundation_evidence(
         else None
     )
     runtime_qualification: RuntimeObservationQualificationReceipt | None = None
+    hosted_admission: HostedQualificationAdmissionReceipt | None = None
+    if hosted_qualification_admission is not None:
+        if runtime_observation_receipt is not None:
+            raise AcceptanceEvidenceError(
+                "hosted admission and standalone runtime admission are mutually exclusive"
+            )
+        hosted_admission = load_hosted_qualification_admission(
+            hosted_qualification_admission,
+            expected_repository_marker=repository_marker,
+        )
     if runtime_observation_receipt is not None:
         runtime_qualification = load_runtime_observation_qualification(
             runtime_observation_receipt,
@@ -159,6 +174,9 @@ def collect_foundation_evidence(
                 runtime_qualification.model_dump(mode="json")
                 if runtime_qualification is not None
                 else None
+            ),
+            hosted_qualification_admission=(
+                hosted_admission.model_dump(mode="json") if hosted_admission is not None else None
             ),
         ),
         output_root=output_root,

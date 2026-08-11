@@ -29,7 +29,7 @@ REPOSITORY_URL = "https://github.com/stateweaver/stateweaver"
 WORKSPACE_PACKAGES = tuple(f"stateweaver-package-{index:02d}" for index in range(1, 19))
 
 
-def test_candidate_proof_includes_clean_wheel_qualification_receipt() -> None:
+def test_candidate_proof_includes_clean_wheel_and_hosted_m2_m4_receipts() -> None:
     workflow = (
         Path(__file__).resolve().parents[3] / ".github" / "workflows" / "candidate.yml"
     ).read_text(encoding="utf-8")
@@ -38,15 +38,17 @@ def test_candidate_proof_includes_clean_wheel_qualification_receipt() -> None:
     )[1].split("\n      - name: ", 1)[0]
 
     qualifier = '"$proof_stateweaver" foundation qualify-package-install'
-    runtime_qualifier = '"$proof_stateweaver" foundation qualify-runtime-observation'
     collector = '"$proof_stateweaver" foundation collect-evidence'
     assert qualifier in step
-    assert runtime_qualifier in step
     assert collector in step
     assert step.index(qualifier) < step.index(collector)
-    assert step.index(runtime_qualifier) < step.index(collector)
     assert '--package-install-receipt "$package_install_receipt"' in step
-    assert '--runtime-observation-receipt "$runtime_observation_receipt"' in step
+    assert '--hosted-qualification-admission "$hosted_qualification_admission"' in step
+    assert (
+        'hosted_qualification_admission="$GITHUB_WORKSPACE/artifacts/'
+        'qualification-inputs/hosted/hosted-qualification-admission.json"'
+    ) in step
+    assert 'foundation qualify-runtime-observation' not in step
     assert '--source-root "$GITHUB_WORKSPACE"' in step
     assert 'qualification_cwd="$RUNNER_TEMP/' in step
 

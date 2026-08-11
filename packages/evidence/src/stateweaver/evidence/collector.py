@@ -54,6 +54,14 @@ from .acceptance_results import (
     build_acceptance_registry_closure,
     derive_acceptance_results,
 )
+from .hosted_qualification import (
+    HOSTED_QUALIFICATION_DERIVED_PATHS,
+    HostedQualificationError,
+    hosted_qualification_admissions,
+    hosted_qualification_payloads,
+    hosted_qualification_test_identities,
+    validate_hosted_qualification_admission,
+)
 from .package_install import (
     PACKAGE_INSTALL_QUALIFICATION_PATH,
     PackageInstallQualificationError,
@@ -639,6 +647,7 @@ class CollectionInput:
     run_metadata: Mapping[str, Any]
     package_install_receipt: Mapping[str, object] | None = None
     runtime_observation_receipt: Mapping[str, object] | None = None
+    hosted_qualification_admission: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -716,6 +725,7 @@ def collect_acceptance_evidence(
     )
     observed_evidence_paths: tuple[str, ...] = _REQUIRED_RELATIVE
     verified_admission_digests: dict[str, str] = {}
+    hosted_test_identities: tuple[str, ...] = ()
     if input.package_install_receipt is not None:
         repository_marker = input.run_metadata.get("repository_marker")
         if not isinstance(repository_marker, str):
@@ -731,6 +741,27 @@ def collect_acceptance_evidence(
             ) from None
         qualification_payloads[PACKAGE_INSTALL_QUALIFICATION_PATH] = package_install_receipt
         observed_evidence_paths = (*_REQUIRED_RELATIVE, PACKAGE_INSTALL_QUALIFICATION_PATH)
+    if input.hosted_qualification_admission is not None:
+        if input.runtime_observation_receipt is not None:
+            raise AcceptanceEvidenceError(
+                "hosted admission and standalone runtime admission are mutually exclusive"
+            )
+        repository_marker = input.run_metadata.get("repository_marker")
+        if not isinstance(repository_marker, str):
+            raise AcceptanceEvidenceError("hosted qualification marker is invalid")
+        try:
+            hosted_admission = validate_hosted_qualification_admission(
+                input.hosted_qualification_admission,
+                expected_repository_marker=repository_marker,
+            )
+        except HostedQualificationError:
+            raise AcceptanceEvidenceError("hosted qualification admission is invalid") from None
+        qualification_payloads.update(hosted_qualification_payloads(hosted_admission))
+        observed_evidence_paths = tuple(
+            dict.fromkeys((*observed_evidence_paths, *HOSTED_QUALIFICATION_DERIVED_PATHS))
+        )
+        verified_admission_digests.update(hosted_qualification_admissions(hosted_admission))
+        hosted_test_identities = hosted_qualification_test_identities(hosted_admission)
     if input.runtime_observation_receipt is not None:
         repository_marker = input.run_metadata.get("repository_marker")
         if not isinstance(repository_marker, str):
@@ -755,14 +786,17 @@ def collect_acceptance_evidence(
             RUNTIME_OBSERVATION_QUALIFICATION_PATH,
             OBSERVED_FRAGMENT_QUALIFICATION_PATH,
         )
-        verified_admission_digests = runtime_observation_admissions(runtime_receipt)
+        verified_admission_digests.update(runtime_observation_admissions(runtime_receipt))
     try:
         registry = load_acceptance_registry()
         registry_closure = build_acceptance_registry_closure(registry)
-        passing_test_identities = tuple(
-            identity
-            for name in _JUNIT_NAMES
-            for identity in junit_results[name]["testcase_identities"]
+        passing_test_identities = (
+            tuple(
+                identity
+                for name in _JUNIT_NAMES
+                for identity in junit_results[name]["testcase_identities"]
+            )
+            + hosted_test_identities
         )
         acceptance_results = derive_acceptance_results(
             registry,

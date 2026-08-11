@@ -31,7 +31,8 @@ def test_observed_search_materializes_only_four_two_one_and_reclaims_every_world
     assert len(receipt.released_allocation_ids) == 7
     assert all(item.changed_provider_count == 6 for item in receipt.provider_receipts)
     assert receipt.final_ledger.usage().materialized_worlds == 1
-    assert receipt.winner.transition_fragments == (receipt.winner_transition,)
+    assert len(receipt.winner.transition_fragments) == 3
+    assert receipt.winner.transition_fragments[-1] == receipt.winner_transition
     assert (
         MaterializedSearchQualificationReceipt.model_validate_json(canonical_json_bytes(receipt))
         == receipt

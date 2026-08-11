@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 from typing import Annotated, Literal, Protocol
 
@@ -23,6 +24,7 @@ from stateweaver.contracts import (
     OracleType,
     PredictedBoundary,
     Sha256Digest,
+    StateCondition,
     TransitionFragment,
     WorldTier,
     canonical_json_bytes,
@@ -53,7 +55,7 @@ from stateweaver.workflows.world import (
 )
 from stateweaver.worlds import EnvironmentHandle, SnapshotManifest, TargetSpec
 
-from .runtime_qualification import qualify_runtime_observation
+from .runtime_qualification import qualify_runtime_observation_chain
 
 _GHOST_COUNT = 24
 _PROMOTION_COUNTS = (4, 2, 1)
@@ -109,25 +111,40 @@ def _evidence_score(semantic_digest: Sha256Digest, ordinal: int) -> float:
 
 def derive_ghost_search_batch(
     observation: RuntimeObservationQualificationReceipt,
+    observed_chain: tuple[RuntimeObservationQualificationReceipt, ...] | None = None,
 ) -> SearchBatch:
     """Derive the fixed 24-candidate Ghost frontier from one exact M3 receipt."""
 
     admitted = RuntimeObservationQualificationReceipt.model_validate(
         observation.model_dump(mode="python")
     )
-    fragment = admitted.projection.transition_fragment
-    evidence_ids = tuple(sorted(fragment.evidence_ids))
-    seed = admitted.semantic_digest.removeprefix("sha256:")[:16]
+    chain = (
+        (admitted,)
+        if observed_chain is None
+        else tuple(
+            RuntimeObservationQualificationReceipt.model_validate(item.model_dump(mode="python"))
+            for item in observed_chain
+        )
+    )
+    if not chain or chain[0] != admitted:
+        raise MaterializedSearchQualificationError("M4 observed chain does not start at M3")
+    fragments = tuple(item.projection.transition_fragment for item in chain)
+    evidence_ids = tuple(
+        sorted({evidence_id for fragment in fragments for evidence_id in fragment.evidence_ids})
+    )
+    semantic_digest = sha256_digest(tuple(item.semantic_digest for item in chain))
+    seed = semantic_digest.removeprefix("sha256:")[:16]
     candidates: list[SearchCandidate] = []
     for index in range(_GHOST_COUNT):
         suffix = f"{index:02d}"
-        score = _evidence_score(admitted.semantic_digest, index)
+        score = _evidence_score(semantic_digest, index)
         state = CanonicalSecurityState(
             sessions=(),
             capabilities=("docker_compose_real_provider_snapshot",),
             controlled_time_bucket=index + 1,
             audit_metadata={
                 "m3_semantic_digest": admitted.semantic_digest,
+                "observed_chain_digest": semantic_digest,
                 "mutation_ordinal": index,
             },
         )
@@ -174,17 +191,22 @@ def derive_ghost_search_batch(
                     ),
                 ),
                 uncertainty=_signal(0.25, ScoreSource.DETERMINISTIC),
-                transition_fragments=(fragment,),
-                state_predicates=fragment.preconditions,
+                transition_fragments=fragments,
+                state_predicates=tuple(
+                    condition for fragment in fragments for condition in fragment.preconditions
+                ),
                 gates=PromotionGates(
                     in_scope=True,
                     policy_outcome=PolicyGateOutcome.ALLOW,
                     policy_decision_ref=f"policy.m4.fixed-lab.{seed}.{suffix}",
                     reversible=True,
-                    action_plan_refs=(
-                        f"plan.m4.{sha256_digest(fragment).removeprefix('sha256:')[:16]}.{suffix}",
+                    action_plan_refs=tuple(
+                        f"plan.m4.{sha256_digest(fragment).removeprefix('sha256:')[:16]}.{suffix}"
+                        for fragment in fragments
                     ),
-                    expected_observations=fragment.observables,
+                    expected_observations=tuple(
+                        condition for fragment in fragments for condition in fragment.observables
+                    ),
                     oracle_refs=(oracle_ref,),
                     evidence_ids=evidence_ids,
                     required_capabilities=("docker_compose_real_provider_snapshot",),
@@ -210,11 +232,13 @@ def _retier(item: SearchCandidate, tier: WorldTier) -> SearchCandidate:
 class MaterializedSearchQualificationReceipt(_QualificationModel):
     """Self-validating M3→M4 receipt for 24→4→2→1 real-world search."""
 
-    schema_version: Literal["stateweaver-m4-materialized-search-qualification-v1"]
+    schema_version: Literal["stateweaver-m4-materialized-search-qualification-v2"]
     status: Literal["MATERIALIZED_SEARCH_QUALIFIED"]
     repository_marker: RepositoryMarker
     m3_qualification: RuntimeObservationQualificationReceipt
     m3_semantic_digest: Sha256Digest
+    observed_chain: tuple[RuntimeObservationQualificationReceipt, ...]
+    observed_chain_digest: Sha256Digest
     observed_transition_digest: Sha256Digest
     ghost_evaluation_count: Literal[24]
     promotion_counts: tuple[Literal[4], Literal[2], Literal[1]]
@@ -236,14 +260,26 @@ class MaterializedSearchQualificationReceipt(_QualificationModel):
     @model_validator(mode="after")
     def qualification_is_closed(self) -> MaterializedSearchQualificationReceipt:
         m3 = self.m3_qualification
-        transition = m3.projection.transition_fragment
+        chain = self.observed_chain
+        transitions = tuple(item.projection.transition_fragment for item in chain)
         if (
             self.repository_marker != m3.projection.repository_marker
             or self.m3_semantic_digest != m3.semantic_digest
-            or self.observed_transition_digest != sha256_digest(transition)
+            or len(chain) != 3
+            or chain[0] != m3
+            or any(item.projection.repository_marker != self.repository_marker for item in chain)
+            or len({item.projection.action_digest for item in chain}) != 3
+            or len({item.projection.transition_id for item in chain}) != 3
+            or any(
+                previous.projection.after_capture.payload_digest
+                != following.projection.before_capture.payload_digest
+                for previous, following in pairwise(chain)
+            )
+            or self.observed_chain_digest != sha256_digest(chain)
+            or self.observed_transition_digest != sha256_digest(transitions)
         ):
             raise ValueError("M4 receipt does not bind the exact M3 qualification")
-        if self.stages[0].search_batch != derive_ghost_search_batch(m3):
+        if self.stages[0].search_batch != derive_ghost_search_batch(m3, chain):
             raise ValueError("M4 Ghost frontier is not derived from M3")
         expected_pairs = (
             (WorldTier.GHOST, WorldTier.REPLAY),
@@ -317,8 +353,8 @@ class MaterializedSearchQualificationReceipt(_QualificationModel):
         if (
             self.winner != expected_winner
             or self.winner_state_fingerprint != expected_winner.state_fingerprint
-            or self.winner_transition != transition
-            or expected_winner.transition_fragments != (transition,)
+            or self.winner_transition != transitions[-1]
+            or expected_winner.transition_fragments != transitions
             or self.winner_priority
             != expected_winner.scores.priority(expected_winner.uncertainty.value, 0.25)
         ):
@@ -342,10 +378,14 @@ class _DockerMaterializedWorldPort:
         observation: RuntimeObservationQualificationReceipt,
         candidates: SearchBatch,
         *,
+        observed_transition_digest: Sha256Digest,
+        compiler_root_conditions: tuple[StateCondition, ...],
         adapter: _M4EnvironmentAdapter | None = None,
     ) -> None:
         self._observation = observation
         self._candidates = {item.candidate_id: item for item in candidates.candidates}
+        self._observed_transition_digest = observed_transition_digest
+        self._compiler_root_conditions = compiler_root_conditions
         self._adapter: _M4EnvironmentAdapter = (
             RealDockerComposeEnvironmentAdapter() if adapter is None else adapter
         )
@@ -400,9 +440,7 @@ class _DockerMaterializedWorldPort:
             source_tier=request.source_tier,
             target_tier=request.target_tier,
             candidate_fingerprint=request.state_fingerprint,
-            observed_transition_digest=sha256_digest(
-                self._observation.projection.transition_fragment
-            ),
+            observed_transition_digest=self._observed_transition_digest,
             evidence_ref=candidate.gates.evidence_ids[0],
             oracle_ref=candidate.gates.oracle_refs[0],
             ordinal=ordinal,
@@ -446,7 +484,7 @@ class _DockerMaterializedWorldPort:
                     + self._observation.semantic_digest.removeprefix("sha256:")[:16]
                 ),
                 world_id=allocation.allocation_id,
-                conditions=self._observation.projection.transition_fragment.preconditions,
+                conditions=self._compiler_root_conditions,
             ),
             evidence_ref=materialization.evidence_ref,
             oracle_ref=materialization.oracle_ref,
@@ -481,11 +519,28 @@ def _ledger() -> BudgetLedger:
 async def _execute_materialized_search(
     observation: RuntimeObservationQualificationReceipt,
     *,
+    observed_chain: tuple[RuntimeObservationQualificationReceipt, ...] | None = None,
     adapter: _M4EnvironmentAdapter | None = None,
 ) -> MaterializedSearchQualificationReceipt:
-    ghosts = derive_ghost_search_batch(observation)
+    if observed_chain is None:
+        raise MaterializedSearchQualificationError("M4 requires the complete observed chain")
+    chain = observed_chain
+    ghosts = derive_ghost_search_batch(observation, chain)
     all_candidates = SearchBatch(candidates=ghosts.candidates)
-    port = _DockerMaterializedWorldPort(observation, all_candidates, adapter=adapter)
+    observed_transition_digest = sha256_digest(
+        tuple(item.projection.transition_fragment for item in chain)
+    )
+    port = _DockerMaterializedWorldPort(
+        observation,
+        all_candidates,
+        observed_transition_digest=observed_transition_digest,
+        compiler_root_conditions=tuple(
+            condition
+            for item in chain
+            for condition in item.projection.transition_fragment.preconditions
+        ),
+        adapter=adapter,
+    )
     policy = BeamSearchPolicy(
         seed=19,
         replay_width=4,
@@ -536,12 +591,14 @@ async def _execute_materialized_search(
     if port.residual_allocation_ids:
         raise MaterializedSearchQualificationError("materialized allocations remain after close")
     values: dict[str, object] = {
-        "schema_version": "stateweaver-m4-materialized-search-qualification-v1",
+        "schema_version": "stateweaver-m4-materialized-search-qualification-v2",
         "status": "MATERIALIZED_SEARCH_QUALIFIED",
         "repository_marker": observation.projection.repository_marker,
         "m3_qualification": observation,
         "m3_semantic_digest": observation.semantic_digest,
-        "observed_transition_digest": sha256_digest(observation.projection.transition_fragment),
+        "observed_chain": chain,
+        "observed_chain_digest": sha256_digest(chain),
+        "observed_transition_digest": observed_transition_digest,
         "ghost_evaluation_count": 24,
         "promotion_counts": _PROMOTION_COUNTS,
         "materialized_world_count": 7,
@@ -552,7 +609,7 @@ async def _execute_materialized_search(
         "winner": winner,
         "winner_priority": winner.scores.priority(winner.uncertainty.value, 0.25),
         "winner_state_fingerprint": winner.state_fingerprint,
-        "winner_transition": observation.projection.transition_fragment,
+        "winner_transition": chain[-1].projection.transition_fragment,
         "released_allocation_ids": port.released_allocation_ids,
         "residual_allocation_ids": port.residual_allocation_ids,
         "limitations": _LIMITATIONS,
@@ -570,8 +627,8 @@ def qualify_materialized_search(
 
     if _REPOSITORY_MARKER_RE.fullmatch(repository_marker) is None:
         raise MaterializedSearchQualificationError("repository marker must be an exact Git SHA")
-    observation = qualify_runtime_observation(repository_marker)
-    return asyncio.run(_execute_materialized_search(observation))
+    chain = qualify_runtime_observation_chain(repository_marker)
+    return asyncio.run(_execute_materialized_search(chain[0], observed_chain=chain))
 
 
 def write_materialized_search_qualification(

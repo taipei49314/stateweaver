@@ -37,6 +37,15 @@ from .collector import (
     _validate_foundation,
     _validate_supporting_inputs,
 )
+from .hosted_qualification import (
+    HOSTED_QUALIFICATION_ADMISSION_PATH,
+    HOSTED_QUALIFICATION_DERIVED_PATHS,
+    HostedQualificationError,
+    hosted_qualification_admissions,
+    hosted_qualification_payloads,
+    hosted_qualification_test_identities,
+    validate_hosted_qualification_admission,
+)
 from .package_install import (
     PACKAGE_INSTALL_QUALIFICATION_PATH,
     PackageInstallQualificationError,
@@ -126,6 +135,11 @@ def verify_acceptance_evidence(
     required = set(_REQUIRED_RELATIVE)
     if PACKAGE_INSTALL_QUALIFICATION_PATH in expected:
         required.add(PACKAGE_INSTALL_QUALIFICATION_PATH)
+    hosted_only_paths = set(HOSTED_QUALIFICATION_DERIVED_PATHS).difference(
+        {RUNTIME_OBSERVATION_QUALIFICATION_PATH, OBSERVED_FRAGMENT_QUALIFICATION_PATH}
+    )
+    if set(expected).intersection(hosted_only_paths):
+        required.update(HOSTED_QUALIFICATION_DERIVED_PATHS)
     if (
         RUNTIME_OBSERVATION_QUALIFICATION_PATH in expected
         or OBSERVED_FRAGMENT_QUALIFICATION_PATH in expected
@@ -238,6 +252,7 @@ def _verify_coherence(
                 )
         observed_evidence_paths: tuple[str, ...] = _REQUIRED_RELATIVE
         verified_admission_digests: dict[str, str] = {}
+        hosted_test_identities: tuple[str, ...] = ()
         package_receipt = parsed.get(PACKAGE_INSTALL_QUALIFICATION_PATH, _INVALID)
         if package_receipt is not _INVALID:
             if not _string_mapping(package_receipt):
@@ -260,6 +275,32 @@ def _verify_coherence(
                 *_REQUIRED_RELATIVE,
                 PACKAGE_INSTALL_QUALIFICATION_PATH,
             )
+        hosted_payload = parsed.get(HOSTED_QUALIFICATION_ADMISSION_PATH, _INVALID)
+        if hosted_payload is not _INVALID:
+            if not _string_mapping(hosted_payload):
+                raise AcceptanceEvidenceError("hosted qualification admission is invalid")
+            repository_marker = metadata.get("repository_marker")
+            if not isinstance(repository_marker, str):
+                raise AcceptanceEvidenceError("hosted qualification marker is invalid")
+            try:
+                hosted_admission = validate_hosted_qualification_admission(
+                    hosted_payload,
+                    expected_repository_marker=repository_marker,
+                )
+            except HostedQualificationError:
+                raise AcceptanceEvidenceError("hosted qualification admission is invalid") from None
+            expected_hosted_payloads = hosted_qualification_payloads(hosted_admission)
+            for relative, expected_payload in expected_hosted_payloads.items():
+                actual_payload = parsed.get(relative, _INVALID)
+                if actual_payload is _INVALID or canonical_json_bytes(
+                    actual_payload
+                ) != canonical_json_bytes(expected_payload):
+                    raise AcceptanceEvidenceError("hosted qualification artifact is inconsistent")
+            observed_evidence_paths = tuple(
+                dict.fromkeys((*observed_evidence_paths, *HOSTED_QUALIFICATION_DERIVED_PATHS))
+            )
+            verified_admission_digests.update(hosted_qualification_admissions(hosted_admission))
+            hosted_test_identities = hosted_qualification_test_identities(hosted_admission)
         runtime_receipt_payload = parsed.get(
             RUNTIME_OBSERVATION_QUALIFICATION_PATH,
             _INVALID,
@@ -300,13 +341,18 @@ def _verify_coherence(
                 RUNTIME_OBSERVATION_QUALIFICATION_PATH,
                 OBSERVED_FRAGMENT_QUALIFICATION_PATH,
             )
-            verified_admission_digests = runtime_observation_admissions(expected_runtime_receipt)
+            verified_admission_digests.update(
+                runtime_observation_admissions(expected_runtime_receipt)
+            )
         registry = load_acceptance_registry()
         expected_closure = build_acceptance_registry_closure(registry)
-        passing_test_identities = tuple(
-            identity
-            for name in ("contracts", "policy", "lab", "replay")
-            for identity in junit_results[name]["testcase_identities"]
+        passing_test_identities = (
+            tuple(
+                identity
+                for name in ("contracts", "policy", "lab", "replay")
+                for identity in junit_results[name]["testcase_identities"]
+            )
+            + hosted_test_identities
         )
         expected_results = derive_acceptance_results(
             registry,

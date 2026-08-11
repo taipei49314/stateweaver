@@ -23,39 +23,48 @@ CONTROLLED_GATES: Final = (
         "reason": "The exact-SHA foundation proof was collected and verified before assembly.",
         "status": "PASS",
     },
-)
-
-QUALIFICATION_AND_IMPLEMENTATION_GAPS: Final = (
     {
-        "gate_id": "SW-M2-MATERIALIZED",
+        "gate_id": "SW-M2-HOSTED-ADMISSION",
         "reason": (
-            "The six real providers are implemented, but this candidate workflow does not retain "
-            "an exact-SHA hosted Docker qualification receipt."
+            "The exact-SHA hosted four-way and six-provider receipts, cleanup inventory, and "
+            "constrained workflow attestation were admitted into the verified foundation proof."
         ),
-        "status": "PENDING_QUALIFICATION",
+        "status": "PASS",
     },
     {
         "gate_id": "SW-M3-RUNTIME-EVIDENCE",
         "reason": (
-            "The exact application-emitted runtime observation flow is implemented, but its "
-            "separate exact-SHA qualification receipt is not admitted by this candidate gate."
+            "Three application-emitted runtime observations were independently validated and "
+            "retained by the exact-SHA hosted admission."
         ),
-        "status": "PENDING_QUALIFICATION",
+        "status": "PASS",
     },
     {
         "gate_id": "SW-M4-MATERIALIZED-SEARCH",
         "reason": (
-            "The M3-derived 24-to-4-to-2-to-1 six-provider materializer is implemented, but this "
-            "candidate workflow does not retain its exact-SHA hosted Docker receipt."
+            "The hosted 24-to-4-to-2-to-1 materialization receipt and its seven provider "
+            "receipts were admitted into the verified foundation proof."
+        ),
+        "status": "PASS",
+    },
+)
+
+QUALIFICATION_AND_IMPLEMENTATION_GAPS: Final = (
+    {
+        "gate_id": "SW-M2-CLEAN-HOST",
+        "reason": (
+            "The hosted M2 receipts are admitted, but SW-M2-LIVE still requires a separate "
+            "clean-host execution rather than another job in the producing repository."
         ),
         "status": "PENDING_QUALIFICATION",
     },
     {
-        "gate_id": "SW-M5-OBSERVED-REPLAY",
+        "gate_id": "SW-M5-MATERIALIZED-REPLAY",
         "reason": (
-            "A three-fragment observed chain has not yet been replay-qualified from a clean root."
+            "Exact retained M4 bytes compile and replay over five actual-ASGI clean roots, but "
+            "the Docker-materialized exit and terminal vulnerable/patched controls remain pending."
         ),
-        "status": "PENDING_IMPLEMENTATION",
+        "status": "PENDING_QUALIFICATION",
     },
     {
         "gate_id": "SW-M6-PRODUCTION-PRODUCER",
@@ -148,5 +157,8 @@ LIMITATIONS: Final = (
         "Only execution.commands entries are typed command evidence; earlier source and build "
         "steps remain workflow dependencies and are not receipt-captured command gates."
     ),
-    "Required M2-M8 qualification receipts remain pending or externally blocked.",
+    (
+        "The M2 clean-host exit, Docker-materialized M5 exit, and M6-M8 implementation or "
+        "external qualification remain pending."
+    ),
 )

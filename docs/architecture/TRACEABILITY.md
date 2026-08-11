@@ -14,10 +14,10 @@ acceptance commands are intentionally local and do not require network access.
 |---|---|---|
 | M0 — Contracts + Lab | Proof-producing foundation is implemented and locally exercised; formal exit audit pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/policy/`, `packages/evidence/` |
 | M1 — Deterministic Replay Kernel | Proof-producing replay is implemented and locally exercised; formal exit audit pending | `packages/replay/`, `adapters/environments/in_process_lab/`, `apps/cli/` |
-| M2 — Materialized World Engine | Six real-provider capture/mutate/restore path and four-way local gate implemented; exact-SHA hosted admission pending | `packages/worlds/`, `adapters/environments/docker_compose/`, `tests/integration/worlds/` |
+| M2 — Materialized World Engine | Six-provider/four-way gate plus typed exact-SHA hosted receipt admission implemented; post-change hosted execution pending | `packages/worlds/`, `adapters/environments/docker_compose/`, `packages/evidence/src/stateweaver/evidence/hosted_qualification.py` |
 | M3 — Security Semantic Twin | Clean-wheel observed-flow receipt implemented and independently reproduced; M4/M5 materialized chain remains separate | `packages/twin/`, source/OTel adapters, `packages/evidence/src/stateweaver/evidence/runtime_observation.py`, `apps/cli/src/stateweaver/cli/runtime_qualification.py` |
-| M4 — Tiered Search Controller | M3-derived 24-to-4-to-2-to-1 production materializer passes locally in fixed six-provider worlds; hosted exact-SHA artifact pending | `packages/search/`, `workflows/world/`, `apps/cli/src/stateweaver/cli/materialized_search_qualification.py`, `tests/integration/worlds/test_live_materialized_search.py` |
-| M5 — Chain Compiler | Observed admission bridge and synthetic replay closure are implemented; release evidence pending | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
+| M4 — Tiered Search Controller | Three observed ASGI transitions feed the 24-to-4-to-2-to-1 materializer; exact-SHA producer/attestation/proof admission implemented | `packages/search/`, `workflows/world/`, `apps/cli/src/stateweaver/cli/materialized_search_qualification.py`, `packages/evidence/src/stateweaver/evidence/hosted_qualification.py` |
+| M5 — Chain Compiler | Exact retained M4 bytes compile and execute five freshly authorized actual-ASGI clean roots; materialized exit pending | `packages/compiler/`, `apps/cli/src/stateweaver/cli/observed_chain_qualification.py`, `apps/cli/tests/test_materialized_search_qualification.py` |
 | M6 — Reality Anchor + Proof Bundle | V2 event reconstruction + immutable-byte candidate resolver implemented; trusted broker pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
 | M7 — StateChainBench | Trusted built-in synthetic runner hardened; equal-work/public audit pending | `benchmarks/statechainbench/` |
 | M8 — Web UI + Public Release | Fixed synthetic API/client have local simulated-DOM test coverage; browser/new-user/public release pending | `apps/api/`, `apps/web/` |
@@ -25,8 +25,9 @@ acceptance commands are intentionally local and do not require network access.
 The acceptance collector derives seven local-deliverable receipts for 22 repo-controlled M3–M7
 rows from exact passing JUnit identities, canonical registry statements and evidence roles, and
 the proof's source/run bindings. Together with valid clean-wheel package-install and independently
-reproduced runtime-observation receipts, the projection is 58 `PASS`, zero `NOT_RUN`, and 34
-`BLOCKED`. The seven local-deliverable receipts remain explicitly
+reproduced runtime-observation receipts, the local projection is 58 `PASS`, zero `NOT_RUN`, and 34
+`BLOCKED`. A constrained exact-SHA hosted M2-M4 admission changes the candidate projection to
+69 `PASS` / 23 `BLOCKED` without admitting `SW-M2-LIVE`. The seven local-deliverable receipts remain explicitly
 non-authoritative, non-promotable, not release-eligible, and insufficient for their milestone exits.
 The distinct M3 receipt admits only five runtime-observation rows and remains non-release-eligible;
 the other 34 unresolved gates remain fail closed.
@@ -219,10 +220,10 @@ result ledger then attaches the receipt digest to exactly M3-T03, M3-T04, M3-T05
 SW-M3-OBSERVED; simply adding their evidence paths cannot promote them. `verify-evidence` repeats
 the adapter validation and execution and rejects a proof tree that changes while it does so.
 
-This closes the repository-side, process-local M3 observed-flow contract. It is not yet wired into
-the 24→4→2→1 materialized search and clean-root compiler execution, and it does not create an
-externally authenticated OTel collector or live-target receipt. Those are M4/M5 and later trust
-boundaries, not claims made by M3.
+This closes the repository-side, process-local M3 observed-flow contract. The hosted qualification
+now binds a three-observation chain into the 24→4→2→1 materialized search, and the retained M4
+bytes feed the clean-root compiler replay described below. It still does not create an externally
+authenticated OTel collector or live-target receipt; those later trust boundaries remain unclaimed.
 
 The horizontal pipeline test adds three socket-free TestClient flows with caller-constructed
 synthetic OTLP and state-delta evidence. Their three resulting `OBSERVED` fragments are preserved
@@ -265,16 +266,17 @@ transactional rollback or reversal of external effects, and the self-contained h
 no external freshness attestation.
 
 `apps/cli/src/stateweaver/cli/materialized_search_qualification.py` now supplies the production
-composition. It executes the M3 application lifecycle first, derives all 24 Ghost candidates from
-that exact admitted `OBSERVED` transition and semantic receipt, and uses the unchanged search and
+composition. It executes three sequential repository ASGI lifecycles first, derives all 24 Ghost
+candidates from those exact admitted `OBSERVED` transitions and semantic receipts, and uses the unchanged search and
 promotion controllers to admit exactly 4, then 2, then 1 candidates. Only those seven promotions
 fork fixed `RealDockerComposeEnvironmentAdapter` siblings. Each sibling performs an atomic
 before/mutation/after capture and receives a machine-oracle receipt only when PostgreSQL, Redis,
 RabbitMQ, browser-session, filesystem, and controlled-clock semantic digests all change. The final
 receipt replays every stage, conserves the 4/2/1 reservation ledger, binds the winner's score, state,
 and fragment to M3, records a peak of four live allocations, and requires seven releases with zero
-residue. A local opt-in Docker run passed; exact-merged-SHA hosted artifact read-back remains the
-last repository-controlled qualification step, so this is not a release or M4 six-hour exit claim.
+residue. The hosted workflow now emits a strict producer receipt, attests it with its exact workflow
+identity, and the candidate independently downloads and admits its derived M2-M4 paths. A new
+exact-merged-SHA run is still required after the code is committed; this is not a release claim.
 
 The older cross-milestone in-memory pipeline remains useful only for M5 compiler admission. It is no
 longer cited as materialized M4 evidence; the live selector is
@@ -314,8 +316,12 @@ revalidates unchecked model instances, takes its exact `RootState` only from the
 requires fragment preconditions/effects to equal the action-envelope guards/effects, checks the
 compiler output against every closed input, and fails if minimization drops an admitted observed
 fragment. The pipeline test compiles all three M3-observed fragments into a deterministic three-step
-plan requiring fresh authorization. That plan is not executed by this test; the separate M5
-clean-room execution remains synthetic and uses its own mocked fragment fixture.
+plan requiring fresh authorization. `observed_chain_qualification.py` now reads the retained M4
+file as exact canonical bytes, verifies its byte and semantic digests, compiles all three observed
+fragments with explicit order, freshly authorizes every final envelope, and executes the identical
+plan across five reset roots through the repository-owned ASGI app. Byte drift, action substitution,
+root drift, or an incomplete fragment set fails closed. This remains socket-free and does not claim
+the Docker-materialized M5 exit or terminal vulnerable/patched differential.
 
 ## M6 — Reality Anchor + Proof Bundle
 
