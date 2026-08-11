@@ -227,14 +227,17 @@ def validate_build_command_policy(records: list[dict[str, object]], *, source_sh
             elif argv[0] != python_executable:
                 raise CandidateError("build-command-policy-invalid")
         proof = _argv(records[3])
-        _require_executable(proof, r"uv")
+        _require_executable(proof, r"stateweaver")
+        proof_executable = PurePosixPath(proof[0])
         if (
-            len(proof) != 8
-            or proof[1:5] != ["run", "stateweaver", "foundation", "verify-evidence"]
-            or proof[6:] != ["--repository-marker", source_sha]
+            len(proof) != 6
+            or proof[1:3] != ["foundation", "verify-evidence"]
+            or proof[4:] != ["--repository-marker", source_sha]
+            or proof_executable.parent.name != "bin"
+            or not proof_executable.parent.parent.name.startswith("proof-env-")
         ):
             raise CandidateError("build-command-policy-invalid")
-        _require_paths([proof[5]])
+        _require_paths([proof[3]])
         clean = _argv(records[4])
         _require_executable(clean, r"python(?:3(?:\.13)?)?")
         expected_clean = [
