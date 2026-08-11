@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import socket
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 import pytest
 from stateweaver.replay import ReplayPlan, ReplayRunResult, RootSeed, canonical_sha256
 
+from stateweaver.cli import evidence as cli_evidence
 from stateweaver.cli.__main__ import main
 from stateweaver.cli.foundation import verify_foundation
 from stateweaver.cli.network_guard import (
@@ -95,6 +96,45 @@ def test_doctor_reports_offline_component_availability(capsys: pytest.CaptureFix
     assert payload["mode"] == "offline-in-process"
     assert payload["auth_required"] is False
     assert all(component["available"] for component in payload["components"].values())
+
+
+def test_runtime_fingerprint_ignores_uv_cache_but_binds_package_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    metadata_path = tmp_path / "demo-1.0.dist-info" / "METADATA"
+    uv_cache_path = metadata_path.parent / "uv_cache.json"
+    runtime_path = tmp_path / "demo_runtime" / "__init__.py"
+    metadata_path.parent.mkdir(parents=True)
+    runtime_path.parent.mkdir(parents=True)
+    metadata_path.write_text("Metadata-Version: 2.4\nName: demo\nVersion: 1.0\n", encoding="utf-8")
+    uv_cache_path.write_text('{"timestamp":1}\n', encoding="utf-8")
+    runtime_path.write_text('VALUE = "bound"\n', encoding="utf-8")
+
+    class FakeDistribution:
+        version = "1.0"
+        files = (
+            PurePosixPath("demo-1.0.dist-info/METADATA"),
+            PurePosixPath("demo-1.0.dist-info/uv_cache.json"),
+            PurePosixPath("demo_runtime/__init__.py"),
+        )
+
+        @staticmethod
+        def read_text(filename: str) -> str | None:
+            return metadata_path.read_text(encoding="utf-8") if filename == "METADATA" else None
+
+        @staticmethod
+        def locate_file(path: PurePosixPath) -> Path:
+            return tmp_path / path.as_posix()
+
+    monkeypatch.setattr(cli_evidence, "_RUNTIME_DISTRIBUTIONS", ("demo",))
+    monkeypatch.setattr(cli_evidence, "distribution", lambda _name: FakeDistribution())
+
+    baseline = cli_evidence._runtime_dependency_fingerprint()
+    uv_cache_path.write_text('{"timestamp":2}\n', encoding="utf-8")
+    assert cli_evidence._runtime_dependency_fingerprint() == baseline
+
+    runtime_path.write_text('VALUE = "changed"\n', encoding="utf-8")
+    assert cli_evidence._runtime_dependency_fingerprint() != baseline
 
 
 def test_help_lists_doctor_and_foundation_verify(capsys: pytest.CaptureFixture[str]) -> None:

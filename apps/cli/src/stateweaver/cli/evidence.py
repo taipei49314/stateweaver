@@ -56,7 +56,7 @@ _RUNTIME_DISTRIBUTIONS: Final = (
     "typing-inspection",
 )
 _GENERATED_DISTRIBUTION_FILES: Final = frozenset(
-    {"INSTALLER", "RECORD", "REQUESTED", "direct_url.json"}
+    {"INSTALLER", "RECORD", "REQUESTED", "direct_url.json", "uv_cache.json"}
 )
 
 

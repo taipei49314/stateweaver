@@ -287,9 +287,7 @@ def _request(tmp_path: Path, *, name: str = "candidate") -> BuildRequest:
                     (
                         "verify-foundation-proof",
                         [
-                            "/usr/bin/uv",
-                            "run",
-                            "stateweaver",
+                            "/tmp/proof-env-123/bin/stateweaver",
                             "foundation",
                             "verify-evidence",
                             "/workspace/artifacts/acceptance/runs/run-1",
@@ -488,6 +486,27 @@ def test_builder_rejects_forged_command_argv(tmp_path: Path) -> None:
     request = _request(tmp_path)
     records = [json.loads(line) for line in request.command_records.read_bytes().splitlines()]
     records[0]["argv"] = ["/attacker/false-proof"]
+    request.command_records.write_bytes(
+        b"".join(canonical_json_bytes(record) for record in records)
+    )
+
+    with pytest.raises(CandidateError, match="build-command-policy-invalid"):
+        build_candidate(request)
+
+
+def test_builder_rejects_proof_verified_from_editable_workspace(tmp_path: Path) -> None:
+    request = _request(tmp_path)
+    records = [json.loads(line) for line in request.command_records.read_bytes().splitlines()]
+    records[3]["argv"] = [
+        "/usr/bin/uv",
+        "run",
+        "stateweaver",
+        "foundation",
+        "verify-evidence",
+        "/workspace/artifacts/acceptance/runs/run-1",
+        "--repository-marker",
+        SOURCE_SHA,
+    ]
     request.command_records.write_bytes(
         b"".join(canonical_json_bytes(record) for record in records)
     )

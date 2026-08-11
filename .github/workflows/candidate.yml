@@ -219,11 +219,10 @@ jobs:
           done
           python -m tools.candidate.compare "$ROOT_A/web-artifact" "$ROOT_B/web-artifact"
 
-      - name: Produce the exact-SHA foundation proof
+      - name: Produce exact-SHA foundation proof inputs
         run: |
           set -euo pipefail
           uv sync --all-packages --group dev --locked
-          proof_run_id="candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           mkdir -p artifacts/acceptance/junit
           printf '%s\n' "$BUILD_STARTED_AT" > artifacts/acceptance/started-at.txt
           uv run pytest packages/contracts/tests --junitxml=artifacts/acceptance/junit/contracts.xml
@@ -235,20 +234,6 @@ jobs:
             apps/cli/tests \
             packages/evidence/tests \
             --junitxml=artifacts/acceptance/junit/replay.xml
-          uv run stateweaver foundation collect-evidence \
-            --output-root artifacts/acceptance/runs \
-            --run-id "$proof_run_id" \
-            --repository-marker "$SOURCE_SHA" \
-            --started-at "$BUILD_STARTED_AT" \
-            --junit-contracts artifacts/acceptance/junit/contracts.xml \
-            --junit-policy artifacts/acceptance/junit/policy.xml \
-            --junit-lab artifacts/acceptance/junit/lab.xml \
-            --junit-replay artifacts/acceptance/junit/replay.xml \
-            | tee artifacts/acceptance/collection.json
-          uv run stateweaver foundation verify-evidence \
-            "artifacts/acceptance/runs/$proof_run_id" \
-            --repository-marker "$SOURCE_SHA"
-          echo "PROOF_RUN_DIR=$GITHUB_WORKSPACE/artifacts/acceptance/runs/$proof_run_id" >> "$GITHUB_ENV"
 
       - name: Derive and vendor the exact locked runtime closure
         run: |
@@ -285,8 +270,48 @@ jobs:
             echo "CANDIDATE_PYTHON=$candidate_python"
             echo "CANDIDATE_PYTHON_FULL_VERSION=$candidate_python_full_version"
             echo "CANDIDATE_PIP_VERSION=$candidate_pip_version"
+            echo "RUNTIME_REQUIREMENTS=$runtime_requirements"
             echo "VENDOR_A=$vendor_a"
             echo "VENDOR_B=$vendor_b"
+          } >> "$GITHUB_ENV"
+
+      - name: Produce exact-SHA foundation proof from candidate distributions
+        run: |
+          set -euo pipefail
+          proof_env="$RUNNER_TEMP/proof-env-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          [[ ! -e "$proof_env" ]]
+          uv venv --python "$CANDIDATE_PYTHON" "$proof_env"
+          UV_OFFLINE=1 UV_NO_CACHE=1 uv pip install \
+            --python "$proof_env/bin/python" \
+            --offline --no-index --no-cache \
+            --find-links "$GITHUB_WORKSPACE/candidate/payload/vendor/python" \
+            --require-hashes \
+            -r "$RUNTIME_REQUIREMENTS"
+          mapfile -d '' proof_wheels < <(find "$ROOT_A/dist" \
+            -maxdepth 1 -type f -name '*.whl' -print0 | sort -z)
+          [[ "${#proof_wheels[@]}" -eq 18 ]]
+          UV_OFFLINE=1 UV_NO_CACHE=1 uv pip install \
+            --python "$proof_env/bin/python" \
+            --offline --no-index --no-cache --no-deps "${proof_wheels[@]}"
+          uv pip check --python "$proof_env/bin/python"
+          proof_run_id="candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          proof_stateweaver="$proof_env/bin/stateweaver"
+          "$proof_stateweaver" foundation collect-evidence \
+            --output-root artifacts/acceptance/runs \
+            --run-id "$proof_run_id" \
+            --repository-marker "$SOURCE_SHA" \
+            --started-at "$BUILD_STARTED_AT" \
+            --junit-contracts artifacts/acceptance/junit/contracts.xml \
+            --junit-policy artifacts/acceptance/junit/policy.xml \
+            --junit-lab artifacts/acceptance/junit/lab.xml \
+            --junit-replay artifacts/acceptance/junit/replay.xml \
+            | tee artifacts/acceptance/collection.json
+          "$proof_stateweaver" foundation verify-evidence \
+            "artifacts/acceptance/runs/$proof_run_id" \
+            --repository-marker "$SOURCE_SHA"
+          {
+            echo "PROOF_RUN_DIR=$GITHUB_WORKSPACE/artifacts/acceptance/runs/$proof_run_id"
+            echo "PROOF_STATEWEAVER=$proof_stateweaver"
           } >> "$GITHUB_ENV"
 
       - name: Stage candidate payload and installation metadata
@@ -337,7 +362,7 @@ jobs:
           "${record[@]}" --stage compare-vendored-runtime --cwd "$GITHUB_WORKSPACE" -- \
             "$CANDIDATE_PYTHON" -m tools.candidate.compare "$VENDOR_A" "$VENDOR_B"
           "${record[@]}" --stage verify-foundation-proof --cwd "$GITHUB_WORKSPACE" -- \
-            uv run stateweaver foundation verify-evidence \
+            "$PROOF_STATEWEAVER" foundation verify-evidence \
             "$PROOF_RUN_DIR" --repository-marker "$SOURCE_SHA"
           "${record[@]}" --stage verify-source-worktree-clean --cwd "$GITHUB_WORKSPACE" -- \
             "$CANDIDATE_PYTHON" -m tools.candidate.git_clean \
