@@ -10,6 +10,8 @@ All notable changes are recorded here. The project has no published tag or GitHu
   independent qualification gates, without self-declared status fields.
 - Repository-relative executable test selectors, exact unresolved-selector closure, and a pinned
   canonical resource digest for the registry.
+- A proof-bound 92-row result ledger derived from exact passing JUnit identities and retained
+  evidence paths, with non-local gates held `BLOCKED` and independent verifier re-derivation.
 - A process-local runtime observation controller that issues its own trace and derives state deltas.
 - Candidate payload, checksum, SBOM, receipt, reproducibility, and fresh-downloader tooling.
 - A historical fresh-clone narrative snapshot and explicit qualification blocker records.

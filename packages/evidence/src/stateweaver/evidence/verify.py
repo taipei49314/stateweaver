@@ -16,6 +16,14 @@ from ._io import (
     sha256_bytes,
     validate_run_id,
 )
+from .acceptance_registry import load_acceptance_registry
+from .acceptance_results import (
+    AcceptanceRegistryClosure,
+    AcceptanceResults,
+    AcceptanceResultsError,
+    build_acceptance_registry_closure,
+    derive_acceptance_results,
+)
 from .collector import (
     _REQUIRED_RELATIVE,
     AcceptanceEvidenceError,
@@ -41,6 +49,7 @@ _RUN_MANIFEST_FIELDS = frozenset(
         "collected_at",
         "redacted_values",
         "junit",
+        "acceptance_registry",
     }
 )
 _INVALID = object()
@@ -186,6 +195,26 @@ def _verify_coherence(
             name: snapshot[f"junit/{name}.xml"] for name in ("contracts", "policy", "lab", "replay")
         }
         junit_results = _read_junit_payloads(junit_payloads)
+        registry = load_acceptance_registry()
+        expected_closure = build_acceptance_registry_closure(registry)
+        passing_test_identities = tuple(
+            identity
+            for name in ("contracts", "policy", "lab", "replay")
+            for identity in junit_results[name]["testcase_identities"]
+        )
+        expected_results = derive_acceptance_results(
+            registry,
+            passing_test_identities=passing_test_identities,
+            observed_evidence_paths=_REQUIRED_RELATIVE,
+        )
+        if canonical_json_bytes(parsed["qualification/registry/closure.json"]) != (
+            canonical_json_bytes(expected_closure.model_dump(mode="json"))
+        ):
+            raise AcceptanceEvidenceError("acceptance registry closure is inconsistent")
+        if canonical_json_bytes(parsed["qualification/registry/results.json"]) != (
+            canonical_json_bytes(expected_results.model_dump(mode="json"))
+        ):
+            raise AcceptanceEvidenceError("acceptance registry results are inconsistent")
         metadata = run_manifest.get("metadata")
         if not _string_mapping(metadata):
             raise AcceptanceEvidenceError("run manifest metadata is invalid")
@@ -204,10 +233,19 @@ def _verify_coherence(
             foundation.raw,
             junit_results,
             expected_provenance,
+            expected_closure,
+            expected_results,
         )
     except _ProvenanceMismatchError:
         errors.append("artifact provenance does not match independent expectations")
-    except (AcceptanceEvidenceError, EvidenceInputError, KeyError, TypeError, ValueError):
+    except (
+        AcceptanceEvidenceError,
+        AcceptanceResultsError,
+        EvidenceInputError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ):
         errors.append("artifact bundle is not causally coherent")
 
 
@@ -217,6 +255,8 @@ def _validate_run_manifest(
     foundation: Mapping[str, Any],
     junit_results: Mapping[str, _JunitSummary],
     expected_provenance: ExpectedProvenance | None,
+    registry_closure: AcceptanceRegistryClosure,
+    acceptance_results: AcceptanceResults,
 ) -> None:
     if set(manifest) != _RUN_MANIFEST_FIELDS:
         raise AcceptanceEvidenceError("run manifest fields are invalid")
@@ -243,6 +283,19 @@ def _validate_run_manifest(
         or redacted_values != 0
         or collected_at < completed_at
         or canonical_json_bytes(manifest.get("junit")) != canonical_json_bytes(junit_results)
+        or canonical_json_bytes(manifest.get("acceptance_registry"))
+        != canonical_json_bytes(
+            {
+                "closure_sha256": sha256_bytes(
+                    canonical_json_bytes(registry_closure.model_dump(mode="json"))
+                ),
+                "registry_sha256": registry_closure.registry_sha256,
+                "results_sha256": sha256_bytes(
+                    canonical_json_bytes(acceptance_results.model_dump(mode="json"))
+                ),
+                "summary": acceptance_results.summary.model_dump(mode="json"),
+            }
+        )
     ):
         raise AcceptanceEvidenceError("run manifest does not match the proof bundle")
     if expected_provenance is not None and (

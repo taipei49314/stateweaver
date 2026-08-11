@@ -46,6 +46,14 @@ from ._io import (
     sha256_bytes,
     validate_run_id,
 )
+from .acceptance_registry import load_acceptance_registry
+from .acceptance_results import (
+    AcceptanceRegistryClosure,
+    AcceptanceResults,
+    AcceptanceResultsError,
+    build_acceptance_registry_closure,
+    derive_acceptance_results,
+)
 
 _JUNIT_NAMES = ("contracts", "policy", "lab", "replay")
 _JUNIT_REQUIRED_IDENTITIES: dict[str, frozenset[str]] = {
@@ -73,6 +81,7 @@ _JUNIT_REQUIRED_IDENTITIES: dict[str, frozenset[str]] = {
             "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::test_full_vulnerable_plan_is_deterministic_over_five_runs",
             "apps.cli.tests.test_foundation::test_foundation_verification_meets_all_acceptance_conditions",
             "packages.evidence.tests.test_collector::test_collects_exact_complete_and_verifiable_tree",
+            "packages.evidence.tests.test_acceptance_registry::test_packaged_registry_is_canonical_and_has_exact_required_ids",
         }
     ),
 }
@@ -91,6 +100,7 @@ _JUNIT_ALLOWED_PREFIXES: dict[str, tuple[str, ...]] = {
         "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::",
         "apps.cli.tests.test_foundation::",
         "packages.evidence.tests.test_acceptance_registry::",
+        "packages.evidence.tests.test_acceptance_results::",
         "packages.evidence.tests.test_collector::",
         "packages.evidence.tests.test_reality_bundle::",
         "packages.evidence.tests.test_semantic_trace::",
@@ -327,6 +337,8 @@ _REQUIRED_RELATIVE = (
     "replay/failure-localization.json",
     "replay/action-log.json",
     "policy/decisions.json",
+    "qualification/registry/closure.json",
+    "qualification/registry/results.json",
 )
 
 
@@ -412,6 +424,21 @@ def collect_acceptance_evidence(
     validated = _validate_foundation(input.foundation)
     junit_bytes, junit_results = _read_junit_sources(input.junit_sources)
     _validate_supporting_inputs(input, validated, junit_results)
+    try:
+        registry = load_acceptance_registry()
+        registry_closure = build_acceptance_registry_closure(registry)
+        passing_test_identities = tuple(
+            identity
+            for name in _JUNIT_NAMES
+            for identity in junit_results[name]["testcase_identities"]
+        )
+        acceptance_results = derive_acceptance_results(
+            registry,
+            passing_test_identities=passing_test_identities,
+            observed_evidence_paths=_REQUIRED_RELATIVE,
+        )
+    except AcceptanceResultsError:
+        raise AcceptanceEvidenceError("acceptance registry results could not be derived") from None
 
     root = output_root / run_id
     try:
@@ -421,7 +448,18 @@ def collect_acceptance_evidence(
 
     try:
         artifacts = _proof_artifact_payloads(validated.raw)
-        manifest = _run_manifest(validated, input.run_metadata, junit_results, run_id)
+        artifacts["qualification/registry/closure.json"] = registry_closure.model_dump(mode="json")
+        artifacts["qualification/registry/results.json"] = acceptance_results.model_dump(
+            mode="json"
+        )
+        manifest = _run_manifest(
+            validated,
+            input.run_metadata,
+            junit_results,
+            run_id,
+            registry_closure,
+            acceptance_results,
+        )
         artifacts["run-manifest.json"] = manifest
         for relative, payload in artifacts.items():
             atomic_json(root / relative, payload)
@@ -1230,7 +1268,11 @@ def _run_manifest(
     metadata: Mapping[str, Any],
     junit_results: Mapping[str, _JunitSummary],
     run_id: str,
+    registry_closure: AcceptanceRegistryClosure,
+    acceptance_results: AcceptanceResults,
 ) -> dict[str, object]:
+    closure_payload = registry_closure.model_dump(mode="json")
+    results_payload = acceptance_results.model_dump(mode="json")
     return {
         "schema_version": "acceptance-evidence-v1",
         "run_id": run_id,
@@ -1243,6 +1285,12 @@ def _run_manifest(
         "collected_at": datetime.now(UTC).isoformat(),
         "redacted_values": 0,
         "junit": junit_results,
+        "acceptance_registry": {
+            "closure_sha256": sha256_bytes(canonical_json_bytes(closure_payload)),
+            "registry_sha256": registry_closure.registry_sha256,
+            "results_sha256": sha256_bytes(canonical_json_bytes(results_payload)),
+            "summary": acceptance_results.summary.model_dump(mode="json"),
+        },
     }
 
 

@@ -1,14 +1,18 @@
 # Verifying a StateWeaver foundation proof
 
-The M0/M1 proof has three independent layers:
+The M0/M1 proof has four independent layers:
 
 1. `artifact-manifest.sha256` closes the exact bundle file set and hashes every artifact.
-2. `stateweaver foundation verify-evidence` validates the causal model, re-executes the installed
-   deterministic foundation, and binds installed source, Oracle, and runtime dependency bytes.
-3. The main-branch GitHub workflow uses `actions/attest@v4` to sign the exact-file manifest with
+2. `qualification/registry/closure.json` pins all 92 required IDs and selectors, while
+   `qualification/registry/results.json` derives each row from exact passing JUnit identities and
+   retained evidence paths. Non-local gates remain `BLOCKED` in a producer proof.
+3. `stateweaver foundation verify-evidence` validates the causal model, independently re-derives
+   the registry ledger, re-executes the installed deterministic foundation, and binds installed
+   source, Oracle, and runtime dependency bytes.
+4. The main-branch GitHub workflow uses `actions/attest@v4` to sign the exact-file manifest with
    GitHub Actions OIDC provenance after both Python matrix jobs pass.
 
-The third layer has one retained public baseline example:
+The fourth layer has one retained public baseline example:
 [main-branch run 31239564101](https://github.com/taipei49314/stateweaver/actions/runs/31239564101)
 completed at source SHA `aa60cad5be43f383810bf2e276307c4f4c9cec10`. Its attestation is historical
 evidence for that exact subject and source only; it does not qualify a later commit or release.

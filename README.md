@@ -66,7 +66,7 @@ Architecture baseline v1 ships milestone-by-milestone. Current implementation an
 
 | Area | Honest status |
 |---|---|
-| M0/M1 foundation proof | Synthetic proof exists; canonical 92-row registry (72 architecture + 20 qualification) exists; formal row receipts remain pending |
+| M0/M1 foundation proof | Synthetic proof and canonical 92-row registry exist; each proof now derives a manifest-bound row ledger, while unresolved and external rows remain `NOT_RUN` or `BLOCKED` |
 | M2 world engine | Archive + lifecycle gates exist; ephemeral local synthetic Docker diagnostic only; **no** retained qualification or real-provider proof |
 | M3 semantic twin | Runtime-derived process-local observation primitive exists; M4/M5 integration remains pending |
 | M4 offline search | 24 → 4 → 2 → 1 flow preserves the observed candidate |
@@ -86,7 +86,7 @@ Full matrices: [docs/architecture/TRACEABILITY.md](docs/architecture/TRACEABILIT
 
 | Milestone | Auditable local status | Evidence |
 | --- | --- | --- |
-| M0 Contracts + Lab | Foundation proof implementation and exact registry exist; release audit pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/evidence/.../acceptance-registry.json` |
+| M0 Contracts + Lab | Foundation proof, exact registry, and fail-closed derived row ledger exist; external release qualification remains pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/evidence/` |
 | M1 Deterministic Replay | Five-run clean-root differential is implemented; formal qualification pending | `packages/replay/`, `apps/cli/` |
 | M2 World Engine | Archive/lifecycle plus synthetic Docker path; real providers remain absent | `packages/worlds/`, `tests/integration/worlds/`, adapter `PARTIAL` |
 | M3 Semantic Twin | Process-local exporter and runtime-derived delta primitive; full observed chain pending | `packages/twin/`, `adapters/telemetry/opentelemetry/`, `tests/integration/observation/` |
@@ -126,8 +126,9 @@ replays, an identical-plan patched replay, and the negative-control matrix entir
 It exits nonzero if the deterministic proof conditions are not met.
 
 The CI path also retains a canonical proof bundle containing the exact five runs, patched replay,
-negative controls, full typed action log, policy bindings, Oracle evidence, four JUnit reports, and
-an exact-file SHA-256 manifest. `stateweaver foundation verify-evidence <run-directory>` validates
+negative controls, full typed action log, policy bindings, Oracle evidence, four JUnit reports, an
+exact 92-row registry closure and derived result ledger, and an exact-file SHA-256 manifest.
+`stateweaver foundation verify-evidence <run-directory>` validates
 file integrity and causal coherence, then independently re-executes the installed fixed foundation
 without executing bundle contents. The verifier hashes and parses one captured read of every file
 and returns its `snapshot_sha256`; consumers must not reopen mutable paths and assume they are the

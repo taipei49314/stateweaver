@@ -168,6 +168,7 @@ def test_console_collects_and_rechecks_causally_bound_evidence(
             "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::test_full_vulnerable_plan_is_deterministic_over_five_runs",
             "apps.cli.tests.test_foundation::test_foundation_verification_meets_all_acceptance_conditions",
             "packages.evidence.tests.test_collector::test_collects_exact_complete_and_verifiable_tree",
+            "packages.evidence.tests.test_acceptance_registry::test_packaged_registry_is_canonical_and_has_exact_required_ids",
         ),
     }
     junit_paths: dict[str, Path] = {}

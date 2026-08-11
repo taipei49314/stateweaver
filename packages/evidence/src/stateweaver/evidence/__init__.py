@@ -18,6 +18,18 @@ from .acceptance_registry import (
     parse_acceptance_registry,
     validate_acceptance_registry_selectors,
 )
+from .acceptance_results import (
+    ACCEPTANCE_RESULTS_SCHEMA_VERSION,
+    REGISTRY_CLOSURE_SCHEMA_VERSION,
+    AcceptanceRegistryClosure,
+    AcceptanceRequirementResult,
+    AcceptanceResults,
+    AcceptanceResultsError,
+    AcceptanceResultStatus,
+    AcceptanceResultSummary,
+    build_acceptance_registry_closure,
+    derive_acceptance_results,
+)
 from .collector import (
     ACCEPTANCE_TEST_COMMAND,
     AcceptanceEvidenceError,
@@ -58,15 +70,23 @@ from .semantic_trace import (
 from .verify import ExpectedProvenance, VerificationResult, verify_acceptance_evidence
 
 __all__ = [
+    "ACCEPTANCE_RESULTS_SCHEMA_VERSION",
     "ACCEPTANCE_TEST_COMMAND",
     "EXPECTED_ACCEPTANCE_REGISTRY_SHA256",
     "EXPECTED_REQUIREMENT_IDS",
     "EXPECTED_TESTLESS_REQUIREMENT_IDS",
     "QUALIFICATION_REQUIREMENT_IDS",
+    "REGISTRY_CLOSURE_SCHEMA_VERSION",
     "AcceptanceEvidenceError",
     "AcceptanceRegistry",
+    "AcceptanceRegistryClosure",
     "AcceptanceRegistryError",
     "AcceptanceRequirement",
+    "AcceptanceRequirementResult",
+    "AcceptanceResultStatus",
+    "AcceptanceResultSummary",
+    "AcceptanceResults",
+    "AcceptanceResultsError",
     "CollectionInput",
     "CollectionResult",
     "EvidenceMapping",
@@ -99,8 +119,10 @@ __all__ = [
     "SourceMapping",
     "TestMapping",
     "VerificationResult",
+    "build_acceptance_registry_closure",
     "collect_acceptance_evidence",
     "collect_from_json_file",
+    "derive_acceptance_results",
     "derive_reality_trace_v2",
     "load_acceptance_registry",
     "parse_acceptance_registry",
