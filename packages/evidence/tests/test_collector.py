@@ -35,6 +35,62 @@ from stateweaver.policy import BudgetSnapshot, PolicyRequest, evaluate_policy
 from stateweaver.replay import ReplayPlan, ReplayRunResult, canonical_sha256
 
 JUNIT_NAMES = ("contracts", "policy", "lab", "replay")
+M6_NEGATIVE_CONTROL_IDENTITIES = tuple(
+    "tests.test_reality_receipts::"
+    f"test_negative_controls_are_bound_to_primary_replay[control_changes{index}-{label}]"
+    for index, label in enumerate(
+        (
+            "must not reproduce",
+            "target",
+            "target",
+            "locks",
+            "locks",
+            "root",
+            "root",
+            "distinct control plan",
+            "distinct control plan",
+            "primary replay signature",
+            "Oracle definition",
+        )
+    )
+)
+LOCAL_REPLAY_IDENTITIES = (
+    "tests.integration.twin.test_local_synthetic_flow::"
+    "test_testclient_source_and_trace_evidence_build_one_observed_transition",
+    "adapters.source.fastapi_sqlalchemy.tests.test_extractor::"
+    "test_extracts_actual_sqlalchemy_table_metadata_without_engine_or_connection",
+    "adapters.source.fastapi_sqlalchemy.tests.test_extractor::"
+    "test_extracts_real_fastapi_route_and_narrow_openapi_without_requesting_it",
+    "tests.integration.observation.test_runtime_observation::"
+    "test_controller_issues_trace_and_derives_state_delta_from_authorized_lab_action",
+    "packages.twin.tests.test_twin::"
+    "test_builds_canonical_evidence_bound_twin_and_observed_transition",
+    "packages.search.tests.test_search::"
+    "test_strict_models_reject_unknown_fields_bool_integers_and_duplicate_candidates",
+    "packages.search.tests.test_search::test_materialized_source_tier_is_not_promotable",
+    "packages.search.tests.test_search::test_twenty_four_ghosts_promote_only_the_bounded_beam",
+    "packages.search.tests.test_search::test_budget_ledger_is_immutable_and_append_only",
+    "packages.search.tests.test_search::"
+    "test_model_score_cannot_override_materialization_evidence_gates",
+    "packages.compiler.tests.test_compiler::"
+    "test_compiles_three_fragment_minimal_chain_and_replay_plan",
+    "tests.integration.compiler.test_clean_room_chain::"
+    "test_fresh_authorizations_retain_exact_policy_request_decision_and_fragment_bindings",
+    "tests.integration.compiler.test_clean_room_chain::"
+    "test_compiler_minimizer_cannot_remove_any_required_fragment",
+    "packages.evidence.tests.test_reality_bundle::"
+    "test_valid_synthetic_bundle_is_a_non_promotable_candidate",
+    "benchmarks.statechainbench.tests.test_generator::"
+    "test_generation_is_seeded_canonical_and_changes_across_seeds",
+    "benchmarks.statechainbench.tests.test_oracle_budget::"
+    "test_hidden_oracle_surface_and_solver_boundary_do_not_expose_answers",
+    "benchmarks.statechainbench.tests.test_runner::"
+    "test_holdout_comparison_uses_raw_matched_results_and_shows_tiered_gain",
+    "benchmarks.statechainbench.tests.test_runner::"
+    "test_equal_budget_result_is_reproducible_byte_for_byte",
+    "benchmarks.statechainbench.tests.test_runner::"
+    "test_ablation_labels_cannot_reuse_one_report_and_reports_close_provenance",
+)
 JUNIT_REQUIRED_IDENTITIES = {
     "contracts": (
         "tests.test_canonical::test_canonical_fingerprint_is_input_order_independent",
@@ -43,6 +99,9 @@ JUNIT_REQUIRED_IDENTITIES = {
         "tests.test_canonical::test_fingerprint_property_detects_security_semantic_change",
         "tests.test_contracts::test_closed_schema_rejects_unknown_fields",
         "tests.test_contracts::test_six_m0_contract_families_are_exported_from_the_public_surface",
+        *M6_NEGATIVE_CONTROL_IDENTITIES,
+        "tests.test_reality_receipts::test_patch_verified_requires_same_plan_blocked_patch_receipt",
+        "tests.test_reality_receipts::test_confirmed_finding_requires_typed_reality_receipt",
     ),
     "policy": (
         "tests.test_evaluator::test_localhost_target_is_allowed",
@@ -70,6 +129,7 @@ JUNIT_REQUIRED_IDENTITIES = {
         "apps.cli.tests.test_foundation::test_foundation_verification_meets_all_acceptance_conditions",
         "packages.evidence.tests.test_collector::test_collects_exact_complete_and_verifiable_tree",
         "packages.evidence.tests.test_acceptance_registry::test_packaged_registry_is_canonical_and_has_exact_required_ids",
+        *LOCAL_REPLAY_IDENTITIES,
     ),
 }
 
@@ -309,6 +369,13 @@ def test_collects_exact_complete_and_verifiable_tree(tmp_path: Path) -> None:
         "qualification/m1/reset-diff.json",
         "qualification/m1/nondeterminism.json",
         "qualification/m1/cleanup-events.json",
+        "qualification/m3/openapi-ingest.json",
+        "qualification/m3/source-extractor.json",
+        "qualification/m4/search-receipt.json",
+        "qualification/m5/compiler-receipt.json",
+        "qualification/m5/clean-room-replay.json",
+        "qualification/m6/candidate-bundle.json",
+        "qualification/m7/benchmark-receipt.json",
         "qualification/registry/closure.json",
         "qualification/registry/results.json",
         "run-manifest.json",
@@ -338,8 +405,8 @@ def test_proof_derives_exact_fail_closed_registry_results(tmp_path: Path) -> Non
     assert results["summary"] == {
         "blocked": 39,
         "failed": 0,
-        "not_run": 37,
-        "passed": 16,
+        "not_run": 15,
+        "passed": 38,
         "required": 92,
     }
     assert (
@@ -408,6 +475,51 @@ def test_proof_derives_exact_fail_closed_registry_results(tmp_path: Path) -> Non
     assert len(cleanup_receipt["injected_boundaries"]) == 4
     assert cleanup_receipt["next_reset_permitted"] is True
 
+    expected_local_receipts = {
+        "qualification/m3/openapi-ingest.json": ["M3-T01"],
+        "qualification/m3/source-extractor.json": ["M3-T02"],
+        "qualification/m4/search-receipt.json": [
+            "M4-S01",
+            "M4-S02",
+            "M4-S03",
+            "M4-S04",
+            "M4-S05",
+        ],
+        "qualification/m5/compiler-receipt.json": [
+            "M5-C01",
+            "M5-C02",
+            "M5-C03",
+            "M5-C05",
+        ],
+        "qualification/m5/clean-room-replay.json": ["M5-C04"],
+        "qualification/m6/candidate-bundle.json": [
+            "M6-R02",
+            "M6-R03",
+            "M6-R04",
+            "M6-R05",
+        ],
+        "qualification/m7/benchmark-receipt.json": [
+            "M7-B01",
+            "M7-B02",
+            "M7-B03",
+            "M7-B04",
+            "M7-B05",
+            "M7-B06",
+        ],
+    }
+    for relative, requirement_ids in expected_local_receipts.items():
+        receipt = json.loads((run / relative).read_text(encoding="utf-8"))
+        assert receipt["requirement_ids"] == requirement_ids
+        assert receipt["status"] == "LOCAL_IMPLEMENTATION_QUALIFIED"
+        assert receipt["authoritative"] is False
+        assert receipt["promotable"] is False
+        assert receipt["release_eligible"] is False
+        assert receipt["exit_criterion_satisfied"] is False
+        assert receipt["receipt_digest"] == canonical_sha256(
+            {key: value for key, value in receipt.items() if key != "receipt_digest"}
+        )
+        assert all(by_id[requirement_id]["status"] == "PASS" for requirement_id in requirement_ids)
+
 
 def test_verifier_rejects_rehashed_registry_result_promotion(tmp_path: Path) -> None:
     run = _collect(tmp_path, "registry-promotion")
@@ -449,6 +561,26 @@ def test_verifier_rejects_rehashed_qualification_receipt_tampering(tmp_path: Pat
     assert "artifact bundle is not causally coherent" in verification.errors
 
 
+def test_verifier_rejects_rehashed_local_deliverable_receipt_tampering(tmp_path: Path) -> None:
+    run = _collect(tmp_path, "local-qualification-tampering")
+    receipt_path = run / "qualification" / "m7" / "benchmark-receipt.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["authoritative"] = True
+    receipt["promotable"] = True
+    receipt["exit_criterion_satisfied"] = True
+    receipt["receipt_digest"] = canonical_sha256(
+        {key: value for key, value in receipt.items() if key != "receipt_digest"}
+    )
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    _rewrite_manifest_digest(run, "qualification/m7/benchmark-receipt.json")
+
+    verification = verify_acceptance_evidence(run)
+
+    assert not verification.valid
+    assert verification.snapshot_sha256 is None
+    assert "artifact bundle is not causally coherent" in verification.errors
+
+
 def test_clean_wheel_receipt_promotes_only_m0_c07(tmp_path: Path) -> None:
     result = collect_acceptance_evidence(
         input=_input(tmp_path, package_install_receipt=_package_install_receipt()),
@@ -467,8 +599,8 @@ def test_clean_wheel_receipt_promotes_only_m0_c07(tmp_path: Path) -> None:
     assert results["summary"] == {
         "blocked": 39,
         "failed": 0,
-        "not_run": 36,
-        "passed": 17,
+        "not_run": 14,
+        "passed": 39,
         "required": 92,
     }
 
@@ -597,20 +729,12 @@ def test_rejects_malformed_junit_as_a_safe_evidence_error(tmp_path: Path) -> Non
             "tests.test_event_history::test_event_history_round_trip_binds_exact_chain_and_head",
         ),
         (
-            "contracts",
-            "tests.test_reality_receipts::test_confirmed_finding_requires_typed_reality_receipt",
-        ),
-        (
             "replay",
             "packages.evidence.tests.test_acceptance_registry::test_registry_resource_is_canonical_and_exact",
         ),
         (
             "replay",
             "packages.evidence.tests.test_acceptance_results::test_local_result_requires_the_exact_selector_module_and_evidence_path",
-        ),
-        (
-            "replay",
-            "packages.evidence.tests.test_reality_bundle::test_valid_synthetic_bundle_is_a_non_promotable_candidate",
         ),
         (
             "replay",

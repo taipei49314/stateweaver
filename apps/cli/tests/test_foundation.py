@@ -6,6 +6,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 import pytest
+from stateweaver.evidence.collector import _JUNIT_REQUIRED_IDENTITIES
 from stateweaver.replay import ReplayPlan, ReplayRunResult, RootSeed, canonical_sha256
 
 from stateweaver.cli import evidence as cli_evidence
@@ -180,41 +181,7 @@ def test_console_collects_and_rechecks_causally_bound_evidence(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     required_identities = {
-        "contracts": (
-            "tests.test_canonical::test_canonical_fingerprint_is_input_order_independent",
-            "tests.test_canonical::test_security_fingerprint_uses_explicit_semantic_projection",
-            "tests.test_canonical::test_fingerprint_property_is_permutation_invariant",
-            "tests.test_canonical::test_fingerprint_property_detects_security_semantic_change",
-            "tests.test_contracts::test_closed_schema_rejects_unknown_fields",
-            "tests.test_contracts::test_six_m0_contract_families_are_exported_from_the_public_surface",
-        ),
-        "policy": (
-            "tests.test_evaluator::test_localhost_target_is_allowed",
-            "tests.test_evaluator::test_missing_context_and_malformed_objects_fail_closed",
-        ),
-        "lab": (
-            "tests.test_lab::test_complete_chain_violates_oracle_only_in_vulnerable_mode",
-            "tests.test_lab::test_same_chain_is_blocked_by_patched_mode",
-            "tests.test_lab::test_clean_seed_and_reset_are_deterministic",
-            "tests.test_lab::test_vulnerable_and_patched_apps_have_no_process_global_mode_state",
-            "tests.test_lab::test_evidence_and_layered_capture_never_record_bearer_values",
-            "tests.test_lab::test_invalid_mode_is_rejected",
-        ),
-        "replay": (
-            "packages.replay.tests.test_kernel::test_replay_is_deterministic_across_five_clean_roots",
-            "packages.replay.tests.test_kernel::test_observation_drift_is_classified_as_nondeterministic",
-            "packages.replay.tests.test_kernel::test_cleanup_failure_is_visible_and_redacted",
-            "packages.replay.tests.test_kernel::test_boundary_failures_are_localized_cleanup_is_reentrant_and_reset_recovers[reset-RESET_FAILURE]",
-            "packages.replay.tests.test_kernel::test_boundary_failures_are_localized_cleanup_is_reentrant_and_reset_recovers[capture_before-CAPTURE_BEFORE_FAILURE]",
-            "packages.replay.tests.test_kernel::test_boundary_failures_are_localized_cleanup_is_reentrant_and_reset_recovers[execute-EXECUTE_FAILURE]",
-            "packages.replay.tests.test_kernel::test_boundary_failures_are_localized_cleanup_is_reentrant_and_reset_recovers[capture_after-CAPTURE_AFTER_FAILURE]",
-            "packages.replay.tests.test_kernel::test_reset_is_bounded_and_cleanup_still_runs",
-            "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::test_full_vulnerable_plan_is_deterministic_over_five_runs",
-            "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::test_root_creation_reset_and_capture_contain_all_seven_redacted_layers",
-            "apps.cli.tests.test_foundation::test_foundation_verification_meets_all_acceptance_conditions",
-            "packages.evidence.tests.test_collector::test_collects_exact_complete_and_verifiable_tree",
-            "packages.evidence.tests.test_acceptance_registry::test_packaged_registry_is_canonical_and_has_exact_required_ids",
-        ),
+        name: tuple(sorted(identities)) for name, identities in _JUNIT_REQUIRED_IDENTITIES.items()
     }
     junit_paths: dict[str, Path] = {}
     for name in ("contracts", "policy", "lab", "replay"):

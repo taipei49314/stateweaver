@@ -29,6 +29,7 @@ from .collector import (
     AcceptanceEvidenceError,
     CollectionInput,
     _JunitSummary,
+    _local_deliverable_qualification_payloads,
     _m01_qualification_payloads,
     _metadata_datetime,
     _proof_artifact_payloads,
@@ -202,7 +203,13 @@ def _verify_coherence(
             name: snapshot[f"junit/{name}.xml"] for name in ("contracts", "policy", "lab", "replay")
         }
         junit_results = _read_junit_payloads(junit_payloads)
+        metadata = run_manifest.get("metadata")
+        if not _string_mapping(metadata):
+            raise AcceptanceEvidenceError("run manifest metadata is invalid")
         qualification_payloads = _m01_qualification_payloads(foundation, junit_results)
+        qualification_payloads.update(
+            _local_deliverable_qualification_payloads(junit_results, metadata)
+        )
         for relative, expected_payload in qualification_payloads.items():
             actual_payload = parsed.get(relative, _INVALID)
             if actual_payload is _INVALID or canonical_json_bytes(
@@ -211,9 +218,6 @@ def _verify_coherence(
                 raise AcceptanceEvidenceError(
                     "derived qualification artifact does not match its validated inputs"
                 )
-        metadata = run_manifest.get("metadata")
-        if not _string_mapping(metadata):
-            raise AcceptanceEvidenceError("run manifest metadata is invalid")
         observed_evidence_paths: tuple[str, ...] = _REQUIRED_RELATIVE
         package_receipt = parsed.get(PACKAGE_INSTALL_QUALIFICATION_PATH, _INVALID)
         if package_receipt is not _INVALID:

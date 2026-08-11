@@ -14,13 +14,20 @@ acceptance commands are intentionally local and do not require network access.
 |---|---|---|
 | M0 — Contracts + Lab | Proof-producing foundation is implemented and locally exercised; formal exit audit pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/policy/`, `packages/evidence/` |
 | M1 — Deterministic Replay Kernel | Proof-producing replay is implemented and locally exercised; formal exit audit pending | `packages/replay/`, `adapters/environments/in_process_lab/`, `apps/cli/` |
-| M2 — Materialized World Engine | Synthetic archive + Docker concurrency path implemented; exact-SHA hosted rerun and real providers pending | `packages/worlds/`, `adapters/environments/docker_compose/`, `tests/integration/worlds/` |
+| M2 — Materialized World Engine | Synthetic archive + exact-SHA hosted Docker concurrency diagnostic implemented; real providers pending | `packages/worlds/`, `adapters/environments/docker_compose/`, `tests/integration/worlds/` |
 | M3 — Security Semantic Twin | Runtime-derived observation primitive implemented; full M3→M4→M5 chain pending | `packages/twin/`, source/OTel adapters, `tests/integration/observation/`, `tests/integration/pipeline/` |
 | M4 — Tiered Search Controller | Offline exit flow preserves the observed candidate; materialized certification pending | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
 | M5 — Chain Compiler | Observed admission bridge and synthetic replay closure are implemented; release evidence pending | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
 | M6 — Reality Anchor + Proof Bundle | V2 event reconstruction + immutable-byte candidate resolver implemented; trusted broker pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
 | M7 — StateChainBench | Trusted built-in synthetic runner hardened; equal-work/public audit pending | `benchmarks/statechainbench/` |
 | M8 — Web UI + Public Release | Fixed synthetic API/client have local simulated-DOM test coverage; browser/new-user/public release pending | `apps/api/`, `apps/web/` |
+
+The acceptance collector derives seven local-deliverable receipts for 22 repo-controlled M3–M7
+rows from exact passing JUnit identities, canonical registry statements and evidence roles, and
+the proof's source/run bindings. Together with a valid clean-wheel package-install receipt, the
+local projection is 53 `PASS`, zero `NOT_RUN`, and 39 `BLOCKED`. Each new receipt is explicitly
+non-authoritative, non-promotable, not release-eligible, and insufficient for its milestone exit.
+The 39 non-local gates remain fail closed.
 
 ## M0 — Contracts + Lab
 

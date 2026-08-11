@@ -12,6 +12,8 @@ All notable changes are recorded here. The project has no published tag or GitHu
   canonical resource digest for the registry.
 - A proof-bound 92-row result ledger derived from exact passing JUnit identities and retained
   evidence paths, with non-local gates held `BLOCKED` and independent verifier re-derivation.
+- Seven registry-bound, non-promotable local-deliverable receipts covering 22 repo-controlled
+  M3–M7 rows, with exact JUnit and source bindings and explicit exit-criterion limitations.
 - A process-local runtime observation controller that issues its own trace and derives state deltas.
 - Candidate payload, checksum, SBOM, receipt, reproducibility, and fresh-downloader tooling.
 - A historical fresh-clone narrative snapshot and explicit qualification blocker records.
