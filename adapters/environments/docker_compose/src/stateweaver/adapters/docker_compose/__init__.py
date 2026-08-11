@@ -1,6 +1,6 @@
-"""Fixed-scope Docker Compose environment adapter for the synthetic M2 demo."""
+"""Fixed-scope Docker Compose environment adapters for local M2 worlds."""
 
-from .adapter import DockerComposeEnvironmentAdapter
+from .adapter import DockerComposeEnvironmentAdapter, RealDockerComposeEnvironmentAdapter
 from .errors import ComposeAdapterError, ComposeUnavailableError
 from .runner import ProcessResult, ProcessRunner
 
@@ -10,4 +10,5 @@ __all__ = [
     "DockerComposeEnvironmentAdapter",
     "ProcessResult",
     "ProcessRunner",
+    "RealDockerComposeEnvironmentAdapter",
 ]

@@ -11,10 +11,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  live-synthetic-worlds:
-    name: Four live synthetic siblings
+  live-provider-worlds:
+    name: Synthetic and real-provider siblings
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     steps:
       - name: Check out source
@@ -48,7 +48,7 @@ jobs:
             /swm2[0-9a-f]{32}/ ||
             /(^|[[:space:]\/])docker([[:space:]]|$)/ ||
             /docker-compose/ ||
-            /adapters\/environments\/docker_compose\/src\/stateweaver\/adapters\/docker_compose\/compose.yaml/
+            /adapters\/environments\/docker_compose\/src\/stateweaver\/adapters\/docker_compose\/(real_)?compose.yaml/
           ' artifacts/m2-live/processes-before.txt \
             > artifacts/m2-live/managed-processes-before.txt
           test ! -s artifacts/m2-live/managed-processes-before.txt
@@ -58,6 +58,10 @@ jobs:
             adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/Dockerfile \
             adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/runner.py \
             adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/state_bridge.py \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/real_compose.yaml \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/RealDockerfile \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/real_postgres_init.sql \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/real_provider_bridge.py \
             > artifacts/m2-live/source-sha256.txt
 
       - name: Build the fixed digest-pinned fixture
@@ -66,9 +70,26 @@ jobs:
             --tag stateweaver-synthetic-demo:local \
             adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose
           docker image inspect stateweaver-synthetic-demo:local \
-            > artifacts/m2-live/image-inspect.json
+            > artifacts/m2-live/synthetic-image-inspect.json
 
-      - name: Run the explicit live observation
+      - name: Acquire and bind the real provider images
+        run: |
+          docker compose \
+            --file adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/real_compose.yaml \
+            pull postgres redis rabbitmq selenium
+          docker build \
+            --tag stateweaver-real-provider-bridge:local \
+            --file adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/RealDockerfile \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose
+          docker image inspect \
+            stateweaver-real-provider-bridge:local \
+            postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193 \
+            redis:8-alpine@sha256:978f0e01593e65eed801f2402944efcd936d43b5027e4908a7897baf88ed6241 \
+            rabbitmq:4-management-alpine@sha256:44bf7eb50fe1765885659e49ccfdc775f8e531964d979321aee380a071f49f94 \
+            selenium/standalone-chromium@sha256:81c80050126f610675e40eeac529a821dc5a0d38acf26c6d44f792a6e7ea8ac5 \
+            > artifacts/m2-live/real-provider-images-inspect.json
+
+      - name: Run the explicit synthetic observation
         env:
           STATEWEAVER_RUN_DOCKER_INTEGRATION: "1"
         run: |
@@ -77,6 +98,17 @@ jobs:
             tests/integration/worlds/test_live_docker_compose.py \
             -m docker_integration \
             --junitxml=artifacts/m2-live/junit.xml \
+            -q
+
+      - name: Run the explicit real-provider observation
+        env:
+          STATEWEAVER_RUN_REAL_DOCKER_INTEGRATION: "1"
+        run: |
+          uv run pytest \
+            -o 'addopts=--strict-config --strict-markers -ra' \
+            tests/integration/worlds/test_live_real_providers.py \
+            -m docker_integration \
+            --junitxml=artifacts/m2-live/real-provider-junit.xml \
             -q
 
       - name: Record and enforce cleanup inventory
@@ -90,7 +122,7 @@ jobs:
             /swm2[0-9a-f]{32}/ ||
             /(^|[[:space:]\/])docker([[:space:]]|$)/ ||
             /docker-compose/ ||
-            /adapters\/environments\/docker_compose\/src\/stateweaver\/adapters\/docker_compose\/compose.yaml/
+            /adapters\/environments\/docker_compose\/src\/stateweaver\/adapters\/docker_compose\/(real_)?compose.yaml/
           ' artifacts/m2-live/processes-after.txt \
             > artifacts/m2-live/managed-processes-after.txt
           git status --porcelain=v1 --untracked-files=all > artifacts/m2-live/dirty-after.txt

@@ -14,7 +14,7 @@ acceptance commands are intentionally local and do not require network access.
 |---|---|---|
 | M0 — Contracts + Lab | Proof-producing foundation is implemented and locally exercised; formal exit audit pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/policy/`, `packages/evidence/` |
 | M1 — Deterministic Replay Kernel | Proof-producing replay is implemented and locally exercised; formal exit audit pending | `packages/replay/`, `adapters/environments/in_process_lab/`, `apps/cli/` |
-| M2 — Materialized World Engine | Synthetic archive + exact-SHA hosted Docker concurrency diagnostic implemented; real providers pending | `packages/worlds/`, `adapters/environments/docker_compose/`, `tests/integration/worlds/` |
+| M2 — Materialized World Engine | Six real-provider capture/mutate/restore path and four-way local gate implemented; exact-SHA hosted admission pending | `packages/worlds/`, `adapters/environments/docker_compose/`, `tests/integration/worlds/` |
 | M3 — Security Semantic Twin | Clean-wheel observed-flow receipt implemented and independently reproduced; M4/M5 materialized chain remains separate | `packages/twin/`, source/OTel adapters, `packages/evidence/src/stateweaver/evidence/runtime_observation.py`, `apps/cli/src/stateweaver/cli/runtime_qualification.py` |
 | M4 — Tiered Search Controller | Offline exit flow preserves the observed candidate; materialized certification pending | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
 | M5 — Chain Compiler | Observed admission bridge and synthetic replay closure are implemented; release evidence pending | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
@@ -100,8 +100,8 @@ namespace, fingerprints, and sibling-isolation tests.
 
 - `adapters/environments/docker_compose/`
 - `packages/worlds/`
-- `tests/integration/worlds/` — explicit live synthetic gate; excluded from default tests
-- `.github/workflows/docker-compose-live.yml` — manual observation workflow; not acceptance proof
+- `tests/integration/worlds/` — explicit synthetic and six-provider live gates; excluded from default tests
+- `.github/workflows/docker-compose-live.yml` — manual retained observation workflow; admission still requires an exact merged run
 
 **Local protocol gate**
 
@@ -115,14 +115,19 @@ uv run pytest packages/worlds/tests adapters/environments/docker_compose/tests -
 docker build --tag stateweaver-synthetic-demo:local adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose
 $env:STATEWEAVER_RUN_DOCKER_INTEGRATION = "1"
 uv run pytest -o 'addopts=--strict-config --strict-markers -ra' tests/integration/worlds/test_live_docker_compose.py -m docker_integration -q
+
+docker compose --file adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/real_compose.yaml pull postgres redis rabbitmq selenium
+docker build --tag stateweaver-real-provider-bridge:local --file adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/RealDockerfile adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose
+$env:STATEWEAVER_RUN_REAL_DOCKER_INTEGRATION = "1"
+uv run pytest -o 'addopts=--strict-config --strict-markers -ra' tests/integration/worlds/test_live_real_providers.py -m docker_integration -q
 ```
 
 The baseline hosted run first exposed a Compose JSON compatibility defect and failed:
-[run 31306321481](https://github.com/taipei49314/stateweaver/actions/runs/31306321481). The current
-source accepts the closed v2-array and v5-single-object forms, selects Docker Desktop's fixed Linux
-endpoint without loading user Docker configuration, and uses a bounded health timeout that survives
-four concurrent `fsync` imports. A successful exact-merged-SHA hosted rerun is still required; code,
-local output, default deselection, or an older run is not release evidence.
+[run 31306321481](https://github.com/taipei49314/stateweaver/actions/runs/31306321481). The corrected
+synthetic path later passed on exact main in
+[run 31467115993](https://github.com/taipei49314/stateweaver/actions/runs/31467115993) with retained
+zero-residue inventory. The new six-provider path still requires its own successful
+exact-merged-SHA hosted run; code, local output, or an older synthetic run is not that evidence.
 
 **Exit criterion:** at least four sibling worlds run in parallel without contamination. The strict
 world lifecycle manager, immutable snapshots, namespace uniqueness, timeout/cleanup behavior,
@@ -132,10 +137,12 @@ six-component archive, hashes content with the exact running image identity, swi
 generations through one commit pointer, re-exports after fork/restore, and rejects forged manifests,
 handles, lineage, process replies, and cancellation leaks in its stateful emulator.
 
-Those capabilities remain `PARTIAL`: the bridge models JSON components rather than live PostgreSQL,
-Redis, queue, browser-session, filesystem-provider, and controlled-clock capture. The four-sibling
-test now uses four-way barriers to prove that separate world creation and snapshot operations overlap
-at the runner boundary. `WorldManager` holds one stable asynchronous admission gate per retained
+The retained synthetic adapter remains `PARTIAL`. The separate real-provider adapter advertises all
+six capabilities as `SUPPORTED` and uses actual PostgreSQL rows, Redis keys, RabbitMQ messages,
+Chromium cookie/localStorage, filesystem files, and controlled-clock bytes. Its four-sibling test
+uses barriers to prove that separate world creation and restore operations overlap, gives each world
+a unique marker across all six providers, and requires every restored digest to equal its baseline.
+`WorldManager` holds one stable asynchronous admission gate per retained
 world: snapshot, restore, destroy, transition, and parent-fork operations read and commit entirely
 inside that gate, while distinct worlds continue to enter adapters concurrently. Each immutable
 `WorldNode` also carries a monotonic revision, and the manager-owned store rejects compare-and-swap
@@ -155,12 +162,12 @@ pending handle/namespace collisions, winner commits during loser cleanup, cross-
 collisions, cleanup quarantine, typed ghost creation, disjoint prepare parallelism,
 failure/cancellation gate release, writer capability checks, and stale-revision rejection. Adapter
 tests add identity-reservation collisions, destroy-versus-waiter revalidation, fork cancellation,
-cross-source restore rejection, and cancellation after destructive restore commits. During
-2026-08-09 development, an ephemeral local diagnostic was observed to complete four sibling
-create/snapshot/restore paths and leave zero `swm2` containers, networks, or volumes. No immutable
-exact-SHA log, artifact inventory, or receipt from that diagnostic is retained in this repository.
-It is therefore not qualification evidence and does not satisfy the real-provider, hosted exact-SHA,
-or independent clean-host gates. M2 is **not certified**.
+cross-source restore rejection, and cancellation after destructive restore commits. On 2026-08-11
+the development tree completed all four real-provider paths locally (`4 passed in 437.75s`) and left
+zero `swm2` containers, networks, or volumes after success, startup-timeout, cancellation, and
+partial-failure cleanup. That ephemeral dirty-tree observation is not an immutable exact-SHA
+qualification. Hosted artifact retention, failure-path inventories, and verifier admission remain
+required, so M2 is **not certified**.
 
 ## M3 — Security Semantic Twin
 
