@@ -46,7 +46,7 @@ from ._io import (
     sha256_bytes,
     validate_run_id,
 )
-from .acceptance_registry import load_acceptance_registry
+from .acceptance_registry import EXPECTED_ACCEPTANCE_REGISTRY_SHA256, load_acceptance_registry
 from .acceptance_results import (
     AcceptanceRegistryClosure,
     AcceptanceResults,
@@ -99,6 +99,91 @@ _M1_CLEANUP_FAILURE_IDENTITY = (
 _M1_RESET_TIMEOUT_IDENTITY = (
     "packages.replay.tests.test_kernel::test_reset_is_bounded_and_cleanup_still_runs"
 )
+_M3_OPENAPI_IDENTITY = (
+    "tests.integration.twin.test_local_synthetic_flow::"
+    "test_testclient_source_and_trace_evidence_build_one_observed_transition"
+)
+_M3_SOURCE_IDENTITIES = (
+    "adapters.source.fastapi_sqlalchemy.tests.test_extractor::"
+    "test_extracts_actual_sqlalchemy_table_metadata_without_engine_or_connection",
+    "adapters.source.fastapi_sqlalchemy.tests.test_extractor::"
+    "test_extracts_real_fastapi_route_and_narrow_openapi_without_requesting_it",
+)
+_M3_RUNTIME_IDENTITY = (
+    "tests.integration.observation.test_runtime_observation::"
+    "test_controller_issues_trace_and_derives_state_delta_from_authorized_lab_action"
+)
+_M3_TWIN_IDENTITY = (
+    "packages.twin.tests.test_twin::"
+    "test_builds_canonical_evidence_bound_twin_and_observed_transition"
+)
+_M4_IDENTITIES = (
+    "packages.search.tests.test_search::"
+    "test_strict_models_reject_unknown_fields_bool_integers_and_duplicate_candidates",
+    "packages.search.tests.test_search::test_materialized_source_tier_is_not_promotable",
+    "packages.search.tests.test_search::test_twenty_four_ghosts_promote_only_the_bounded_beam",
+    "packages.search.tests.test_search::test_budget_ledger_is_immutable_and_append_only",
+    "packages.search.tests.test_search::"
+    "test_model_score_cannot_override_materialization_evidence_gates",
+)
+_M5_COMPILER_IDENTITY = (
+    "packages.compiler.tests.test_compiler::"
+    "test_compiles_three_fragment_minimal_chain_and_replay_plan"
+)
+_M5_CLEAN_ROOM_IDENTITY = (
+    "tests.integration.compiler.test_clean_room_chain::"
+    "test_fresh_authorizations_retain_exact_policy_request_decision_and_fragment_bindings"
+)
+_M5_MINIMIZER_IDENTITY = (
+    "tests.integration.compiler.test_clean_room_chain::"
+    "test_compiler_minimizer_cannot_remove_any_required_fragment"
+)
+_M6_NEGATIVE_CONTROL_IDENTITIES = (
+    "tests.test_reality_receipts::"
+    "test_negative_controls_are_bound_to_primary_replay[control_changes0-must not reproduce]",
+    "tests.test_reality_receipts::"
+    "test_negative_controls_are_bound_to_primary_replay[control_changes1-target]",
+    "tests.test_reality_receipts::"
+    "test_negative_controls_are_bound_to_primary_replay[control_changes2-target]",
+    "tests.test_reality_receipts::"
+    "test_negative_controls_are_bound_to_primary_replay[control_changes3-locks]",
+    "tests.test_reality_receipts::"
+    "test_negative_controls_are_bound_to_primary_replay[control_changes4-locks]",
+    "tests.test_reality_receipts::"
+    "test_negative_controls_are_bound_to_primary_replay[control_changes5-root]",
+    "tests.test_reality_receipts::"
+    "test_negative_controls_are_bound_to_primary_replay[control_changes6-root]",
+    "tests.test_reality_receipts::"
+    "test_negative_controls_are_bound_to_primary_replay[control_changes7-distinct control plan]",
+    "tests.test_reality_receipts::"
+    "test_negative_controls_are_bound_to_primary_replay[control_changes8-distinct control plan]",
+    "tests.test_reality_receipts::"
+    "test_negative_controls_are_bound_to_primary_replay[control_changes9-primary replay signature]",
+    "tests.test_reality_receipts::"
+    "test_negative_controls_are_bound_to_primary_replay[control_changes10-Oracle definition]",
+)
+_M6_PATCH_IDENTITY = (
+    "tests.test_reality_receipts::test_patch_verified_requires_same_plan_blocked_patch_receipt"
+)
+_M6_FINDING_IDENTITY = (
+    "tests.test_reality_receipts::test_confirmed_finding_requires_typed_reality_receipt"
+)
+_M6_BUNDLE_IDENTITY = (
+    "packages.evidence.tests.test_reality_bundle::"
+    "test_valid_synthetic_bundle_is_a_non_promotable_candidate"
+)
+_M7_IDENTITIES = (
+    "benchmarks.statechainbench.tests.test_generator::"
+    "test_generation_is_seeded_canonical_and_changes_across_seeds",
+    "benchmarks.statechainbench.tests.test_oracle_budget::"
+    "test_hidden_oracle_surface_and_solver_boundary_do_not_expose_answers",
+    "benchmarks.statechainbench.tests.test_runner::"
+    "test_holdout_comparison_uses_raw_matched_results_and_shows_tiered_gain",
+    "benchmarks.statechainbench.tests.test_runner::"
+    "test_equal_budget_result_is_reproducible_byte_for_byte",
+    "benchmarks.statechainbench.tests.test_runner::"
+    "test_ablation_labels_cannot_reuse_one_report_and_reports_close_provenance",
+)
 _JUNIT_REQUIRED_IDENTITIES: dict[str, frozenset[str]] = {
     "contracts": frozenset(
         {
@@ -106,6 +191,9 @@ _JUNIT_REQUIRED_IDENTITIES: dict[str, frozenset[str]] = {
             *_M0_PROPERTY_IDENTITIES,
             "tests.test_contracts::test_closed_schema_rejects_unknown_fields",
             "tests.test_contracts::test_six_m0_contract_families_are_exported_from_the_public_surface",
+            *_M6_NEGATIVE_CONTROL_IDENTITIES,
+            _M6_PATCH_IDENTITY,
+            _M6_FINDING_IDENTITY,
         }
     ),
     "policy": frozenset(
@@ -139,6 +227,16 @@ _JUNIT_REQUIRED_IDENTITIES: dict[str, frozenset[str]] = {
             "apps.cli.tests.test_foundation::test_foundation_verification_meets_all_acceptance_conditions",
             "packages.evidence.tests.test_collector::test_collects_exact_complete_and_verifiable_tree",
             "packages.evidence.tests.test_acceptance_registry::test_packaged_registry_is_canonical_and_has_exact_required_ids",
+            _M3_OPENAPI_IDENTITY,
+            *_M3_SOURCE_IDENTITIES,
+            _M3_RUNTIME_IDENTITY,
+            _M3_TWIN_IDENTITY,
+            *_M4_IDENTITIES,
+            _M5_COMPILER_IDENTITY,
+            _M5_CLEAN_ROOM_IDENTITY,
+            _M5_MINIMIZER_IDENTITY,
+            _M6_BUNDLE_IDENTITY,
+            *_M7_IDENTITIES,
         }
     ),
 }
@@ -161,6 +259,14 @@ _JUNIT_ALLOWED_PREFIXES: dict[str, tuple[str, ...]] = {
         "packages.evidence.tests.test_collector::",
         "packages.evidence.tests.test_reality_bundle::",
         "packages.evidence.tests.test_semantic_trace::",
+        "adapters.source.fastapi_sqlalchemy.tests.test_extractor::",
+        "packages.compiler.tests.test_compiler::",
+        "packages.search.tests.test_search::",
+        "packages.twin.tests.test_twin::",
+        "benchmarks.statechainbench.tests.",
+        "tests.integration.compiler.test_clean_room_chain::",
+        "tests.integration.observation.test_runtime_observation::",
+        "tests.integration.twin.test_local_synthetic_flow::",
     ),
 }
 ACCEPTANCE_TEST_COMMAND = (
@@ -168,7 +274,10 @@ ACCEPTANCE_TEST_COMMAND = (
     "pytest packages/policy/tests; "
     "pytest labs/multitenant-saas/tests; "
     "pytest packages/replay/tests adapters/environments/in_process_lab/tests apps/cli/tests "
-    "packages/evidence/tests"
+    "packages/evidence/tests adapters/source/fastapi_sqlalchemy/tests "
+    "packages/twin/tests packages/search/tests packages/compiler/tests "
+    "benchmarks/statechainbench/tests tests/integration/observation tests/integration/twin "
+    "tests/integration/compiler"
 )
 NETWORK_GUARD_ID = "python-socket-deny-v2"
 _LAB_ORACLE_ID = "oracle.cross_tenant_document_disclosure.v1"
@@ -199,6 +308,89 @@ class _ControlProfile:
     payload_outcome: str
     expected_statuses: tuple[int, ...]
     owner_tenant: str | None = None
+
+
+@dataclass(frozen=True)
+class _LocalQualificationSpec:
+    qualification_kind: str
+    requirement_ids: tuple[str, ...]
+    junit: tuple[tuple[str, tuple[str, ...]], ...]
+    limitations: tuple[str, ...]
+
+
+_LOCAL_QUALIFICATION_SPECS: dict[str, _LocalQualificationSpec] = {
+    "qualification/m3/openapi-ingest.json": _LocalQualificationSpec(
+        qualification_kind="openapi-source-ingest",
+        requirement_ids=("M3-T01",),
+        junit=(("replay", (_M3_OPENAPI_IDENTITY,)),),
+        limitations=(
+            "This qualifies the socket-free local source-ingest implementation only.",
+            "It is not an authenticated runtime-observation or M3 exit receipt.",
+        ),
+    ),
+    "qualification/m3/source-extractor.json": _LocalQualificationSpec(
+        qualification_kind="fastapi-sqlalchemy-source-extraction",
+        requirement_ids=("M3-T02",),
+        junit=(("replay", _M3_SOURCE_IDENTITIES),),
+        limitations=(
+            "This qualifies repository-owned FastAPI and SQLAlchemy metadata extraction only.",
+            "It opens no network connection and does not certify an external source system.",
+        ),
+    ),
+    "qualification/m4/search-receipt.json": _LocalQualificationSpec(
+        qualification_kind="bounded-offline-tiered-search",
+        requirement_ids=("M4-S01", "M4-S02", "M4-S03", "M4-S04", "M4-S05"),
+        junit=(("replay", _M4_IDENTITIES),),
+        limitations=(
+            "This qualifies the deterministic offline search controller and immutable "
+            "budget ledger.",
+            "It is not the M4 live materialized-runtime exit receipt.",
+        ),
+    ),
+    "qualification/m5/compiler-receipt.json": _LocalQualificationSpec(
+        qualification_kind="deterministic-local-chain-compilation",
+        requirement_ids=("M5-C01", "M5-C02", "M5-C03", "M5-C05"),
+        junit=(("replay", (_M5_COMPILER_IDENTITY, _M5_MINIMIZER_IDENTITY)),),
+        limitations=(
+            "This qualifies deterministic compilation and minimization over synthetic fragments.",
+            "It does not claim execution in a live materialized world.",
+        ),
+    ),
+    "qualification/m5/clean-room-replay.json": _LocalQualificationSpec(
+        qualification_kind="authorized-synthetic-clean-root-replay",
+        requirement_ids=("M5-C04",),
+        junit=(("replay", (_M5_CLEAN_ROOM_IDENTITY,)),),
+        limitations=(
+            "This qualifies fresh authorization and exact bindings in local synthetic clean roots.",
+            "It is not the M5 materialized-chain exit receipt.",
+        ),
+    ),
+    "qualification/m6/candidate-bundle.json": _LocalQualificationSpec(
+        qualification_kind="non-promotable-reality-bundle-candidate",
+        requirement_ids=("M6-R02", "M6-R03", "M6-R04", "M6-R05"),
+        junit=(
+            (
+                "contracts",
+                (*_M6_NEGATIVE_CONTROL_IDENTITIES, _M6_PATCH_IDENTITY, _M6_FINDING_IDENTITY),
+            ),
+            ("replay", (_M6_BUNDLE_IDENTITY,)),
+        ),
+        limitations=(
+            "This is a self-contained synthetic candidate and remains non-authoritative.",
+            "It has no external Reality Broker trust root or clean-machine reproduction receipt.",
+        ),
+    ),
+    "qualification/m7/benchmark-receipt.json": _LocalQualificationSpec(
+        qualification_kind="built-in-synthetic-equal-tariff-benchmark",
+        requirement_ids=("M7-B01", "M7-B02", "M7-B03", "M7-B04", "M7-B05", "M7-B06"),
+        junit=(("replay", _M7_IDENTITIES),),
+        limitations=(
+            "This qualifies the trusted built-in synthetic runner and retained raw-result checks.",
+            "It is not an independently preregistered measured-cost holdout benchmark.",
+        ),
+    ),
+}
+_LOCAL_QUALIFICATION_PATHS = tuple(_LOCAL_QUALIFICATION_SPECS)
 
 
 _BLOCKED_CONTROL_NAMES = (
@@ -402,6 +594,7 @@ _REQUIRED_RELATIVE = (
     "qualification/m1/reset-diff.json",
     "qualification/m1/nondeterminism.json",
     "qualification/m1/cleanup-events.json",
+    *_LOCAL_QUALIFICATION_PATHS,
     "qualification/registry/closure.json",
     "qualification/registry/results.json",
 )
@@ -491,6 +684,9 @@ def collect_acceptance_evidence(
     junit_bytes, junit_results = _read_junit_sources(input.junit_sources)
     _validate_supporting_inputs(input, validated, junit_results)
     qualification_payloads = _m01_qualification_payloads(validated, junit_results)
+    qualification_payloads.update(
+        _local_deliverable_qualification_payloads(junit_results, input.run_metadata)
+    )
     observed_evidence_paths: tuple[str, ...] = _REQUIRED_RELATIVE
     if input.package_install_receipt is not None:
         repository_marker = input.run_metadata.get("repository_marker")
@@ -1324,6 +1520,79 @@ def _junit_qualification_binding(
         "testcase_identities": list(identities),
         "report_identity_sha256": junit_results[group]["testcase_identity_sha256"],
     }
+
+
+def _local_deliverable_qualification_payloads(
+    junit_results: Mapping[str, _JunitSummary],
+    run_metadata: Mapping[str, Any],
+) -> dict[str, object]:
+    source_fields = (
+        "repository_marker",
+        "app_source_digest",
+        "oracle_definition_hash",
+        "runtime_dependency_fingerprint",
+        "test_command",
+        "network_mode",
+        "network_guard",
+    )
+    source_binding: dict[str, str] = {}
+    for field in source_fields:
+        value = run_metadata.get(field)
+        if not isinstance(value, str) or not value:
+            raise AcceptanceEvidenceError("local qualification source binding is invalid")
+        source_binding[field] = value
+
+    registry = load_acceptance_registry()
+    by_id = {requirement.id: requirement for requirement in registry.requirements}
+    receipts: dict[str, object] = {}
+    for path, spec in _LOCAL_QUALIFICATION_SPECS.items():
+        requirements: list[dict[str, object]] = []
+        for requirement_id in spec.requirement_ids:
+            requirement = by_id.get(requirement_id)
+            if requirement is None or {item.path for item in requirement.evidence} != {path}:
+                raise AcceptanceEvidenceError("local qualification registry binding is invalid")
+            requirements.append(
+                {
+                    "requirement_id": requirement.id,
+                    "kind": requirement.kind.value,
+                    "gate_class": requirement.gate_class.value,
+                    "statement_sha256": canonical_sha256(
+                        {"id": requirement.id, "statement": requirement.statement}
+                    ),
+                    "evidence_roles": sorted(item.role for item in requirement.evidence),
+                    "test_selectors": sorted(item.selector for item in requirement.tests),
+                }
+            )
+        receipt: dict[str, object] = {
+            "schema_version": "stateweaver-local-deliverable-qualification-v1",
+            "producer": "stateweaver.evidence.collector",
+            "qualification_kind": spec.qualification_kind,
+            "evidence_path": path,
+            "requirement_ids": list(spec.requirement_ids),
+            "requirements": requirements,
+            "registry_sha256": EXPECTED_ACCEPTANCE_REGISTRY_SHA256,
+            "source_binding": source_binding,
+            "junit": [
+                _junit_qualification_binding(junit_results, group, identities)
+                for group, identities in spec.junit
+            ],
+            "qualification_basis": "exact-passing-junit-bound-to-source-and-registry",
+            "status": "LOCAL_IMPLEMENTATION_QUALIFIED",
+            "authoritative": False,
+            "promotable": False,
+            "release_eligible": False,
+            "exit_criterion_satisfied": False,
+            "limitations": list(spec.limitations),
+        }
+        receipt["receipt_digest"] = canonical_sha256(receipt)
+        receipts[path] = receipt
+    try:
+        assert_secret_free(receipts)
+    except EvidenceInputError:
+        raise AcceptanceEvidenceError(
+            "derived local qualification receipt is not redacted"
+        ) from None
+    return receipts
 
 
 def _root_layer_payloads(root: RootSeed) -> dict[str, dict[str, object]]:

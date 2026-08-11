@@ -1,13 +1,21 @@
 # StateWeaver acceptance evidence
 
-Offline M0/M1 proof collection and verification. The collector executes no target and no test
+Offline acceptance-proof collection and verification. The collector executes no target and no test
 command: it accepts the typed foundation JSON plus caller-produced JUnit files, validates their
 cross-artifact causal bindings, writes an immutable per-run tree, and hashes every required file.
-It also derives eight M0/M1 qualification receipts from the validated seven-layer root plus exact
-JUnit testcase identities. The verifier independently regenerates those receipts; changing one and
-rehashing the file manifest is insufficient to validate it. M0-C07 is optional and remains
-`NOT_RUN` unless the collector receives a separately produced, valid clean-wheel package-install
-receipt.
+It derives eight M0/M1 qualification receipts from the validated seven-layer root plus exact JUnit
+testcase identities. It also derives seven local-deliverable receipts covering 22 repo-controlled
+M3–M7 rows from exact passing identities, canonical registry statements and roles, and source/run
+bindings. The verifier independently regenerates every derived receipt; changing one and rehashing
+the file manifest is insufficient to validate it. M0-C07 is optional and remains `NOT_RUN` unless
+the collector receives a separately produced, valid clean-wheel package-install receipt.
+
+With that clean-wheel receipt, the local acceptance projection is 53 `PASS`, zero `NOT_RUN`, and
+39 `BLOCKED`. The M3–M7 receipts use status `LOCAL_IMPLEMENTATION_QUALIFIED` and permanently state
+`authoritative=false`, `promotable=false`, `release_eligible=false`, and
+`exit_criterion_satisfied=false`. They qualify only the named local implementation surfaces; they
+do not satisfy live-provider, materialized-runtime, trusted-broker, independent-benchmark, or
+external-new-user gates.
 
 Use the repository-level `stateweaver foundation collect-evidence` workflow when available. The
 lower-level `stateweaver-acceptance-evidence verify <run-directory>` command only verifies an

@@ -52,12 +52,15 @@ or [proof verification guide](docs/PROOF_VERIFICATION.md) for the trust boundari
 ## Current status
 
 StateWeaver is a pre-alpha research implementation. Its fixed synthetic flows have local
-formatting, typing, unit, integration, race, simulated-DOM contract, build, and proof gates. Those
-developer checks are not an exact-SHA release-qualification receipt. The first
-retained Docker workflow exposed compatibility defects that are being fixed through the normal PR
-path; it still exercises a synthetic bridge rather than real providers. Live-provider, trusted
-broker, equal-work benchmark, independent new-user, and clean-machine certification remain
-intentionally unclaimed. No PyPI package or versioned GitHub Release is offered yet.
+formatting, typing, unit, integration, race, simulated-DOM contract, build, and proof gates. The
+acceptance collector can derive 53 local `PASS` rows from exact passing JUnit identities, source
+bindings, the clean-wheel package-install receipt, and seven non-promotable M3–M7 implementation
+receipts. It keeps the remaining 39 non-local rows `BLOCKED`; these developer checks are not a
+complete release qualification. The hosted Docker workflow now retains an exact-SHA synthetic
+diagnostic with zero managed residue, but it still exercises a synthetic bridge rather than real
+providers. Live-provider, trusted broker, independently measured equal-work benchmark,
+independent new-user, and clean-machine certification remain intentionally unclaimed. No PyPI
+package or versioned GitHub Release is offered yet.
 
 <details>
 <summary>Implementation and trust-boundary detail (summary)</summary>
@@ -66,18 +69,20 @@ Architecture baseline v1 ships milestone-by-milestone. Current implementation an
 
 | Area | Honest status |
 |---|---|
-| M0/M1 foundation proof | Synthetic proof and canonical 92-row registry exist; CI derives manifest-bound local qualification receipts and admits M0-C07 only from a clean wheel installation, while unresolved and external rows remain `NOT_RUN` or `BLOCKED` |
-| M2 world engine | Archive + lifecycle gates exist; ephemeral local synthetic Docker diagnostic only; **no** retained qualification or real-provider proof |
-| M3 semantic twin | Runtime-derived process-local observation primitive exists; M4/M5 integration remains pending |
-| M4 offline search | 24 → 4 → 2 → 1 flow preserves the observed candidate |
-| M5 chain compiler | Admission bridge for observed fragments; synthetic closure only |
-| M6 reality receipt | Fail-closed `RealityReplayReceipt` + reporting candidate; **no** trusted broker / M6 cert |
-| M7 StateChainBench | Deterministic prototype runner — not equal-work public benchmark |
+| M0/M1 foundation proof | Synthetic proof and canonical 92-row registry exist; CI derives manifest-bound receipts and admits M0-C07 only from a clean wheel installation |
+| M2 world engine | Archive + lifecycle gates and retained exact-SHA synthetic Docker diagnostics exist; **no** real-provider proof |
+| M3 semantic twin | Local source ingest/extraction are proof-bound; runtime observation remains process-local and the full exit is blocked |
+| M4 offline search | Proof-bound 24 → 4 → 2 → 1 local flow preserves the observed candidate; materialized exit blocked |
+| M5 chain compiler | Proof-bound compiler and authorized synthetic clean-root replay; materialized exit blocked |
+| M6 reality receipt | Proof-bound non-promotable synthetic candidate; **no** trusted broker / clean-machine M6 cert |
+| M7 StateChainBench | Proof-bound deterministic built-in runner — not an independently measured equal-work benchmark |
 | M8 public UX | Fixed loopback API + simulated-DOM contract exists; no Playwright/new-user release journey |
 
-Receipts and reports are **internal-coherence** artifacts, not producer
-attestation or Reality Broker signatures. Live-provider and clean-machine M6
-certification remain intentionally unclaimed.
+The seven M3–M7 local-deliverable receipts are derived from exact passing test identities and the
+canonical registry. They are explicitly `authoritative=false`, `promotable=false`,
+`release_eligible=false`, and `exit_criterion_satisfied=false`. Receipts and reports are
+**internal-coherence** artifacts, not Reality Broker signatures. Live-provider and clean-machine
+M6 certification remain intentionally unclaimed.
 
 Full matrices: [docs/architecture/TRACEABILITY.md](docs/architecture/TRACEABILITY.md),
 [docs/PROOF_VERIFICATION.md](docs/PROOF_VERIFICATION.md), [ARCHITECTURE.md](ARCHITECTURE.md).

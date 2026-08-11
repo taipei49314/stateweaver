@@ -64,8 +64,16 @@ jobs:
           uv run pytest \
             packages/replay/tests \
             adapters/environments/in_process_lab/tests \
+            adapters/source/fastapi_sqlalchemy/tests \
             apps/cli/tests \
             packages/evidence/tests \
+            packages/twin/tests \
+            packages/search/tests \
+            packages/compiler/tests \
+            benchmarks/statechainbench/tests \
+            tests/integration/observation \
+            tests/integration/twin \
+            tests/integration/compiler \
             --junitxml=artifacts/acceptance/junit/replay.xml
 
       - name: Build every workspace distribution
