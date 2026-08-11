@@ -718,6 +718,6 @@ jobs:
             echo "## CANDIDATE_READY_FOR_EXTERNAL_QUALIFICATION"
             echo
             echo "Payload manifest: $MANIFEST_SHA256"
-            echo "M2 real-provider, M3 end-to-end, and M4-M5 implementation remain incomplete; M6-M8 retain implementation and external-qualification blockers."
+            echo "M2 real-provider, M3 end-to-end, and M4 materialization are implemented but their separate exact-SHA qualifications are not admitted by this candidate; M5 remains incomplete and M6-M8 retain implementation and external-qualification blockers."
             echo "No tag or GitHub Release was created."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -25,27 +25,30 @@ CONTROLLED_GATES: Final = (
     },
 )
 
-IMPLEMENTATION_GAPS: Final = (
+QUALIFICATION_AND_IMPLEMENTATION_GAPS: Final = (
     {
         "gate_id": "SW-M2-MATERIALIZED",
         "reason": (
-            "Real PostgreSQL, Redis, queue, browser-session, filesystem-provider, and controlled-"
-            "clock capture/restore evidence is not yet complete."
+            "The six real providers are implemented, but this candidate workflow does not retain "
+            "an exact-SHA hosted Docker qualification receipt."
         ),
-        "status": "PENDING_IMPLEMENTATION",
+        "status": "PENDING_QUALIFICATION",
     },
     {
         "gate_id": "SW-M3-RUNTIME-EVIDENCE",
         "reason": (
-            "Repository-side telemetry primitives exist, but application-emitted end-to-end "
-            "runtime evidence remains incomplete."
+            "The exact application-emitted runtime observation flow is implemented, but its "
+            "separate exact-SHA qualification receipt is not admitted by this candidate gate."
         ),
-        "status": "PENDING_IMPLEMENTATION",
+        "status": "PENDING_QUALIFICATION",
     },
     {
         "gate_id": "SW-M4-MATERIALIZED-SEARCH",
-        "reason": "Search promotion has not yet been qualified against materialized worlds.",
-        "status": "PENDING_IMPLEMENTATION",
+        "reason": (
+            "The M3-derived 24-to-4-to-2-to-1 six-provider materializer is implemented, but this "
+            "candidate workflow does not retain its exact-SHA hosted Docker receipt."
+        ),
+        "status": "PENDING_QUALIFICATION",
     },
     {
         "gate_id": "SW-M5-OBSERVED-REPLAY",
@@ -125,7 +128,11 @@ EXTERNAL_BLOCKERS: Final = (
     },
 )
 
-REQUIRED_GATES: Final = (*CONTROLLED_GATES, *IMPLEMENTATION_GAPS, *EXTERNAL_BLOCKERS)
+REQUIRED_GATES: Final = (
+    *CONTROLLED_GATES,
+    *QUALIFICATION_AND_IMPLEMENTATION_GAPS,
+    *EXTERNAL_BLOCKERS,
+)
 
 LIMITATIONS: Final = (
     "Candidate bytes are not a trusted Reality Replay Broker issuance.",
@@ -141,5 +148,5 @@ LIMITATIONS: Final = (
         "Only execution.commands entries are typed command evidence; earlier source and build "
         "steps remain workflow dependencies and are not receipt-captured command gates."
     ),
-    "Required M2-M8 qualification receipts remain incomplete or externally blocked.",
+    "Required M2-M8 qualification receipts remain pending or externally blocked.",
 )

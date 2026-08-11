@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = [
   "pydantic>=2.12,<3",
+  "stateweaver-contracts==0.1.0",
   "stateweaver-worlds==0.1.0",
 ]
 
@@ -18,10 +19,11 @@ dependencies = [
 packages = ["src/stateweaver"]
 
 [tool.uv.sources]
+stateweaver-contracts = { workspace = true }
 stateweaver-worlds = { workspace = true }
 
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
 asyncio_mode = "strict"
-pythonpath = ["src", "../../../packages/worlds/src"]
+pythonpath = ["src", "../../../packages/contracts/src", "../../../packages/worlds/src"]
 testpaths = ["tests"]

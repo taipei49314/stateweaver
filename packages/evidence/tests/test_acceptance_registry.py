@@ -112,6 +112,10 @@ def test_local_implementation_rows_bind_their_semantic_pytest_nodes() -> None:
             "benchmarks/statechainbench/tests/test_runner.py::"
             "test_holdout_comparison_uses_raw_matched_results_and_shows_tiered_gain",
         ),
+        "SW-M4-MATERIALIZED": (
+            "tests/integration/worlds/test_live_materialized_search.py::"
+            "test_observed_search_materializes_only_four_two_one_and_reclaims_every_world",
+        ),
     }
     assert {
         requirement_id: tuple(mapping.selector for mapping in by_id[requirement_id].tests)

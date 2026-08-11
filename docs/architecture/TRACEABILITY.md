@@ -16,7 +16,7 @@ acceptance commands are intentionally local and do not require network access.
 | M1 — Deterministic Replay Kernel | Proof-producing replay is implemented and locally exercised; formal exit audit pending | `packages/replay/`, `adapters/environments/in_process_lab/`, `apps/cli/` |
 | M2 — Materialized World Engine | Six real-provider capture/mutate/restore path and four-way local gate implemented; exact-SHA hosted admission pending | `packages/worlds/`, `adapters/environments/docker_compose/`, `tests/integration/worlds/` |
 | M3 — Security Semantic Twin | Clean-wheel observed-flow receipt implemented and independently reproduced; M4/M5 materialized chain remains separate | `packages/twin/`, source/OTel adapters, `packages/evidence/src/stateweaver/evidence/runtime_observation.py`, `apps/cli/src/stateweaver/cli/runtime_qualification.py` |
-| M4 — Tiered Search Controller | Offline exit flow preserves the observed candidate; materialized certification pending | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
+| M4 — Tiered Search Controller | M3-derived 24-to-4-to-2-to-1 production materializer passes locally in fixed six-provider worlds; hosted exact-SHA artifact pending | `packages/search/`, `workflows/world/`, `apps/cli/src/stateweaver/cli/materialized_search_qualification.py`, `tests/integration/worlds/test_live_materialized_search.py` |
 | M5 — Chain Compiler | Observed admission bridge and synthetic replay closure are implemented; release evidence pending | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |
 | M6 — Reality Anchor + Proof Bundle | V2 event reconstruction + immutable-byte candidate resolver implemented; trusted broker pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
 | M7 — StateChainBench | Trusted built-in synthetic runner hardened; equal-work/public audit pending | `benchmarks/statechainbench/` |
@@ -262,18 +262,23 @@ each candidate is `search_blocked`, or follows `reserved` -> `allocated` -> `cap
 `committed`, or follows `reserved` -> `not_committed`. It is a deterministic audit projection rather
 than operational callback telemetry or a wall-clock transcript. Releasing an uncommitted allocation does not claim
 transactional rollback or reversal of external effects, and the self-contained hash chain provides
-no external freshness attestation. The local 24 → 4 → 2 → 1 synthetic flow is implemented and
-covered by a focused test; real
-materialized allocation and retained release evidence are pending, so M4 is **implemented offline,
-not release-certified**.
+no external freshness attestation.
 
-The cross-milestone pipeline additionally proves that the winning candidate retains the same three
-observed fragments across the 24 -> 4 -> 2 -> 1 reduction and that its in-memory Materialized-tier
-promotion record is independently rebound before compilation. Admission replays the controller from
-the exact batch, input ledger, and beam policy, then independently checks provisional and committed
-reservations. The winning hypothesis/state/score remain hand-authored fixtures rather than Twin-
-derived ranking inputs. "Materialized-tier" here is a typed workflow outcome backed by abstract
-callbacks; it is not a Docker/provider materialization claim.
+`apps/cli/src/stateweaver/cli/materialized_search_qualification.py` now supplies the production
+composition. It executes the M3 application lifecycle first, derives all 24 Ghost candidates from
+that exact admitted `OBSERVED` transition and semantic receipt, and uses the unchanged search and
+promotion controllers to admit exactly 4, then 2, then 1 candidates. Only those seven promotions
+fork fixed `RealDockerComposeEnvironmentAdapter` siblings. Each sibling performs an atomic
+before/mutation/after capture and receives a machine-oracle receipt only when PostgreSQL, Redis,
+RabbitMQ, browser-session, filesystem, and controlled-clock semantic digests all change. The final
+receipt replays every stage, conserves the 4/2/1 reservation ledger, binds the winner's score, state,
+and fragment to M3, records a peak of four live allocations, and requires seven releases with zero
+residue. A local opt-in Docker run passed; exact-merged-SHA hosted artifact read-back remains the
+last repository-controlled qualification step, so this is not a release or M4 six-hour exit claim.
+
+The older cross-milestone in-memory pipeline remains useful only for M5 compiler admission. It is no
+longer cited as materialized M4 evidence; the live selector is
+`tests/integration/worlds/test_live_materialized_search.py::test_observed_search_materializes_only_four_two_one_and_reclaims_every_world`.
 
 ## M5 — Chain Compiler
 

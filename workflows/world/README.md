@@ -29,6 +29,10 @@ and compiler output before emitting a content-bound admission receipt. The compi
 to silently discard an admitted fragment. This boundary performs no execution or I/O, and the
 resulting replay plan still requires fresh policy authorization.
 
-Real materialized-world workflow certification is **pending**. The tests use only
-deterministic in-memory fakes and do not establish a Docker or external-service
-integration claim.
+This package deliberately remains pure, but its ports now have a production composition in
+`stateweaver.cli.materialized_search_qualification`. That runner derives 24 Ghost candidates from
+one exact M3 runtime receipt, allows only the 4, then 2, then 1 promoted candidates to reach the
+fixed six-provider Docker adapter, and retains provider, budget, winner, and cleanup bindings in a
+self-validating receipt. The package's own tests remain in-memory; the separate opt-in
+`tests/integration/worlds/test_live_materialized_search.py` is the real Docker qualification gate.
+Exact-merged-SHA hosted evidence is still required before the registry row is externally admitted.

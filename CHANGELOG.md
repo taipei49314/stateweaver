@@ -21,6 +21,9 @@ All notable changes are recorded here. The project has no published tag or GitHu
 - A fixed six-provider Docker Compose materialization path for PostgreSQL, Redis, RabbitMQ,
   Chromium session state, filesystem state, and controlled-clock capture/mutate/restore, including
   four-sibling isolation and success/timeout/cancellation/partial-failure cleanup gates.
+- An M3-derived M4 qualification runner that evaluates 24 Ghost candidates, materializes only the
+  4-to-2-to-1 promoted subset in real six-provider siblings, binds seven machine-oracle receipts to
+  one conserved budget ledger, caps simultaneous allocations at four, and proves zero residue.
 - Fail-closed non-local result admissions: the M3 receipt digest promotes exactly five runtime
   rows, yielding 58 `PASS` / 34 `BLOCKED` only when every declared test and evidence input exists.
 - Candidate payload, checksum, SBOM, receipt, reproducibility, and fresh-downloader tooling.

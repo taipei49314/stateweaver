@@ -22,18 +22,27 @@ from stateweaver.evidence.runtime_observation import (
 
 from .evidence import collect_foundation_evidence, verify_foundation_evidence
 from .foundation import verify_foundation
+from .materialized_search_qualification import (
+    qualify_materialized_search,
+    write_materialized_search_qualification,
+)
 from .runtime_qualification import qualify_runtime_observation
 
 _VERSION: Final = "0.1.0"
 _COMPONENTS: Final = (
+    ("compiler", "stateweaver.compiler"),
     ("contracts", "stateweaver.contracts"),
+    ("docker_compose", "stateweaver.adapters.docker_compose"),
     ("evidence", "stateweaver.evidence"),
     ("policy", "stateweaver.policy"),
     ("replay", "stateweaver.replay"),
+    ("search", "stateweaver.search"),
     ("in_process_lab", "stateweaver.adapters.in_process_lab"),
     ("opentelemetry", "stateweaver.adapters.telemetry.opentelemetry"),
     ("synthetic_lab", "stateweaver_lab"),
     ("twin", "stateweaver.twin"),
+    ("world_workflow", "stateweaver.workflows.world"),
+    ("worlds", "stateweaver.worlds"),
 )
 
 
@@ -90,6 +99,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     runtime_observation.add_argument("--output", type=Path, required=True)
     runtime_observation.add_argument("--repository-marker", required=True)
+    materialized_search = foundation_commands.add_parser(
+        "qualify-materialized-search",
+        help="execute and retain the M3-derived 24-to-4-to-2-to-1 real-world search",
+    )
+    materialized_search.add_argument("--output", type=Path, required=True)
+    materialized_search.add_argument("--repository-marker", required=True)
     check = foundation_commands.add_parser(
         "verify-evidence", help="verify hashes and causal bindings in a proof bundle"
     )
@@ -187,6 +202,35 @@ def main(argv: Sequence[str] | None = None) -> int:
                 {
                     "qualified": True,
                     "semantic_digest": runtime_receipt.semantic_digest,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
+    if arguments.foundation_command == "qualify-materialized-search":
+        try:
+            materialized_receipt = qualify_materialized_search(arguments.repository_marker)
+            write_materialized_search_qualification(arguments.output, materialized_receipt)
+        except (OSError, RuntimeError, ValueError):
+            print(
+                json.dumps(
+                    {
+                        "qualified": False,
+                        "error": {"code": "materialized_search_not_qualified"},
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 1
+        print(
+            json.dumps(
+                {
+                    "qualified": True,
+                    "receipt_digest": materialized_receipt.receipt_digest,
+                    "winner": materialized_receipt.winner.candidate_id,
                 },
                 sort_keys=True,
                 separators=(",", ":"),

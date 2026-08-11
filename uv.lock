@@ -775,12 +775,14 @@ version = "0.1.0"
 source = { editable = "adapters/environments/docker_compose" }
 dependencies = [
     { name = "pydantic" },
+    { name = "stateweaver-contracts" },
     { name = "stateweaver-worlds" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "pydantic", specifier = ">=2.12,<3" },
+    { name = "stateweaver-contracts", editable = "packages/contracts" },
     { name = "stateweaver-worlds", editable = "packages/worlds" },
 ]
 
@@ -896,24 +898,36 @@ name = "stateweaver-cli"
 version = "0.1.0"
 source = { editable = "apps/cli" }
 dependencies = [
+    { name = "pydantic" },
+    { name = "stateweaver-adapter-docker-compose" },
     { name = "stateweaver-adapter-in-process-lab" },
     { name = "stateweaver-adapter-opentelemetry" },
+    { name = "stateweaver-compiler" },
     { name = "stateweaver-contracts" },
     { name = "stateweaver-evidence" },
     { name = "stateweaver-policy" },
     { name = "stateweaver-replay" },
+    { name = "stateweaver-search" },
     { name = "stateweaver-twin" },
+    { name = "stateweaver-world-workflow" },
+    { name = "stateweaver-worlds" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "pydantic", specifier = ">=2.12,<3" },
+    { name = "stateweaver-adapter-docker-compose", editable = "adapters/environments/docker_compose" },
     { name = "stateweaver-adapter-in-process-lab", editable = "adapters/environments/in_process_lab" },
     { name = "stateweaver-adapter-opentelemetry", editable = "adapters/telemetry/opentelemetry" },
+    { name = "stateweaver-compiler", editable = "packages/compiler" },
     { name = "stateweaver-contracts", editable = "packages/contracts" },
     { name = "stateweaver-evidence", editable = "packages/evidence" },
     { name = "stateweaver-policy", editable = "packages/policy" },
     { name = "stateweaver-replay", editable = "packages/replay" },
+    { name = "stateweaver-search", editable = "packages/search" },
     { name = "stateweaver-twin", editable = "packages/twin" },
+    { name = "stateweaver-world-workflow", editable = "workflows/world" },
+    { name = "stateweaver-worlds", editable = "packages/worlds" },
 ]
 
 [[package]]
