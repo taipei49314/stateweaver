@@ -11,7 +11,8 @@ from typing import Any, cast
 from xml.etree import ElementTree
 
 import pytest
-from evidence_test_fixtures import EPOCH, foundation
+from evidence_test_fixtures import EPOCH
+from evidence_test_fixtures import foundation as fixture_foundation
 from stateweaver.contracts import ScopeManifest
 from stateweaver.evidence import (
     ACCEPTANCE_TEST_COMMAND,
@@ -37,7 +38,11 @@ JUNIT_NAMES = ("contracts", "policy", "lab", "replay")
 JUNIT_REQUIRED_IDENTITIES = {
     "contracts": (
         "tests.test_canonical::test_canonical_fingerprint_is_input_order_independent",
+        "tests.test_canonical::test_security_fingerprint_uses_explicit_semantic_projection",
+        "tests.test_canonical::test_fingerprint_property_is_permutation_invariant",
+        "tests.test_canonical::test_fingerprint_property_detects_security_semantic_change",
         "tests.test_contracts::test_closed_schema_rejects_unknown_fields",
+        "tests.test_contracts::test_six_m0_contract_families_are_exported_from_the_public_surface",
     ),
     "policy": (
         "tests.test_evaluator::test_localhost_target_is_allowed",
@@ -46,15 +51,33 @@ JUNIT_REQUIRED_IDENTITIES = {
     "lab": (
         "tests.test_lab::test_complete_chain_violates_oracle_only_in_vulnerable_mode",
         "tests.test_lab::test_same_chain_is_blocked_by_patched_mode",
+        "tests.test_lab::test_clean_seed_and_reset_are_deterministic",
+        "tests.test_lab::test_vulnerable_and_patched_apps_have_no_process_global_mode_state",
+        "tests.test_lab::test_evidence_and_layered_capture_never_record_bearer_values",
+        "tests.test_lab::test_invalid_mode_is_rejected",
     ),
     "replay": (
         "packages.replay.tests.test_kernel::test_replay_is_deterministic_across_five_clean_roots",
+        "packages.replay.tests.test_kernel::test_observation_drift_is_classified_as_nondeterministic",
+        "packages.replay.tests.test_kernel::test_cleanup_failure_is_visible_and_redacted",
+        "packages.replay.tests.test_kernel::test_boundary_failures_are_localized_cleanup_is_reentrant_and_reset_recovers[reset-RESET_FAILURE]",
+        "packages.replay.tests.test_kernel::test_boundary_failures_are_localized_cleanup_is_reentrant_and_reset_recovers[capture_before-CAPTURE_BEFORE_FAILURE]",
+        "packages.replay.tests.test_kernel::test_boundary_failures_are_localized_cleanup_is_reentrant_and_reset_recovers[execute-EXECUTE_FAILURE]",
+        "packages.replay.tests.test_kernel::test_boundary_failures_are_localized_cleanup_is_reentrant_and_reset_recovers[capture_after-CAPTURE_AFTER_FAILURE]",
+        "packages.replay.tests.test_kernel::test_reset_is_bounded_and_cleanup_still_runs",
         "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::test_full_vulnerable_plan_is_deterministic_over_five_runs",
+        "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::test_root_creation_reset_and_capture_contain_all_seven_redacted_layers",
         "apps.cli.tests.test_foundation::test_foundation_verification_meets_all_acceptance_conditions",
         "packages.evidence.tests.test_collector::test_collects_exact_complete_and_verifiable_tree",
         "packages.evidence.tests.test_acceptance_registry::test_packaged_registry_is_canonical_and_has_exact_required_ids",
     ),
 }
+
+
+def foundation() -> dict[str, object]:
+    """Use the seven-layer root required by local qualification receipt tests."""
+
+    return fixture_foundation(layered_root=True)
 
 
 def _junit_sources(
@@ -139,12 +162,14 @@ def _input(
     proof: dict[str, object] | None = None,
     sources: dict[str, Path] | None = None,
     metadata: dict[str, object] | None = None,
+    package_install_receipt: dict[str, object] | None = None,
 ) -> CollectionInput:
     accepted_proof = foundation() if proof is None else proof
     return CollectionInput(
         foundation=accepted_proof,
         junit_sources=_junit_sources(tmp_path) if sources is None else sources,
         run_metadata=_metadata(accepted_proof) if metadata is None else metadata,
+        package_install_receipt=package_install_receipt,
     )
 
 
@@ -152,6 +177,47 @@ def _collect(tmp_path: Path, run_id: str = "m0-m1.1") -> Path:
     return collect_acceptance_evidence(
         input=_input(tmp_path), output_root=tmp_path / "artifacts", run_id=run_id
     ).run_directory
+
+
+def _package_install_receipt() -> dict[str, object]:
+    return {
+        "schema_version": "stateweaver-package-install-qualification-v1",
+        "requirement_id": "M0-C07",
+        "repository_marker": "synthetic-test-tree",
+        "producer_command": "stateweaver foundation qualify-package-install",
+        "python": {
+            "implementation": "CPython",
+            "version": "3.13.1",
+            "virtual_environment": True,
+        },
+        "source_root_excluded": True,
+        "installation": {
+            "distribution": "stateweaver-contracts",
+            "version": "0.1.0",
+            "editable": False,
+            "installed_from_wheel": True,
+            "site_packages_relative_path": "lib/python3.13/site-packages",
+            "module_relative_path": (
+                "lib/python3.13/site-packages/stateweaver/contracts/__init__.py"
+            ),
+            "metadata_sha256": "sha256:" + "1" * 64,
+            "wheel_sha256": "sha256:" + "2" * 64,
+            "record_sha256": "sha256:" + "3" * 64,
+        },
+        "families": [
+            {"family": "scope", "symbols": ["ScopeManifest"]},
+            {"family": "action", "symbols": ["ActionEnvelope"]},
+            {
+                "family": "security-state-ir",
+                "symbols": ["Entity", "Fact", "Relation"],
+            },
+            {"family": "transition", "symbols": ["TransitionFragment"]},
+            {"family": "world", "symbols": ["WorldManifest"]},
+            {"family": "oracle", "symbols": ["OracleResult"]},
+        ],
+        "public_all_sha256": "sha256:" + "4" * 64,
+        "all_symbols_exported": True,
+    }
 
 
 def _expect_rejected(
@@ -235,6 +301,14 @@ def test_collects_exact_complete_and_verifiable_tree(tmp_path: Path) -> None:
         "replay/attempts.json",
         "replay/failure-localization.json",
         "replay/action-log.json",
+        "qualification/m0/property-seed.json",
+        "qualification/m0/mode-isolation.json",
+        "qualification/m0/configuration-snapshot.json",
+        "qualification/m1/session-manifest.json",
+        "qualification/m1/provider-digests.json",
+        "qualification/m1/reset-diff.json",
+        "qualification/m1/nondeterminism.json",
+        "qualification/m1/cleanup-events.json",
         "qualification/registry/closure.json",
         "qualification/registry/results.json",
         "run-manifest.json",
@@ -261,13 +335,31 @@ def test_proof_derives_exact_fail_closed_registry_results(tmp_path: Path) -> Non
         EXPECTED_REQUIREMENT_IDS
     )
     assert results["summary"]["required"] == 92
+    assert results["summary"] == {
+        "blocked": 39,
+        "failed": 0,
+        "not_run": 37,
+        "passed": 16,
+        "required": 92,
+    }
     assert (
         sum(results["summary"][name] for name in ("blocked", "failed", "not_run", "passed")) == 92
     )
     assert results["release_eligible"] is False
     assert by_id["SW-REGISTRY"]["status"] == "PASS"
     assert by_id["M0-L03"]["status"] == "PASS"
-    assert by_id["M0-C01"]["status"] == "NOT_RUN"
+    for requirement_id in (
+        "M0-C08",
+        "M0-L02",
+        "M0-L10",
+        "M1-R02",
+        "M1-R04",
+        "M1-R05",
+        "M1-R10",
+        "M1-R11",
+    ):
+        assert by_id[requirement_id]["status"] == "PASS"
+    assert by_id["M0-C07"]["status"] == "NOT_RUN"
     assert by_id["SW-M6-TRUST"]["status"] == "BLOCKED"
     assert by_id["SW-M6-TRUST"]["tests_observed"] == []
     assert by_id["SW-M6-TRUST"]["evidence_missing"] == [
@@ -277,6 +369,44 @@ def test_proof_derives_exact_fail_closed_registry_results(tmp_path: Path) -> Non
         EXPECTED_ACCEPTANCE_REGISTRY_SHA256
     )
     assert manifest["acceptance_registry"]["summary"] == results["summary"]
+
+    property_receipt = json.loads(
+        (run / "qualification" / "m0" / "property-seed.json").read_text(encoding="utf-8")
+    )
+    assert property_receipt["seed"] == 982341
+    assert property_receipt["examples_per_property"] == 150
+    assert property_receipt["security_semantic_change_detected"] is True
+
+    mode_receipt = json.loads(
+        (run / "qualification" / "m0" / "mode-isolation.json").read_text(encoding="utf-8")
+    )
+    assert mode_receipt["vulnerable"]["mode"] == "vulnerable"
+    assert mode_receipt["patched"]["mode"] == "patched"
+    assert mode_receipt["shared_process_state"] is False
+
+    session_receipt = json.loads(
+        (run / "qualification" / "m1" / "session-manifest.json").read_text(encoding="utf-8")
+    )
+    assert session_receipt["session_count"] == 3
+    assert session_receipt["raw_bearer_values_retained"] is False
+
+    provider_receipt = json.loads(
+        (run / "qualification" / "m1" / "provider-digests.json").read_text(encoding="utf-8")
+    )
+    assert set(provider_receipt["providers"]) == {"cache", "database", "queue"}
+    assert provider_receipt["equivalent_across_clean_roots"] is True
+
+    nondeterminism_receipt = json.loads(
+        (run / "qualification" / "m1" / "nondeterminism.json").read_text(encoding="utf-8")
+    )
+    assert nondeterminism_receipt["classification"] == "NONDETERMINISTIC"
+    assert nondeterminism_receipt["finding_promotion_allowed"] is False
+
+    cleanup_receipt = json.loads(
+        (run / "qualification" / "m1" / "cleanup-events.json").read_text(encoding="utf-8")
+    )
+    assert len(cleanup_receipt["injected_boundaries"]) == 4
+    assert cleanup_receipt["next_reset_permitted"] is True
 
 
 def test_verifier_rejects_rehashed_registry_result_promotion(tmp_path: Path) -> None:
@@ -301,6 +431,100 @@ def test_verifier_rejects_rehashed_registry_result_promotion(tmp_path: Path) -> 
     assert not verification.valid
     assert verification.snapshot_sha256 is None
     assert any("coherent" in error for error in verification.errors)
+
+
+def test_verifier_rejects_rehashed_qualification_receipt_tampering(tmp_path: Path) -> None:
+    run = _collect(tmp_path, "qualification-tampering")
+    receipt_path = run / "qualification" / "m1" / "nondeterminism.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["classification"] = "DETERMINISTIC"
+    receipt["finding_promotion_allowed"] = True
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    _rewrite_manifest_digest(run, "qualification/m1/nondeterminism.json")
+
+    verification = verify_acceptance_evidence(run)
+
+    assert not verification.valid
+    assert verification.snapshot_sha256 is None
+    assert "artifact bundle is not causally coherent" in verification.errors
+
+
+def test_clean_wheel_receipt_promotes_only_m0_c07(tmp_path: Path) -> None:
+    result = collect_acceptance_evidence(
+        input=_input(tmp_path, package_install_receipt=_package_install_receipt()),
+        output_root=tmp_path / "artifacts",
+        run_id="package-install",
+    )
+    run = result.run_directory
+    results = json.loads(
+        (run / "qualification" / "registry" / "results.json").read_text(encoding="utf-8")
+    )
+    by_id = {row["requirement_id"]: row for row in results["requirements"]}
+
+    assert verify_acceptance_evidence(run).valid
+    assert (run / "qualification" / "m0" / "package-install.json").is_file()
+    assert by_id["M0-C07"]["status"] == "PASS"
+    assert results["summary"] == {
+        "blocked": 39,
+        "failed": 0,
+        "not_run": 36,
+        "passed": 17,
+        "required": 92,
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        pytest.param(
+            lambda receipt: receipt.__setitem__("repository_marker", "other-tree"),
+            id="wrong-repository",
+        ),
+        pytest.param(
+            lambda receipt: cast(dict[str, object], receipt["installation"]).__setitem__(
+                "editable", True
+            ),
+            id="editable-install",
+        ),
+        pytest.param(
+            lambda receipt: cast(list[dict[str, object]], receipt["families"])[0].__setitem__(
+                "symbols", ["ScopeManifest", "UnexpectedExport"]
+            ),
+            id="wrong-public-surface",
+        ),
+    ],
+)
+def test_rejects_unqualified_package_install_receipt(
+    tmp_path: Path, mutation: Callable[[dict[str, object]], None]
+) -> None:
+    receipt = _package_install_receipt()
+    mutation(receipt)
+
+    with pytest.raises(AcceptanceEvidenceError, match="package install"):
+        collect_acceptance_evidence(
+            input=_input(tmp_path, package_install_receipt=receipt),
+            output_root=tmp_path / "artifacts",
+            run_id="bad-package-install",
+        )
+
+
+def test_verifier_rejects_rehashed_package_install_receipt_tampering(tmp_path: Path) -> None:
+    run = collect_acceptance_evidence(
+        input=_input(tmp_path, package_install_receipt=_package_install_receipt()),
+        output_root=tmp_path / "artifacts",
+        run_id="package-tampering",
+    ).run_directory
+    receipt_path = run / "qualification" / "m0" / "package-install.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["installation"]["editable"] = True
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    _rewrite_manifest_digest(run, "qualification/m0/package-install.json")
+
+    verification = verify_acceptance_evidence(run)
+
+    assert not verification.valid
+    assert verification.snapshot_sha256 is None
+    assert "artifact bundle is not causally coherent" in verification.errors
 
 
 @pytest.mark.parametrize("run_id", ["../escape", "two/slashes", "..", "", "has space"])

@@ -29,11 +29,17 @@ from .collector import (
     AcceptanceEvidenceError,
     CollectionInput,
     _JunitSummary,
+    _m01_qualification_payloads,
     _metadata_datetime,
     _proof_artifact_payloads,
     _read_junit_payloads,
     _validate_foundation,
     _validate_supporting_inputs,
+)
+from .package_install import (
+    PACKAGE_INSTALL_QUALIFICATION_PATH,
+    PackageInstallQualificationError,
+    validate_package_install_receipt,
 )
 
 _RUN_MANIFEST_FIELDS = frozenset(
@@ -97,26 +103,27 @@ def verify_acceptance_evidence(
         return VerificationResult(False, ("artifact tree is unreadable",))
     if any(path.is_symlink() for path in paths):
         errors.append("artifact tree must not contain symlinks")
-    required = set(_REQUIRED_RELATIVE)
     actual = {
         path.relative_to(run_directory).as_posix()
         for path in paths
         if path.is_file() and path != manifest
     }
-    if actual != required:
-        errors.append("artifact tree contains missing or untracked artifacts")
-
     try:
         manifest_bytes = manifest.read_bytes()
     except OSError:
         errors.append("artifact manifest is unreadable")
         manifest_bytes = b""
     expected = _parse_manifest(manifest_bytes, errors)
+    required = set(_REQUIRED_RELATIVE)
+    if PACKAGE_INSTALL_QUALIFICATION_PATH in expected:
+        required.add(PACKAGE_INSTALL_QUALIFICATION_PATH)
     if set(expected) != required:
         errors.append("artifact manifest does not cover exactly the required artifacts")
+    if actual != required:
+        errors.append("artifact tree contains missing or untracked artifacts")
 
     snapshot: dict[str, bytes] = {}
-    for relative in _REQUIRED_RELATIVE:
+    for relative in sorted(required):
         target = run_directory / relative
         expected_hash = expected.get(relative)
         if target.is_symlink():
@@ -134,12 +141,12 @@ def verify_acceptance_evidence(
                     errors.append("artifact digest does not match manifest")
 
     parsed: dict[str, object] = {}
-    for relative in _REQUIRED_RELATIVE:
+    for relative in sorted(required):
         if relative.endswith(".json") and relative in snapshot:
             value = _read_canonical_json(snapshot[relative], errors)
             if value is not _INVALID:
                 parsed[relative] = value
-    if all(relative in parsed for relative in _REQUIRED_RELATIVE if relative.endswith(".json")):
+    if all(relative in parsed for relative in required if relative.endswith(".json")):
         _verify_coherence(
             run_directory,
             parsed,
@@ -195,6 +202,41 @@ def _verify_coherence(
             name: snapshot[f"junit/{name}.xml"] for name in ("contracts", "policy", "lab", "replay")
         }
         junit_results = _read_junit_payloads(junit_payloads)
+        qualification_payloads = _m01_qualification_payloads(foundation, junit_results)
+        for relative, expected_payload in qualification_payloads.items():
+            actual_payload = parsed.get(relative, _INVALID)
+            if actual_payload is _INVALID or canonical_json_bytes(
+                actual_payload
+            ) != canonical_json_bytes(expected_payload):
+                raise AcceptanceEvidenceError(
+                    "derived qualification artifact does not match its validated inputs"
+                )
+        metadata = run_manifest.get("metadata")
+        if not _string_mapping(metadata):
+            raise AcceptanceEvidenceError("run manifest metadata is invalid")
+        observed_evidence_paths: tuple[str, ...] = _REQUIRED_RELATIVE
+        package_receipt = parsed.get(PACKAGE_INSTALL_QUALIFICATION_PATH, _INVALID)
+        if package_receipt is not _INVALID:
+            if not _string_mapping(package_receipt):
+                raise AcceptanceEvidenceError("package install qualification is invalid")
+            repository_marker = metadata.get("repository_marker")
+            if not isinstance(repository_marker, str):
+                raise AcceptanceEvidenceError("package install qualification marker is invalid")
+            try:
+                expected_package_receipt = validate_package_install_receipt(
+                    package_receipt,
+                    expected_repository_marker=repository_marker,
+                )
+            except PackageInstallQualificationError:
+                raise AcceptanceEvidenceError("package install qualification is invalid") from None
+            if canonical_json_bytes(package_receipt) != canonical_json_bytes(
+                expected_package_receipt
+            ):
+                raise AcceptanceEvidenceError("package install qualification is inconsistent")
+            observed_evidence_paths = (
+                *_REQUIRED_RELATIVE,
+                PACKAGE_INSTALL_QUALIFICATION_PATH,
+            )
         registry = load_acceptance_registry()
         expected_closure = build_acceptance_registry_closure(registry)
         passing_test_identities = tuple(
@@ -205,7 +247,7 @@ def _verify_coherence(
         expected_results = derive_acceptance_results(
             registry,
             passing_test_identities=passing_test_identities,
-            observed_evidence_paths=_REQUIRED_RELATIVE,
+            observed_evidence_paths=observed_evidence_paths,
         )
         if canonical_json_bytes(parsed["qualification/registry/closure.json"]) != (
             canonical_json_bytes(expected_closure.model_dump(mode="json"))
@@ -215,9 +257,6 @@ def _verify_coherence(
             canonical_json_bytes(expected_results.model_dump(mode="json"))
         ):
             raise AcceptanceEvidenceError("acceptance registry results are inconsistent")
-        metadata = run_manifest.get("metadata")
-        if not _string_mapping(metadata):
-            raise AcceptanceEvidenceError("run manifest metadata is invalid")
         _validate_supporting_inputs(
             CollectionInput(
                 foundation=source,

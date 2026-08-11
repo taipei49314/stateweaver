@@ -68,24 +68,6 @@ jobs:
             packages/evidence/tests \
             --junitxml=artifacts/acceptance/junit/replay.xml
 
-      - name: Collect and verify causal acceptance proof
-        if: matrix.python-version == '3.13'
-        run: |
-          set -o pipefail
-          uv run stateweaver foundation collect-evidence \
-            --output-root artifacts/acceptance/runs \
-            --run-id "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-            --repository-marker "${GITHUB_SHA}" \
-            --started-at "$(cat artifacts/acceptance/started-at.txt)" \
-            --junit-contracts artifacts/acceptance/junit/contracts.xml \
-            --junit-policy artifacts/acceptance/junit/policy.xml \
-            --junit-lab artifacts/acceptance/junit/lab.xml \
-            --junit-replay artifacts/acceptance/junit/replay.xml \
-            | tee artifacts/acceptance/collection.json
-          uv run stateweaver foundation verify-evidence \
-            "artifacts/acceptance/runs/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-            --repository-marker "${GITHUB_SHA}"
-
       - name: Build every workspace distribution
         if: matrix.python-version == '3.13'
         run: uv build --all-packages --out-dir dist
@@ -113,6 +95,35 @@ jobs:
           .packaging-smoke/bin/python -c "from stateweaver.reporting import RealityPublicationManifest"
           .packaging-smoke/bin/stateweaver --json doctor
           .packaging-smoke/bin/stateweaver --json foundation verify
+          qualification_cwd="${RUNNER_TEMP}/stateweaver-package-install-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "${qualification_cwd}"
+          (
+            cd "${qualification_cwd}"
+            "${GITHUB_WORKSPACE}/.packaging-smoke/bin/stateweaver" \
+              foundation qualify-package-install \
+              --output "${GITHUB_WORKSPACE}/artifacts/qualification-inputs/m0/package-install.json" \
+              --repository-marker "${GITHUB_SHA}" \
+              --source-root "${GITHUB_WORKSPACE}"
+          )
+
+      - name: Collect and verify causal acceptance proof
+        if: matrix.python-version == '3.13'
+        run: |
+          set -o pipefail
+          uv run stateweaver foundation collect-evidence \
+            --output-root artifacts/acceptance/runs \
+            --run-id "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --repository-marker "${GITHUB_SHA}" \
+            --started-at "$(cat artifacts/acceptance/started-at.txt)" \
+            --junit-contracts artifacts/acceptance/junit/contracts.xml \
+            --junit-policy artifacts/acceptance/junit/policy.xml \
+            --junit-lab artifacts/acceptance/junit/lab.xml \
+            --junit-replay artifacts/acceptance/junit/replay.xml \
+            --package-install-receipt artifacts/qualification-inputs/m0/package-install.json \
+            | tee artifacts/acceptance/collection.json
+          uv run stateweaver foundation verify-evidence \
+            "artifacts/acceptance/runs/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --repository-marker "${GITHUB_SHA}"
           .packaging-smoke/bin/stateweaver foundation verify-evidence \
             "artifacts/acceptance/runs/ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --repository-marker "${GITHUB_SHA}"

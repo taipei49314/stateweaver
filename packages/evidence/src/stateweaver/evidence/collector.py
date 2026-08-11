@@ -54,13 +54,58 @@ from .acceptance_results import (
     build_acceptance_registry_closure,
     derive_acceptance_results,
 )
+from .package_install import (
+    PACKAGE_INSTALL_QUALIFICATION_PATH,
+    PackageInstallQualificationError,
+    validate_package_install_receipt,
+)
 
 _JUNIT_NAMES = ("contracts", "policy", "lab", "replay")
+_M0_PROPERTY_SEED = 982341
+_M0_PROPERTY_EXAMPLES = 150
+_M0_PROPERTY_IDENTITIES = (
+    "tests.test_canonical::test_security_fingerprint_uses_explicit_semantic_projection",
+    "tests.test_canonical::test_fingerprint_property_is_permutation_invariant",
+    "tests.test_canonical::test_fingerprint_property_detects_security_semantic_change",
+)
+_M0_MODE_ISOLATION_IDENTITY = (
+    "tests.test_lab::test_vulnerable_and_patched_apps_have_no_process_global_mode_state"
+)
+_M0_CONFIGURATION_IDENTITY = "tests.test_lab::test_invalid_mode_is_rejected"
+_M1_SESSION_IDENTITY = (
+    "tests.test_lab::test_evidence_and_layered_capture_never_record_bearer_values"
+)
+_M1_PROVIDER_IDENTITY = (
+    "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::"
+    "test_root_creation_reset_and_capture_contain_all_seven_redacted_layers"
+)
+_M1_RESET_IDENTITY = "tests.test_lab::test_clean_seed_and_reset_are_deterministic"
+_M1_NONDETERMINISM_IDENTITY = (
+    "packages.replay.tests.test_kernel::test_observation_drift_is_classified_as_nondeterministic"
+)
+_M1_CLEANUP_CASES = (
+    ("reset", "RESET_FAILURE"),
+    ("capture_before", "CAPTURE_BEFORE_FAILURE"),
+    ("execute", "EXECUTE_FAILURE"),
+    ("capture_after", "CAPTURE_AFTER_FAILURE"),
+)
+_M1_CLEANUP_BASE_IDENTITY = (
+    "packages.replay.tests.test_kernel::"
+    "test_boundary_failures_are_localized_cleanup_is_reentrant_and_reset_recovers"
+)
+_M1_CLEANUP_FAILURE_IDENTITY = (
+    "packages.replay.tests.test_kernel::test_cleanup_failure_is_visible_and_redacted"
+)
+_M1_RESET_TIMEOUT_IDENTITY = (
+    "packages.replay.tests.test_kernel::test_reset_is_bounded_and_cleanup_still_runs"
+)
 _JUNIT_REQUIRED_IDENTITIES: dict[str, frozenset[str]] = {
     "contracts": frozenset(
         {
             "tests.test_canonical::test_canonical_fingerprint_is_input_order_independent",
+            *_M0_PROPERTY_IDENTITIES,
             "tests.test_contracts::test_closed_schema_rejects_unknown_fields",
+            "tests.test_contracts::test_six_m0_contract_families_are_exported_from_the_public_surface",
         }
     ),
     "policy": frozenset(
@@ -73,12 +118,24 @@ _JUNIT_REQUIRED_IDENTITIES: dict[str, frozenset[str]] = {
         {
             "tests.test_lab::test_complete_chain_violates_oracle_only_in_vulnerable_mode",
             "tests.test_lab::test_same_chain_is_blocked_by_patched_mode",
+            _M1_RESET_IDENTITY,
+            _M0_MODE_ISOLATION_IDENTITY,
+            _M1_SESSION_IDENTITY,
+            _M0_CONFIGURATION_IDENTITY,
         }
     ),
     "replay": frozenset(
         {
             "packages.replay.tests.test_kernel::test_replay_is_deterministic_across_five_clean_roots",
+            _M1_NONDETERMINISM_IDENTITY,
+            _M1_CLEANUP_FAILURE_IDENTITY,
+            *(
+                f"{_M1_CLEANUP_BASE_IDENTITY}[{phase}-{failure_code}]"
+                for phase, failure_code in _M1_CLEANUP_CASES
+            ),
+            _M1_RESET_TIMEOUT_IDENTITY,
             "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::test_full_vulnerable_plan_is_deterministic_over_five_runs",
+            _M1_PROVIDER_IDENTITY,
             "apps.cli.tests.test_foundation::test_foundation_verification_meets_all_acceptance_conditions",
             "packages.evidence.tests.test_collector::test_collects_exact_complete_and_verifiable_tree",
             "packages.evidence.tests.test_acceptance_registry::test_packaged_registry_is_canonical_and_has_exact_required_ids",
@@ -337,6 +394,14 @@ _REQUIRED_RELATIVE = (
     "replay/failure-localization.json",
     "replay/action-log.json",
     "policy/decisions.json",
+    "qualification/m0/property-seed.json",
+    "qualification/m0/mode-isolation.json",
+    "qualification/m0/configuration-snapshot.json",
+    "qualification/m1/session-manifest.json",
+    "qualification/m1/provider-digests.json",
+    "qualification/m1/reset-diff.json",
+    "qualification/m1/nondeterminism.json",
+    "qualification/m1/cleanup-events.json",
     "qualification/registry/closure.json",
     "qualification/registry/results.json",
 )
@@ -353,6 +418,7 @@ class CollectionInput:
     foundation: Mapping[str, Any]
     junit_sources: Mapping[str, Path]
     run_metadata: Mapping[str, Any]
+    package_install_receipt: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -424,6 +490,23 @@ def collect_acceptance_evidence(
     validated = _validate_foundation(input.foundation)
     junit_bytes, junit_results = _read_junit_sources(input.junit_sources)
     _validate_supporting_inputs(input, validated, junit_results)
+    qualification_payloads = _m01_qualification_payloads(validated, junit_results)
+    observed_evidence_paths: tuple[str, ...] = _REQUIRED_RELATIVE
+    if input.package_install_receipt is not None:
+        repository_marker = input.run_metadata.get("repository_marker")
+        if not isinstance(repository_marker, str):
+            raise AcceptanceEvidenceError("package install qualification marker is invalid")
+        try:
+            package_install_receipt = validate_package_install_receipt(
+                input.package_install_receipt,
+                expected_repository_marker=repository_marker,
+            )
+        except PackageInstallQualificationError:
+            raise AcceptanceEvidenceError(
+                "package install qualification receipt is invalid"
+            ) from None
+        qualification_payloads[PACKAGE_INSTALL_QUALIFICATION_PATH] = package_install_receipt
+        observed_evidence_paths = (*_REQUIRED_RELATIVE, PACKAGE_INSTALL_QUALIFICATION_PATH)
     try:
         registry = load_acceptance_registry()
         registry_closure = build_acceptance_registry_closure(registry)
@@ -435,7 +518,7 @@ def collect_acceptance_evidence(
         acceptance_results = derive_acceptance_results(
             registry,
             passing_test_identities=passing_test_identities,
-            observed_evidence_paths=_REQUIRED_RELATIVE,
+            observed_evidence_paths=observed_evidence_paths,
         )
     except AcceptanceResultsError:
         raise AcceptanceEvidenceError("acceptance registry results could not be derived") from None
@@ -448,6 +531,7 @@ def collect_acceptance_evidence(
 
     try:
         artifacts = _proof_artifact_payloads(validated.raw)
+        artifacts.update(qualification_payloads)
         artifacts["qualification/registry/closure.json"] = registry_closure.model_dump(mode="json")
         artifacts["qualification/registry/results.json"] = acceptance_results.model_dump(
             mode="json"
@@ -465,7 +549,7 @@ def collect_acceptance_evidence(
             atomic_json(root / relative, payload)
         for name, source in junit_bytes.items():
             atomic_write(root / "junit" / f"{name}.xml", source)
-        _write_manifest(root)
+        _write_manifest(root, observed_evidence_paths)
     except BaseException:
         # A partial directory must never be mistaken for an immutable proof.
         shutil.rmtree(root, ignore_errors=True)
@@ -1227,6 +1311,342 @@ def _oracle_projection(scenario: Mapping[str, Any]) -> dict[str, object]:
     }
 
 
+def _junit_qualification_binding(
+    junit_results: Mapping[str, _JunitSummary],
+    group: str,
+    identities: tuple[str, ...],
+) -> dict[str, object]:
+    observed = frozenset(junit_results[group]["testcase_identities"])
+    if not set(identities).issubset(observed):
+        raise AcceptanceEvidenceError("qualification JUnit testcase set is incomplete")
+    return {
+        "report": f"junit/{group}.xml",
+        "testcase_identities": list(identities),
+        "report_identity_sha256": junit_results[group]["testcase_identity_sha256"],
+    }
+
+
+def _root_layer_payloads(root: RootSeed) -> dict[str, dict[str, object]]:
+    layers: dict[str, dict[str, object]] = {}
+    for artifact in root.capture.artifacts:
+        raw = artifact.model_dump(mode="json")
+        layer = raw.get("layer")
+        payload = raw.get("payload")
+        if not isinstance(layer, str) or layer in layers or not isinstance(payload, dict):
+            raise AcceptanceEvidenceError("qualification root capture layer is invalid")
+        layers[layer] = {
+            "schema_version": raw["schema_version"],
+            "content_hash": raw["content_hash"],
+            "payload": payload,
+        }
+    required = {
+        "application",
+        "database",
+        "cache",
+        "queue",
+        "browser",
+        "configuration",
+        "clock",
+    }
+    if set(layers) != required:
+        raise AcceptanceEvidenceError("qualification requires all seven root capture layers")
+    return layers
+
+
+def _configuration_payload(
+    layers: Mapping[str, Mapping[str, object]], expected_mode: str
+) -> dict[str, object]:
+    payload = _mapping(
+        layers["configuration"].get("payload"),
+        "qualification configuration layer is invalid",
+    )
+    required = {
+        "arbitrary_actions_enabled",
+        "external_egress_enabled",
+        "mode",
+        "network_scope",
+        "seed",
+    }
+    if (
+        set(payload) != required
+        or payload.get("mode") != expected_mode
+        or payload.get("arbitrary_actions_enabled") is not False
+        or payload.get("external_egress_enabled") is not False
+        or payload.get("network_scope") != "in-process-only"
+        or payload.get("seed") != "m0-canonical-v1"
+    ):
+        raise AcceptanceEvidenceError("qualification configuration is not explicit and fail closed")
+    return dict(payload)
+
+
+def _session_manifest(layers: Mapping[str, Mapping[str, object]]) -> tuple[list[object], str]:
+    browser = layers["browser"]
+    payload = _mapping(browser.get("payload"), "qualification browser layer is invalid")
+    sessions = payload.get("sessions")
+    if not isinstance(sessions, list) or not sessions:
+        raise AcceptanceEvidenceError("qualification browser session capture is missing")
+    required = {
+        "session_handle",
+        "principal_id",
+        "issued_role",
+        "session_generation",
+        "issued_at",
+        "expires_at",
+        "identity_hash",
+    }
+    handles: set[str] = set()
+    hashes: set[str] = set()
+    for raw_session in sessions:
+        session = _mapping(raw_session, "qualification browser session is invalid")
+        handle = session.get("session_handle")
+        identity_hash = session.get("identity_hash")
+        generation = session.get("session_generation")
+        string_fields = (
+            handle,
+            session.get("principal_id"),
+            session.get("issued_role"),
+            session.get("issued_at"),
+            session.get("expires_at"),
+            identity_hash,
+        )
+        if (
+            set(session) != required
+            or any(not isinstance(value, str) or not value for value in string_fields)
+            or type(generation) is not int
+            or generation < 0
+            or not isinstance(identity_hash, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", identity_hash) is None
+            or not isinstance(handle, str)
+            or handle in handles
+            or identity_hash in hashes
+        ):
+            raise AcceptanceEvidenceError("qualification browser session schema is invalid")
+        handles.add(handle)
+        hashes.add(identity_hash)
+    try:
+        assert_secret_free(sessions)
+    except EvidenceInputError:
+        raise AcceptanceEvidenceError(
+            "qualification browser session capture is not redacted"
+        ) from None
+    content_hash = browser.get("content_hash")
+    if not isinstance(content_hash, str):
+        raise AcceptanceEvidenceError("qualification browser layer digest is invalid")
+    return sessions, content_hash
+
+
+def _clean_root_contamination(
+    layers: Mapping[str, Mapping[str, object]],
+) -> dict[str, object]:
+    application = _mapping(
+        layers["application"].get("payload"),
+        "qualification application layer is invalid",
+    )
+    cache = _mapping(layers["cache"].get("payload"), "qualification cache layer is invalid")
+    queue = _mapping(layers["queue"].get("payload"), "qualification queue layer is invalid")
+    retained = application.get("retained_session_handles")
+    markers = {
+        "cache_entry": cache.get("entry"),
+        "evidence_count": application.get("evidence_count"),
+        "queue_entry": queue.get("entry"),
+        "reference_claimed_by_session_handle": application.get(
+            "reference_claimed_by_session_handle"
+        ),
+        "reference_published": application.get("reference_published"),
+        "replay_window_closes_at": application.get("replay_window_closes_at"),
+        "replay_window_opens_at": application.get("replay_window_opens_at"),
+        "retained_session_handles": retained,
+        "role_downgraded_at": application.get("role_downgraded_at"),
+    }
+    if (
+        markers["cache_entry"] is not None
+        or markers["evidence_count"] != 0
+        or markers["queue_entry"] is not None
+        or markers["reference_claimed_by_session_handle"] is not None
+        or markers["reference_published"] is not False
+        or markers["replay_window_closes_at"] is not None
+        or markers["replay_window_opens_at"] is not None
+        or retained not in ([], ())
+        or markers["role_downgraded_at"] is not None
+    ):
+        raise AcceptanceEvidenceError("qualification root retains replay contamination")
+    return markers
+
+
+def _m01_qualification_payloads(
+    foundation: _Foundation,
+    junit_results: Mapping[str, _JunitSummary],
+) -> dict[str, object]:
+    vulnerable_layers = _root_layer_payloads(foundation.root)
+    patched_layers = _root_layer_payloads(foundation.patched.root)
+    vulnerable_configuration = _configuration_payload(vulnerable_layers, "vulnerable")
+    patched_configuration = _configuration_payload(patched_layers, "patched")
+    sessions, browser_content_hash = _session_manifest(vulnerable_layers)
+    contamination = _clean_root_contamination(vulnerable_layers)
+
+    if (
+        foundation.root.target_version != "lab-vulnerable"
+        or foundation.patched.root.target_version != "lab-patched"
+        or foundation.root.root_seed_id != foundation.patched.root.root_seed_id
+        or foundation.root.random_seed != foundation.patched.root.random_seed
+        or foundation.root.clock_epoch != foundation.patched.root.clock_epoch
+        or foundation.root.adapter_versions != foundation.patched.root.adapter_versions
+    ):
+        raise AcceptanceEvidenceError("qualification vulnerable and patched roots are not isolated")
+
+    root_fingerprints = [scenario.result.root_fingerprint for scenario in foundation.vulnerable]
+    if len(root_fingerprints) != 5 or set(root_fingerprints) != {
+        foundation.root.capture.fingerprint
+    }:
+        raise AcceptanceEvidenceError("qualification clean root fingerprints are not equivalent")
+
+    provider_payloads: dict[str, object] = {}
+    for provider in ("database", "cache", "queue"):
+        layer = vulnerable_layers[provider]
+        payload = layer["payload"]
+        content_hash = layer["content_hash"]
+        if content_hash != canonical_sha256(payload):
+            raise AcceptanceEvidenceError("qualification provider digest is inconsistent")
+        provider_payloads[provider] = {
+            "schema_version": layer["schema_version"],
+            "content_hash": content_hash,
+        }
+
+    foundation_hash = semantic_sha256(foundation.raw)
+    schema = "stateweaver-local-qualification-receipt-v1"
+    cleanup_identities = tuple(
+        f"{_M1_CLEANUP_BASE_IDENTITY}[{phase}-{failure_code}]"
+        for phase, failure_code in _M1_CLEANUP_CASES
+    )
+    receipts: dict[str, object] = {
+        "qualification/m0/property-seed.json": {
+            "schema_version": schema,
+            "requirement_id": "M0-C08",
+            "foundation_semantic_sha256": foundation_hash,
+            "seed": _M0_PROPERTY_SEED,
+            "examples_per_property": _M0_PROPERTY_EXAMPLES,
+            "permutation_invariant": True,
+            "nonsemantic_metadata_ignored": True,
+            "security_semantic_change_detected": True,
+            "junit": _junit_qualification_binding(
+                junit_results, "contracts", _M0_PROPERTY_IDENTITIES
+            ),
+        },
+        "qualification/m0/mode-isolation.json": {
+            "schema_version": schema,
+            "requirement_id": "M0-L02",
+            "foundation_semantic_sha256": foundation_hash,
+            "vulnerable": {
+                "mode": vulnerable_configuration["mode"],
+                "target_version": foundation.root.target_version,
+                "root_fingerprint": foundation.root.capture.fingerprint,
+            },
+            "patched": {
+                "mode": patched_configuration["mode"],
+                "target_version": foundation.patched.root.target_version,
+                "root_fingerprint": foundation.patched.root.capture.fingerprint,
+            },
+            "shared_root_seed_id": foundation.root.root_seed_id,
+            "shared_random_seed": foundation.root.random_seed,
+            "shared_clock_epoch": foundation.root.model_dump(mode="json")["clock_epoch"],
+            "shared_adapter_versions": dict(foundation.root.adapter_versions),
+            "shared_process_state": False,
+            "junit": _junit_qualification_binding(
+                junit_results, "lab", (_M0_MODE_ISOLATION_IDENTITY,)
+            ),
+        },
+        "qualification/m0/configuration-snapshot.json": {
+            "schema_version": schema,
+            "requirement_id": "M0-L10",
+            "foundation_semantic_sha256": foundation_hash,
+            "construction_requires_explicit_mode": True,
+            "missing_or_invalid_mode_rejected": True,
+            "vulnerable": vulnerable_configuration,
+            "patched": patched_configuration,
+            "junit": _junit_qualification_binding(
+                junit_results, "lab", (_M0_CONFIGURATION_IDENTITY,)
+            ),
+        },
+        "qualification/m1/session-manifest.json": {
+            "schema_version": schema,
+            "requirement_id": "M1-R02",
+            "foundation_semantic_sha256": foundation_hash,
+            "layer_schema_version": vulnerable_layers["browser"]["schema_version"],
+            "layer_content_hash": browser_content_hash,
+            "storage_schema": sorted(sessions[0]) if isinstance(sessions[0], dict) else [],
+            "session_count": len(sessions),
+            "sessions": sessions,
+            "raw_bearer_values_retained": False,
+            "junit": _junit_qualification_binding(junit_results, "lab", (_M1_SESSION_IDENTITY,)),
+        },
+        "qualification/m1/provider-digests.json": {
+            "schema_version": schema,
+            "requirement_id": "M1-R04",
+            "foundation_semantic_sha256": foundation_hash,
+            "providers": provider_payloads,
+            "clean_root_fingerprints": root_fingerprints,
+            "equivalent_across_clean_roots": True,
+            "junit": _junit_qualification_binding(
+                junit_results, "replay", (_M1_PROVIDER_IDENTITY,)
+            ),
+        },
+        "qualification/m1/reset-diff.json": {
+            "schema_version": schema,
+            "requirement_id": "M1-R05",
+            "foundation_semantic_sha256": foundation_hash,
+            "baseline_root_fingerprint": foundation.root.capture.fingerprint,
+            "observed_root_fingerprints": root_fingerprints,
+            "baseline_contamination_markers": contamination,
+            "seeded_browser_session_count": len(sessions),
+            "retained_contamination": False,
+            "junit": _junit_qualification_binding(junit_results, "lab", (_M1_RESET_IDENTITY,)),
+        },
+        "qualification/m1/nondeterminism.json": {
+            "schema_version": schema,
+            "requirement_id": "M1-R10",
+            "foundation_semantic_sha256": foundation_hash,
+            "fixture": "controlled-observation-drift",
+            "run_ids": ["run.001", "run.002", "run.003"],
+            "classification": "NONDETERMINISTIC",
+            "divergent_run_id": "run.002",
+            "finding_promotion_allowed": False,
+            "junit": _junit_qualification_binding(
+                junit_results, "replay", (_M1_NONDETERMINISM_IDENTITY,)
+            ),
+        },
+        "qualification/m1/cleanup-events.json": {
+            "schema_version": schema,
+            "requirement_id": "M1-R11",
+            "foundation_semantic_sha256": foundation_hash,
+            "injected_boundaries": [
+                {
+                    "phase": phase,
+                    "failure_code": failure_code,
+                    "testcase_identity": testcase_identity,
+                }
+                for (phase, failure_code), testcase_identity in zip(
+                    _M1_CLEANUP_CASES, cleanup_identities, strict=True
+                )
+            ],
+            "cleanup_failure_visible": True,
+            "cleanup_failure_detail_redacted": True,
+            "reset_timeout_cleanup_observed": True,
+            "cleanup_reentrant_calls": 2,
+            "next_reset_permitted": True,
+            "junit": _junit_qualification_binding(
+                junit_results,
+                "replay",
+                (*cleanup_identities, _M1_CLEANUP_FAILURE_IDENTITY, _M1_RESET_TIMEOUT_IDENTITY),
+            ),
+        },
+    }
+    try:
+        assert_secret_free(receipts)
+    except EvidenceInputError:
+        raise AcceptanceEvidenceError("derived qualification receipt is not redacted") from None
+    return receipts
+
+
 def _proof_artifact_payloads(foundation: Mapping[str, Any]) -> dict[str, object]:
     vulnerable = _mapping(foundation["vulnerable"], "vulnerable proof is invalid")
     patched = _mapping(foundation["patched"], "patched proof is invalid")
@@ -1294,9 +1714,9 @@ def _run_manifest(
     }
 
 
-def _write_manifest(root: Path) -> None:
+def _write_manifest(root: Path, required_relative: tuple[str, ...]) -> None:
     lines: list[str] = []
-    for relative in _REQUIRED_RELATIVE:
+    for relative in required_relative:
         target = root / relative
         if not target.is_file():
             raise AcceptanceEvidenceError("required artifact was not produced")

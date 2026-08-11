@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Final
 
 from stateweaver.evidence import AcceptanceEvidenceError
+from stateweaver.evidence.package_install import (
+    PackageInstallQualificationError,
+    write_package_install_receipt,
+)
 
 from .evidence import collect_foundation_evidence, verify_foundation_evidence
 from .foundation import verify_foundation
@@ -64,6 +68,14 @@ def _parser() -> argparse.ArgumentParser:
     collect.add_argument("--junit-policy", type=Path, required=True)
     collect.add_argument("--junit-lab", type=Path, required=True)
     collect.add_argument("--junit-replay", type=Path, required=True)
+    collect.add_argument("--package-install-receipt", type=Path)
+    package_install = foundation_commands.add_parser(
+        "qualify-package-install",
+        help="retain a clean-wheel public-contract import receipt",
+    )
+    package_install.add_argument("--output", type=Path, required=True)
+    package_install.add_argument("--repository-marker", required=True)
+    package_install.add_argument("--source-root", type=Path, required=True)
     check = foundation_commands.add_parser(
         "verify-evidence", help="verify hashes and causal bindings in a proof bundle"
     )
@@ -112,6 +124,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0 if verification.valid else 1
 
+    if arguments.foundation_command == "qualify-package-install":
+        try:
+            receipt = write_package_install_receipt(
+                output=arguments.output,
+                repository_marker=arguments.repository_marker,
+                source_root=arguments.source_root,
+            )
+        except (OSError, PackageInstallQualificationError):
+            print(
+                json.dumps(
+                    {"qualified": False, "error": {"code": "package_install_not_qualified"}},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 1
+        print(
+            json.dumps(
+                {
+                    "qualified": True,
+                    "requirement_id": receipt["requirement_id"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
     if arguments.foundation_command == "collect-evidence":
         try:
             result = collect_foundation_evidence(
@@ -123,8 +163,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 junit_lab=arguments.junit_lab,
                 junit_replay=arguments.junit_replay,
                 started_at=arguments.started_at,
+                package_install_receipt=arguments.package_install_receipt,
             )
-        except (AcceptanceEvidenceError, OSError):
+        except (AcceptanceEvidenceError, OSError, PackageInstallQualificationError):
             result = {"collected": False, "error": {"code": "evidence_collection_error"}}
             print(json.dumps(result, sort_keys=True, separators=(",", ":")))
             return 1

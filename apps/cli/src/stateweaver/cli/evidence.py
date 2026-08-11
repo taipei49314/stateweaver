@@ -22,6 +22,7 @@ from stateweaver.evidence import (
     semantic_sha256,
     verify_acceptance_evidence,
 )
+from stateweaver.evidence.package_install import load_package_install_receipt
 from stateweaver.replay import canonical_sha256
 
 from .foundation import verify_foundation
@@ -70,6 +71,7 @@ def collect_foundation_evidence(
     junit_lab: Path,
     junit_replay: Path,
     started_at: datetime,
+    package_install_receipt: Path | None = None,
 ) -> dict[str, object]:
     """Generate the proof once, bind supplied JUnit, then verify the resulting bundle."""
 
@@ -88,6 +90,14 @@ def collect_foundation_evidence(
     oracle_definition_hash = _source_digest(_ORACLE_SOURCE_PACKAGES)
     runtime_dependency_fingerprint = _runtime_dependency_fingerprint()
     foundation_semantic_sha256 = semantic_sha256(proof)
+    installed_contracts = (
+        load_package_install_receipt(
+            package_install_receipt,
+            expected_repository_marker=repository_marker,
+        )
+        if package_install_receipt is not None
+        else None
+    )
 
     result = collect_acceptance_evidence(
         input=CollectionInput(
@@ -118,6 +128,7 @@ def collect_foundation_evidence(
                 "started_at": started_at.isoformat(),
                 "completed_at": completed_at.isoformat(),
             },
+            package_install_receipt=installed_contracts,
         ),
         output_root=output_root,
         run_id=run_id,

@@ -10,6 +10,7 @@ After installation, run:
 ```console
 stateweaver --json doctor
 stateweaver --json foundation verify
+stateweaver foundation qualify-package-install --help
 stateweaver foundation collect-evidence --help
 stateweaver foundation verify-evidence --help
 ```
@@ -35,6 +36,15 @@ content; it independently re-runs the installed, fixed local foundation under th
 network guard and requires the resulting semantic hash, installed source/Oracle digests, and stable
 runtime dependency-byte fingerprint to match the bundle. Neither command accepts a target,
 credential, or arbitrary command.
+
+`foundation qualify-package-install` is the narrow M0-C07 producer. It succeeds only from a
+non-editable wheel installation in an isolated virtual environment whose imported contracts module
+resolves under that environment's `site-packages` and whose interpreter search path excludes the
+declared source checkout. It verifies WHEEL/METADATA/RECORD, the six public M0 contract families,
+and the caller-supplied repository marker, then writes canonical
+`qualification/m0/package-install.json` input. Passing that file to `collect-evidence` with
+`--package-install-receipt` is the only path that promotes M0-C07; source or editable installs fail
+closed.
 Because that fingerprint includes platform-specific installed bytes, deterministic re-execution
 requires the producer's operating system, Python ABI, and wheel build. A mismatch is reported as a
 provenance failure, separately from bundle causal-coherence failures.
