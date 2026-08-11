@@ -15,6 +15,8 @@ from evidence_test_fixtures import EPOCH, foundation
 from stateweaver.contracts import ScopeManifest
 from stateweaver.evidence import (
     ACCEPTANCE_TEST_COMMAND,
+    EXPECTED_ACCEPTANCE_REGISTRY_SHA256,
+    EXPECTED_REQUIREMENT_IDS,
     AcceptanceEvidenceError,
     CollectionInput,
     ExpectedProvenance,
@@ -50,6 +52,7 @@ JUNIT_REQUIRED_IDENTITIES = {
         "adapters.environments.in_process_lab.tests.test_in_process_lab_environment::test_full_vulnerable_plan_is_deterministic_over_five_runs",
         "apps.cli.tests.test_foundation::test_foundation_verification_meets_all_acceptance_conditions",
         "packages.evidence.tests.test_collector::test_collects_exact_complete_and_verifiable_tree",
+        "packages.evidence.tests.test_acceptance_registry::test_packaged_registry_is_canonical_and_has_exact_required_ids",
     ),
 }
 
@@ -232,10 +235,72 @@ def test_collects_exact_complete_and_verifiable_tree(tmp_path: Path) -> None:
         "replay/attempts.json",
         "replay/failure-localization.json",
         "replay/action-log.json",
+        "qualification/registry/closure.json",
+        "qualification/registry/results.json",
         "run-manifest.json",
     }
     for name in JUNIT_NAMES:
         assert (run / "junit" / f"{name}.xml").read_text(encoding="utf-8").startswith("<testsuite")
+
+
+def test_proof_derives_exact_fail_closed_registry_results(tmp_path: Path) -> None:
+    run = _collect(tmp_path, "registry-results")
+    closure = json.loads(
+        (run / "qualification" / "registry" / "closure.json").read_text(encoding="utf-8")
+    )
+    results = json.loads(
+        (run / "qualification" / "registry" / "results.json").read_text(encoding="utf-8")
+    )
+    manifest = json.loads((run / "run-manifest.json").read_text(encoding="utf-8"))
+    by_id = {row["requirement_id"]: row for row in results["requirements"]}
+
+    assert closure["registry_sha256"] == EXPECTED_ACCEPTANCE_REGISTRY_SHA256
+    assert tuple(closure["requirement_ids"]) == EXPECTED_REQUIREMENT_IDS
+    assert closure["requirement_count"] == 92
+    assert tuple(row["requirement_id"] for row in results["requirements"]) == (
+        EXPECTED_REQUIREMENT_IDS
+    )
+    assert results["summary"]["required"] == 92
+    assert (
+        sum(results["summary"][name] for name in ("blocked", "failed", "not_run", "passed")) == 92
+    )
+    assert results["release_eligible"] is False
+    assert by_id["SW-REGISTRY"]["status"] == "PASS"
+    assert by_id["M0-L03"]["status"] == "PASS"
+    assert by_id["M0-C01"]["status"] == "NOT_RUN"
+    assert by_id["SW-M6-TRUST"]["status"] == "BLOCKED"
+    assert by_id["SW-M6-TRUST"]["tests_observed"] == []
+    assert by_id["SW-M6-TRUST"]["evidence_missing"] == [
+        "qualification/m6/trust-policy-receipt.json"
+    ]
+    assert manifest["acceptance_registry"]["registry_sha256"] == (
+        EXPECTED_ACCEPTANCE_REGISTRY_SHA256
+    )
+    assert manifest["acceptance_registry"]["summary"] == results["summary"]
+
+
+def test_verifier_rejects_rehashed_registry_result_promotion(tmp_path: Path) -> None:
+    run = _collect(tmp_path, "registry-promotion")
+    results_path = run / "qualification" / "registry" / "results.json"
+    results = json.loads(results_path.read_text(encoding="utf-8"))
+    target = next(row for row in results["requirements"] if row["requirement_id"] == "SW-M6-TRUST")
+    target["status"] = "PASS"
+    results["summary"]["blocked"] -= 1
+    results["summary"]["passed"] += 1
+    results_path.write_bytes(canonical_json_bytes(results))
+    _rewrite_manifest_digest(run, "qualification/registry/results.json")
+
+    run_manifest_path = run / "run-manifest.json"
+    run_manifest = json.loads(run_manifest_path.read_text(encoding="utf-8"))
+    run_manifest["acceptance_registry"]["results_sha256"] = sha256_bytes(results_path.read_bytes())
+    run_manifest["acceptance_registry"]["summary"] = results["summary"]
+    run_manifest_path.write_bytes(canonical_json_bytes(run_manifest))
+    _rewrite_manifest_digest(run, "run-manifest.json")
+
+    verification = verify_acceptance_evidence(run)
+    assert not verification.valid
+    assert verification.snapshot_sha256 is None
+    assert any("coherent" in error for error in verification.errors)
 
 
 @pytest.mark.parametrize("run_id", ["../escape", "two/slashes", "..", "", "has space"])
@@ -314,6 +379,10 @@ def test_rejects_malformed_junit_as_a_safe_evidence_error(tmp_path: Path) -> Non
         (
             "replay",
             "packages.evidence.tests.test_acceptance_registry::test_registry_resource_is_canonical_and_exact",
+        ),
+        (
+            "replay",
+            "packages.evidence.tests.test_acceptance_results::test_local_result_requires_the_exact_selector_module_and_evidence_path",
         ),
         (
             "replay",
