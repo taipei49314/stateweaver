@@ -1,0 +1,130 @@
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    environment:
+      POSTGRES_DB: stateweaver
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_USER: stateweaver
+    networks: [internal]
+    volumes:
+      - database:/var/lib/postgresql/data
+      - ./real_postgres_init.sql:/docker-entrypoint-initdb.d/001-stateweaver.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "stateweaver", "-d", "stateweaver"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+    pids_limit: 128
+    mem_limit: 384m
+    cpus: 1.0
+    security_opt: ["no-new-privileges:true"]
+
+  redis:
+    image: redis:8-alpine@sha256:978f0e01593e65eed801f2402944efcd936d43b5027e4908a7897baf88ed6241
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --save
+      - ""
+    networks: [internal]
+    volumes:
+      - cache:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+    pids_limit: 64
+    mem_limit: 192m
+    cpus: 0.5
+    security_opt: ["no-new-privileges:true"]
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine@sha256:44bf7eb50fe1765885659e49ccfdc775f8e531964d979321aee380a071f49f94
+    environment:
+      RABBITMQ_DEFAULT_PASS: swm2
+      RABBITMQ_DEFAULT_USER: swm2
+    networks: [internal]
+    volumes:
+      - queue:/var/lib/rabbitmq
+    healthcheck:
+      # The image entrypoint drops from root to rabbitmq. Running diagnostics as
+      # root can race startup and create an unreadable root-owned Erlang cookie.
+      test: ["CMD", "su-exec", "rabbitmq", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 3s
+      timeout: 8s
+      retries: 30
+    pids_limit: 256
+    mem_limit: 640m
+    cpus: 1.0
+    security_opt: ["no-new-privileges:true"]
+
+  selenium:
+    image: selenium/standalone-chromium@sha256:81c80050126f610675e40eeac529a821dc5a0d38acf26c6d44f792a6e7ea8ac5
+    environment:
+      SE_ENABLE_TRACING: "false"
+      SE_NODE_MAX_SESSIONS: "1"
+      SE_NODE_OVERRIDE_MAX_SESSIONS: "false"
+      SE_NODE_SESSION_TIMEOUT: "60"
+      SE_OFFLINE: "true"
+      SE_START_NO_VNC: "false"
+      SE_START_VNC: "false"
+    networks: [internal]
+    shm_size: 512m
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'curl --fail --silent http://localhost:4444/status | grep -q ''"ready": true'''
+      interval: 3s
+      timeout: 8s
+      retries: 30
+    pids_limit: 512
+    mem_limit: 1024m
+    cpus: 1.5
+    security_opt: ["no-new-privileges:true"]
+
+  provider-bridge:
+    image: stateweaver-real-provider-bridge:local
+    build:
+      context: .
+      dockerfile: RealDockerfile
+    pull_policy: never
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      selenium: {condition: service_healthy}
+    read_only: true
+    init: true
+    user: "65532:65532"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 96
+    mem_limit: 256m
+    cpus: 0.5
+    networks: [internal]
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - storage:/state/filesystem
+      - session:/state/session
+      - clock:/state/clock
+    healthcheck:
+      test: ["CMD", "python", "/opt/stateweaver/real_provider_bridge.py", "health"]
+      interval: 10s
+      timeout: 30s
+      retries: 6
+      start_period: 5s
+
+networks:
+  internal:
+    internal: true
+
+volumes:
+  database: {}
+  cache: {}
+  queue: {}
+  session: {}
+  storage: {}
+  clock: {}

@@ -57,8 +57,10 @@ acceptance collector can derive 58 `PASS` rows from exact passing JUnit identiti
 bindings, a clean-wheel package-install receipt, a separately reproduced M3 runtime-observation
 receipt, and seven non-promotable M3–M7 implementation receipts. It keeps the remaining 34 rows
 `BLOCKED`; these developer checks are not a complete release qualification. The hosted Docker
-workflow now retains an exact-SHA synthetic diagnostic with zero managed residue, but it still
-exercises a synthetic bridge rather than real providers. Live-provider, trusted broker,
+workflow retains an exact-SHA synthetic diagnostic with zero managed residue. A separate
+real-provider adapter and four-sibling gate now exercise PostgreSQL, Redis, RabbitMQ, Chromium
+session state, filesystem state, and a controlled clock locally; exact-merged-SHA hosted admission
+is still pending. Trusted broker,
 independently measured equal-work benchmark,
 independent new-user, and clean-machine certification remain intentionally unclaimed. No PyPI
 package or versioned GitHub Release is offered yet.
@@ -71,7 +73,7 @@ Architecture baseline v1 ships milestone-by-milestone. Current implementation an
 | Area | Honest status |
 |---|---|
 | M0/M1 foundation proof | Synthetic proof and canonical 92-row registry exist; CI derives manifest-bound receipts and admits M0-C07 only from a clean wheel installation |
-| M2 world engine | Archive + lifecycle gates and retained exact-SHA synthetic Docker diagnostics exist; **no** real-provider proof |
+| M2 world engine | Six-provider adapter and four-sibling capture/mutate/restore gate pass locally; exact-merged-SHA hosted qualification is pending |
 | M3 semantic twin | Clean-wheel runtime execution binds the repo-owned ASGI lifecycle, source, authorization, trace, captures, state delta, evidence, and one `OBSERVED` fragment; five M3 runtime rows are admitted only after independent semantic re-execution |
 | M4 offline search | Proof-bound 24 → 4 → 2 → 1 local flow preserves the observed candidate; materialized exit blocked |
 | M5 chain compiler | Proof-bound compiler and authorized synthetic clean-root replay; materialized exit blocked |
@@ -96,7 +98,7 @@ Full matrices: [docs/architecture/TRACEABILITY.md](docs/architecture/TRACEABILIT
 | --- | --- | --- |
 | M0 Contracts + Lab | Foundation proof, exact registry, and fail-closed derived row ledger exist; external release qualification remains pending | `packages/contracts/`, `labs/multitenant-saas/`, `packages/evidence/` |
 | M1 Deterministic Replay | Five-run clean-root differential is implemented; formal qualification pending | `packages/replay/`, `apps/cli/` |
-| M2 World Engine | Archive/lifecycle plus synthetic Docker path; real providers remain absent | `packages/worlds/`, `tests/integration/worlds/`, adapter `PARTIAL` |
+| M2 World Engine | Synthetic diagnostics plus a six-provider materialized path pass locally; hosted receipt admission remains pending | `packages/worlds/`, `tests/integration/worlds/`, `RealDockerComposeEnvironmentAdapter` |
 | M3 Semantic Twin | Application lifecycle, emitted trace, runtime captures, state delta, evidence, and `OBSERVED` fragment are bound in a reproducible clean-wheel receipt; M4/M5 materialization remains separate | `packages/twin/`, `adapters/telemetry/opentelemetry/`, `packages/evidence/src/stateweaver/evidence/runtime_observation.py`, `apps/cli/src/stateweaver/cli/runtime_qualification.py` |
 | M4 Search | Offline 24 → 4 → 2 → 1 flow preserves the observed candidate | `packages/search/`, `workflows/world/`, `tests/integration/pipeline/` |
 | M5 Chain Compiler | Three observed fragments cross the admission bridge; synthetic replay closure hardened | `packages/compiler/`, `tests/integration/compiler/`, `tests/integration/pipeline/` |

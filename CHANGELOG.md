@@ -18,6 +18,9 @@ All notable changes are recorded here. The project has no published tag or GitHu
 - A clean-wheel M3 qualification producer that binds the repo-owned ASGI lifecycle, authorization,
   trace, captures, evidence-derived delta and `OBSERVED` fragment, plus independent semantic
   re-execution during collection and verification.
+- A fixed six-provider Docker Compose materialization path for PostgreSQL, Redis, RabbitMQ,
+  Chromium session state, filesystem state, and controlled-clock capture/mutate/restore, including
+  four-sibling isolation and success/timeout/cancellation/partial-failure cleanup gates.
 - Fail-closed non-local result admissions: the M3 receipt digest promotes exactly five runtime
   rows, yielding 58 `PASS` / 34 `BLOCKED` only when every declared test and evidence input exists.
 - Candidate payload, checksum, SBOM, receipt, reproducibility, and fresh-downloader tooling.

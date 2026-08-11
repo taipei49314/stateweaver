@@ -15,11 +15,17 @@ from pathlib import Path
 from typing import Final, Protocol
 
 _COMPOSE_FILE = Path(__file__).with_name("compose.yaml")
+_REAL_COMPOSE_FILE = Path(__file__).with_name("real_compose.yaml")
 _PROJECT_PATTERN = re.compile(r"^swm2[0-9a-f]{32}$")
 _CONTAINER_ID_PATTERN = re.compile(r"^[0-9a-f]{12,64}$")
+_PROJECT_LABEL_PREFIX = "label=com.docker.compose.project="
 MAX_STATE_ARCHIVE_BYTES = 1_048_576
 MAX_PROCESS_STREAM_BYTES: Final = MAX_STATE_ARCHIVE_BYTES
 PROCESS_DEADLINE_SECONDS: Final = 60.0
+# A five-service real-provider world has a materially slower bounded health
+# transition than the single-container diagnostic fixture.  Keep the wider
+# boundary tied only to the exact, admitted real-provider `compose up` argv.
+REAL_PROVIDER_START_DEADLINE_SECONDS: Final = 180.0
 _PROCESS_TERMINATION_SECONDS: Final = 2.0
 _PROCESS_READ_CHUNK_BYTES: Final = 64 * 1024
 _STATE_BRIDGE_PREFIX = (
@@ -29,6 +35,13 @@ _STATE_BRIDGE_PREFIX = (
     "python",
     "/opt/stateweaver/state_bridge.py",
 )
+_REAL_STATE_BRIDGE_PREFIX = (
+    "exec",
+    "--no-TTY",
+    "provider-bridge",
+    "python",
+    "/opt/stateweaver/real_provider_bridge.py",
+)
 _COMPOSE_OPERATIONS = frozenset(
     {
         ("up", "--detach", "--wait", "--no-build"),
@@ -36,6 +49,16 @@ _COMPOSE_OPERATIONS = frozenset(
         ("ps", "--format", "json"),
         (*_STATE_BRIDGE_PREFIX, "export"),
         (*_STATE_BRIDGE_PREFIX, "import"),
+    }
+)
+_REAL_COMPOSE_OPERATIONS = frozenset(
+    {
+        ("up", "--detach", "--wait", "--no-build"),
+        ("down", "--volumes", "--remove-orphans"),
+        ("ps", "--format", "json", "provider-bridge"),
+        (*_REAL_STATE_BRIDGE_PREFIX, "export"),
+        (*_REAL_STATE_BRIDGE_PREFIX, "import"),
+        (*_REAL_STATE_BRIDGE_PREFIX, "mutate"),
     }
 )
 
@@ -84,12 +107,9 @@ class SubprocessRunner:
             if self._docker_executable is None:
                 raise FileNotFoundError("trusted docker executable is unavailable")
             process_argv = (str(self._docker_executable), *exact_argv[1:])
-        is_import = exact_argv[-len(_STATE_BRIDGE_PREFIX) - 1 :] == (
-            *_STATE_BRIDGE_PREFIX,
-            "import",
-        )
-        if is_import != (stdin is not None):
-            raise ValueError("only the fixed state import operation accepts stdin")
+        accepts_stdin = _accepts_state_stdin(exact_argv)
+        if accepts_stdin != (stdin is not None):
+            raise ValueError("only fixed state write operations accept stdin")
         if stdin is not None and (not stdin or len(stdin) > MAX_STATE_ARCHIVE_BYTES):
             raise ValueError("state import payload exceeds the fixed archive boundary")
         environment = {
@@ -144,7 +164,7 @@ class SubprocessRunner:
         try:
             stdout, stderr, _written, returncode = await asyncio.wait_for(
                 asyncio.gather(*tasks),
-                timeout=PROCESS_DEADLINE_SECONDS,
+                timeout=_deadline_seconds(exact_argv),
             )
         except TimeoutError:
             with suppress(BaseException):
@@ -172,6 +192,26 @@ class SubprocessRunner:
             stdout=stdout.decode("utf-8", errors="replace"),
             stderr=stderr.decode("utf-8", errors="replace"),
         )
+
+
+def _deadline_seconds(exact_argv: tuple[str, ...]) -> float:
+    if exact_argv[4:6] == ("--file", str(_REAL_COMPOSE_FILE)) and exact_argv[6:] == (
+        "up",
+        "--detach",
+        "--wait",
+        "--no-build",
+    ):
+        return REAL_PROVIDER_START_DEADLINE_SECONDS
+    return PROCESS_DEADLINE_SECONDS
+
+
+def _accepts_state_stdin(exact_argv: tuple[str, ...]) -> bool:
+    operations = (
+        (*_STATE_BRIDGE_PREFIX, "import"),
+        (*_REAL_STATE_BRIDGE_PREFIX, "import"),
+        (*_REAL_STATE_BRIDGE_PREFIX, "mutate"),
+    )
+    return any(exact_argv[-len(operation) :] == operation for operation in operations)
 
 
 async def _read_bounded(stream: asyncio.StreamReader | None) -> bytes:
@@ -375,19 +415,53 @@ def require_exact_argv(argv: Sequence[str]) -> tuple[str, ...]:
         "stateweaver-synthetic-demo:local",
     ):
         return exact
+    if exact == (
+        "docker",
+        "image",
+        "inspect",
+        "--format",
+        "{{.Id}}",
+        "stateweaver-real-provider-bridge:local",
+    ):
+        return exact
     if (
         len(exact) == 5
         and exact[:4] == ("docker", "inspect", "--format", "{{.Image}}")
         and _CONTAINER_ID_PATTERN.fullmatch(exact[4])
     ):
         return exact
+    if len(exact) == 7 and exact[3] == "--filter" and exact[5] == "--format":
+        label = exact[4]
+        project = label.removeprefix(_PROJECT_LABEL_PREFIX)
+        inventory_prefix = exact[:3]
+        inventory_format = exact[6]
+        if (
+            label == f"{_PROJECT_LABEL_PREFIX}{project}"
+            and _PROJECT_PATTERN.fullmatch(project) is not None
+            and (
+                (inventory_prefix == ("docker", "ps", "--all") and inventory_format == "{{.ID}}")
+                or (
+                    inventory_prefix == ("docker", "network", "ls")
+                    and inventory_format == "{{.ID}}"
+                )
+                or (
+                    inventory_prefix == ("docker", "volume", "ls")
+                    and inventory_format == "{{.Name}}"
+                )
+            )
+        ):
+            return exact
     prefix = ("docker", "compose", "--project-name")
+    fixed_compose = (
+        exact[4:6] == ("--file", str(_COMPOSE_FILE)) and exact[6:] in _COMPOSE_OPERATIONS
+    ) or (
+        exact[4:6] == ("--file", str(_REAL_COMPOSE_FILE)) and exact[6:] in _REAL_COMPOSE_OPERATIONS
+    )
     if (
         len(exact) < 7
         or exact[:3] != prefix
         or not _PROJECT_PATTERN.fullmatch(exact[3])
-        or exact[4:6] != ("--file", str(_COMPOSE_FILE))
-        or exact[6:] not in _COMPOSE_OPERATIONS
+        or not fixed_compose
     ):
         raise ValueError("runner accepts only the fixed synthetic Compose argv")
     return exact
