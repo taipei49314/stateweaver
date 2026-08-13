@@ -407,7 +407,7 @@ async def test_real_start_failure_retains_only_allowlisted_service_diagnostic() 
         (_startup_rows(), True),
     ],
 )
-async def test_real_start_diagnostic_fails_closed_without_child_output(
+async def test_real_start_diagnostic_failure_preserves_the_authoritative_start_error(
     diagnostic: str, diagnostic_failure: bool
 ) -> None:
     runner = _RealRunner(
@@ -417,15 +417,14 @@ async def test_real_start_diagnostic_fails_closed_without_child_output(
     )
 
     with pytest.raises(
-        ComposeUnavailableError,
-        match=r"^real-provider-start-diagnostic-unavailable$",
+        ComposeUnavailableError, match=r"^local Docker Compose command failed$"
     ) as captured:
         await RealDockerComposeEnvironmentAdapter(runner=runner).prepare(_target())
 
     rendered = f"{captured.value!s} {captured.value!r}"
     assert "secret" not in rendered
     assert captured.value.__cause__ is None
-    assert captured.value.__suppress_context__ is True
+    assert captured.value.__context__ is None
     assert runner.states == {}
 
 
