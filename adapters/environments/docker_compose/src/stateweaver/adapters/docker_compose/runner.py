@@ -130,6 +130,10 @@ class SubprocessRunner:
             raise ValueError("state import payload exceeds the fixed archive boundary")
         environment = {
             "PATH": self._child_path,
+            # Four sibling Compose clients still overlap. Limiting each client
+            # to one Engine operation prevents an admitted 4 x 5 service start
+            # from becoming a high-fan-out twenty-container creation burst.
+            "COMPOSE_PARALLEL_LIMIT": "1",
             "DOCKER_HOST": (
                 # The fixed fixture is a Linux image. Modern Docker Desktop exposes
                 # its Linux engine on this named pipe; docker_engine may point at a

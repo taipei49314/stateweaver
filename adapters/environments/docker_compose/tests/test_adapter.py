@@ -950,8 +950,15 @@ async def test_subprocess_runner_uses_fixed_linux_engine_endpoint(
         else "unix:///var/run/docker.sock"
     )
     assert result.stdout == "29.0.0\n"
+    assert environment["COMPOSE_PARALLEL_LIMIT"] == "1"
     assert environment["DOCKER_HOST"] == expected_host
-    assert set(environment) <= {"PATH", "DOCKER_HOST", "SYSTEMROOT", "WINDIR"}
+    assert set(environment) <= {
+        "PATH",
+        "COMPOSE_PARALLEL_LIMIT",
+        "DOCKER_HOST",
+        "SYSTEMROOT",
+        "WINDIR",
+    }
 
 
 @pytest.mark.asyncio
@@ -995,6 +1002,7 @@ async def test_subprocess_runner_uses_standalone_compose_without_user_config_on_
     assert isinstance(environment, dict)
     assert "USERPROFILE" not in environment
     assert "APPDATA" not in environment
+    assert environment["COMPOSE_PARALLEL_LIMIT"] == "1"
     assert captured.get("cwd") == str(package)
 
 
