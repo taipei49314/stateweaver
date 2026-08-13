@@ -435,7 +435,7 @@ class _FixedDockerComposeEnvironmentAdapter:
         except ComposeUnavailableError:
             if self._profile is _REAL_PROFILE:
                 code = await self._diagnose_real_start_failure(project)
-                if code is not None:
+                if code not in (None, "real-provider-start-diagnostic-unavailable"):
                     raise ComposeUnavailableError(code) from None
             raise
 
