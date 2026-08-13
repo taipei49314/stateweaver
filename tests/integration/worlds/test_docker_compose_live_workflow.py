@@ -126,8 +126,7 @@ def test_candidate_admits_exact_sha_m2_m5_without_overclaiming_remaining_gates()
     assert "name: Admit exact-SHA hosted M2-M5 actual qualification" in candidate
     assert "Download the exact-SHA hosted M2-M5 actual admission" in candidate
     assert (
-        'expected = {"blocked": 21, "failed": 0, "not_run": 0, '
-        '"passed": 71, "required": 92}'
+        'expected = {"blocked": 21, "failed": 0, "not_run": 0, "passed": 71, "required": 92}'
     ) in candidate
     assert "M5 ten-scenario actual-ASGI clean-root replay" in summary
     assert "Acceptance registry: 71 PASS, 21 BLOCKED, 92 required." in summary
