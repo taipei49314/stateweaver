@@ -5,12 +5,16 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from xml.etree import ElementTree
 
 import pytest
+import stateweaver.evidence.collector as collector_module
+import stateweaver.evidence.verify as verify_module
 from evidence_test_fixtures import EPOCH
 from evidence_test_fixtures import foundation as fixture_foundation
 from stateweaver.cli.runtime_qualification import qualify_runtime_observation
@@ -31,6 +35,14 @@ from stateweaver.evidence._io import (
     canonical_json_bytes,
     semantic_sha256,
     sha256_bytes,
+)
+from stateweaver.evidence.hosted_qualification import (
+    HOSTED_QUALIFICATION_ADMISSION_PATH,
+    HOSTED_QUALIFICATION_DERIVED_PATHS,
+)
+from stateweaver.evidence.runtime_observation import (
+    OBSERVED_FRAGMENT_QUALIFICATION_PATH,
+    RUNTIME_OBSERVATION_QUALIFICATION_PATH,
 )
 from stateweaver.policy import BudgetSnapshot, PolicyRequest, evaluate_policy
 from stateweaver.replay import ReplayPlan, ReplayRunResult, canonical_sha256
@@ -699,6 +711,65 @@ def test_clean_wheel_and_runtime_receipts_combine_without_cross_promotion(tmp_pa
         "passed": 44,
         "required": 92,
     }
+
+
+def test_verifier_deduplicates_runtime_paths_already_derived_by_hosted_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_payload = {"schema_version": "test-runtime-observation-v1"}
+    fragment_payload = {"schema_version": "test-observed-fragment-v1"}
+    hosted_payloads = {
+        path: {"schema_version": "test-hosted-derived-v1", "path": path}
+        for path in HOSTED_QUALIFICATION_DERIVED_PATHS
+    }
+    hosted_payloads[RUNTIME_OBSERVATION_QUALIFICATION_PATH] = runtime_payload
+    hosted_payloads[OBSERVED_FRAGMENT_QUALIFICATION_PATH] = fragment_payload
+    hosted_payloads[HOSTED_QUALIFICATION_ADMISSION_PATH] = {
+        "schema_version": "test-hosted-admission-v1"
+    }
+    hosted_admission = SimpleNamespace()
+    runtime_receipt = SimpleNamespace(model_dump=lambda *, mode: runtime_payload)
+
+    for module in (collector_module, verify_module):
+        monkeypatch.setattr(
+            module,
+            "validate_hosted_qualification_admission",
+            lambda *_args, **_kwargs: hosted_admission,
+        )
+        monkeypatch.setattr(module, "hosted_qualification_payloads", lambda _: hosted_payloads)
+        monkeypatch.setattr(module, "hosted_qualification_admissions", lambda _: {})
+        monkeypatch.setattr(module, "hosted_qualification_test_identities", lambda _: ())
+    monkeypatch.setattr(
+        verify_module,
+        "validate_runtime_observation_qualification",
+        lambda *_args, **_kwargs: runtime_receipt,
+    )
+    monkeypatch.setattr(
+        verify_module,
+        "observed_fragment_qualification_payload",
+        lambda _: fragment_payload,
+    )
+    monkeypatch.setattr(verify_module, "runtime_observation_admissions", lambda _: {})
+
+    inputs = replace(
+        _input(tmp_path),
+        hosted_qualification_admission={"schema_version": "test-hosted-admission-v1"},
+    )
+    result = collect_acceptance_evidence(
+        input=inputs,
+        output_root=tmp_path / "artifacts",
+        run_id="hosted-runtime-paths",
+    )
+
+    verification = verify_acceptance_evidence(result.run_directory)
+
+    assert verification.valid
+    manifest_entries = (result.run_directory / "artifact-manifest.sha256").read_text(
+        encoding="ascii"
+    )
+    assert manifest_entries.count(RUNTIME_OBSERVATION_QUALIFICATION_PATH) == 1
+    assert manifest_entries.count(OBSERVED_FRAGMENT_QUALIFICATION_PATH) == 1
 
 
 @pytest.mark.parametrize(
