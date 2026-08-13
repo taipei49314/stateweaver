@@ -132,3 +132,11 @@ def test_materialized_lab_dockerfile_installs_only_the_hashed_binary_closure() -
     assert '"fastapi==' not in dockerfile
     assert "COPY labs/multitenant-saas /opt/stateweaver/lab" not in dockerfile
     assert "src/stateweaver/adapters /opt/stateweaver/adapter" not in dockerfile
+
+
+def test_materialized_lab_image_requires_and_retains_the_exact_source_revision() -> None:
+    dockerfile = _DOCKERFILE.read_text(encoding="utf-8")
+    assert "ARG STATEWEAVER_SOURCE_SHA" in dockerfile
+    assert 'test "${#STATEWEAVER_SOURCE_SHA}" -eq 40' in dockerfile
+    assert "*[!0-9a-f]*" in dockerfile
+    assert 'org.opencontainers.image.revision="${STATEWEAVER_SOURCE_SHA}"' in dockerfile

@@ -51,6 +51,8 @@ from stateweaver_lab.models import DocumentId, ReadDocumentLabAction, ReadDocume
 
 _APP_IMAGE = f"sha256:{'a' * 64}"
 _BRIDGE_IMAGE = f"sha256:{'b' * 64}"
+_APP_CONTAINER = "c" * 64
+_BRIDGE_CONTAINER = "d" * 64
 _EVALUATED_AT = datetime(2026, 7, 29, tzinfo=UTC)
 
 
@@ -190,13 +192,22 @@ class _Runner:
 
     async def run(self, argv: tuple[str, ...], *, stdin: bytes | None = None) -> ProcessResult:
         self.calls.append((argv, stdin))
-        if argv[:4] == ("docker", "image", "inspect", "--format"):
+        if argv[-3:] == ("ps", "--quiet", "materialized-lab"):
+            return ProcessResult(returncode=0, stdout=_APP_CONTAINER)
+        if argv[-3:] == ("ps", "--quiet", "provider-bridge"):
+            return ProcessResult(returncode=0, stdout=_BRIDGE_CONTAINER)
+        if argv[:4] == ("docker", "inspect", "--format", "{{.Image}}"):
             return ProcessResult(
                 returncode=0,
-                stdout=_APP_IMAGE
-                if argv[-1].startswith("stateweaver-materialized")
-                else _BRIDGE_IMAGE,
+                stdout=_APP_IMAGE if argv[-1] == _APP_CONTAINER else _BRIDGE_IMAGE,
             )
+        if argv[:4] == (
+            "docker",
+            "inspect",
+            "--format",
+            runtime._SOURCE_REVISION_FORMAT,
+        ):
+            return ProcessResult(returncode=0, stdout="0" * 40)
         if argv[-1] == "execute":
             return ProcessResult(
                 returncode=0, stdout=json.dumps(runtime._json_compatible(self.output))
@@ -320,6 +331,10 @@ async def test_forged_oracle_or_evidence_is_rejected_even_when_outer_digests_are
     binding_values: dict[str, object] = {
         "application_image_id": _APP_IMAGE,
         "bridge_image_id": _BRIDGE_IMAGE,
+        "application_container_id": _APP_CONTAINER,
+        "bridge_container_id": _BRIDGE_CONTAINER,
+        "application_source_revision": "0" * 40,
+        "image_identity_provenance": "EXECUTED_COMPOSE_CONTAINERS",
         "provider_image_refs": runtime._PROVIDER_IMAGE_REFS,
         "provider_image_set_digest": sha256_digest(runtime._PROVIDER_IMAGE_REFS),
         "provider_image_provenance": "PINNED_MANIFEST_REFS_NOT_RUNTIME_IMAGE_IDS",
@@ -355,6 +370,10 @@ async def test_forged_trace_is_rejected_even_when_every_outer_digest_is_rehashed
     binding_values: dict[str, object] = {
         "application_image_id": _APP_IMAGE,
         "bridge_image_id": _BRIDGE_IMAGE,
+        "application_container_id": _APP_CONTAINER,
+        "bridge_container_id": _BRIDGE_CONTAINER,
+        "application_source_revision": "0" * 40,
+        "image_identity_provenance": "EXECUTED_COMPOSE_CONTAINERS",
         "provider_image_refs": runtime._PROVIDER_IMAGE_REFS,
         "provider_image_set_digest": sha256_digest(runtime._PROVIDER_IMAGE_REFS),
         "provider_image_provenance": "PINNED_MANIFEST_REFS_NOT_RUNTIME_IMAGE_IDS",
@@ -424,6 +443,10 @@ def test_container_execute_serializes_exact_checkpoint_bytes(
     binding_values: dict[str, object] = {
         "application_image_id": _APP_IMAGE,
         "bridge_image_id": _BRIDGE_IMAGE,
+        "application_container_id": _APP_CONTAINER,
+        "bridge_container_id": _BRIDGE_CONTAINER,
+        "application_source_revision": "0" * 40,
+        "image_identity_provenance": "EXECUTED_COMPOSE_CONTAINERS",
         "provider_image_refs": runtime._PROVIDER_IMAGE_REFS,
         "provider_image_set_digest": sha256_digest(runtime._PROVIDER_IMAGE_REFS),
         "provider_image_provenance": "PINNED_MANIFEST_REFS_NOT_RUNTIME_IMAGE_IDS",
@@ -460,6 +483,22 @@ async def test_runtime_uses_only_fixed_compose_argv_and_always_cleans_up(
     assert receipt.status == "M5_MATERIALIZED_APPLICATION_SCENARIO_EXECUTED"
     assert receipt.execution_backend == "fastapi-asgi"
     assert receipt.destroyed is True
+    assert receipt.image_binding.application_container_id == _APP_CONTAINER
+    assert receipt.image_binding.bridge_container_id == _BRIDGE_CONTAINER
+    assert receipt.image_binding.application_image_id == _APP_IMAGE
+    assert receipt.image_binding.bridge_image_id == _BRIDGE_IMAGE
+    assert receipt.image_binding.application_source_revision == request.repository_marker
+    up_index = next(
+        index
+        for index, (argv, _stdin) in enumerate(runner.calls)
+        if argv[-4:] == ("up", "--detach", "--wait", "--no-build")
+    )
+    identity_index = next(
+        index
+        for index, (argv, _stdin) in enumerate(runner.calls)
+        if argv[-3:] == ("ps", "--quiet", "materialized-lab")
+    )
+    assert identity_index > up_index
     assert any(
         argv[-3:] == ("down", "--volumes", "--remove-orphans") for argv, _stdin in runner.calls
     )
@@ -483,6 +522,59 @@ async def test_runtime_uses_only_fixed_compose_argv_and_always_cleans_up(
 
 
 @pytest.mark.asyncio
+async def test_runtime_rejects_executed_app_with_another_source_revision() -> None:
+    @dataclass
+    class _WrongRevisionRunner(_Runner):
+        async def run(self, argv: tuple[str, ...], *, stdin: bytes | None = None) -> ProcessResult:
+            if argv[:4] == (
+                "docker",
+                "inspect",
+                "--format",
+                runtime._SOURCE_REVISION_FORMAT,
+            ):
+                self.calls.append((argv, stdin))
+                return ProcessResult(returncode=0, stdout="f" * 40)
+            return await super().run(argv, stdin=stdin)
+
+    runner = _WrongRevisionRunner({})
+    with pytest.raises(ComposeAdapterError, match="source revision"):
+        await MaterializedLabDockerRuntime(runner=runner).run(_request())
+    assert any(
+        argv[-3:] == ("down", "--volumes", "--remove-orphans") for argv, _stdin in runner.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_receipt_independently_rejects_another_source_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _ProviderStore()
+    monkeypatch.setattr(runtime, "RealProviderLabStateStore", lambda: store)
+    request = _request()
+    output = await runtime._execute_in_container(request)
+    binding_values: dict[str, object] = {
+        "application_container_id": _APP_CONTAINER,
+        "application_image_id": _APP_IMAGE,
+        "application_source_revision": "f" * 40,
+        "bridge_container_id": _BRIDGE_CONTAINER,
+        "bridge_image_id": _BRIDGE_IMAGE,
+        "image_identity_provenance": "EXECUTED_COMPOSE_CONTAINERS",
+        "provider_image_refs": runtime._PROVIDER_IMAGE_REFS,
+        "provider_image_set_digest": sha256_digest(runtime._PROVIDER_IMAGE_REFS),
+        "provider_image_provenance": "PINNED_MANIFEST_REFS_NOT_RUNTIME_IMAGE_IDS",
+    }
+    binding = runtime.ApplicationImageBinding.model_validate(
+        {**binding_values, "binding_digest": runtime._digest(binding_values)}
+    )
+    with pytest.raises(ValueError, match="receipt is not content bound"):
+        runtime._parse_runtime_result(
+            ProcessResult(returncode=0, stdout=json.dumps(runtime._json_compatible(output))),
+            request,
+            binding,
+        )
+
+
+@pytest.mark.asyncio
 async def test_static_or_provider_only_output_is_rejected_and_cleaned_up() -> None:
     runner = _Runner({"execution_backend": "provider-bridge", "steps": []})
     with pytest.raises(ComposeAdapterError, match="failed closed"):
@@ -497,19 +589,10 @@ async def test_timeout_forces_compose_cleanup() -> None:
     @dataclass
     class _TimeoutRunner(_Runner):
         async def run(self, argv: tuple[str, ...], *, stdin: bytes | None = None) -> ProcessResult:
-            self.calls.append((argv, stdin))
-            if argv[:4] == ("docker", "image", "inspect", "--format"):
-                return ProcessResult(
-                    returncode=0,
-                    stdout=(
-                        _APP_IMAGE
-                        if argv[-1].startswith("stateweaver-materialized")
-                        else _BRIDGE_IMAGE
-                    ),
-                )
             if argv[-1] == "execute":
+                self.calls.append((argv, stdin))
                 raise ProcessBoundaryError("process-deadline-exceeded")
-            return ProcessResult(returncode=0)
+            return await super().run(argv, stdin=stdin)
 
     runner = _TimeoutRunner({})
     with pytest.raises(ComposeAdapterError, match="failed closed"):
@@ -539,19 +622,13 @@ async def test_cleanup_failure_takes_precedence_over_execution_failure() -> None
     @dataclass
     class _DoubleFailureRunner(_Runner):
         async def run(self, argv: tuple[str, ...], *, stdin: bytes | None = None) -> ProcessResult:
-            self.calls.append((argv, stdin))
-            if argv[:4] == ("docker", "image", "inspect", "--format"):
-                return ProcessResult(
-                    returncode=0,
-                    stdout=_APP_IMAGE
-                    if argv[-1].startswith("stateweaver-materialized")
-                    else _BRIDGE_IMAGE,
-                )
             if argv[-1] == "execute":
+                self.calls.append((argv, stdin))
                 raise ProcessBoundaryError("process-deadline-exceeded")
             if argv[-3:] == ("down", "--volumes", "--remove-orphans"):
+                self.calls.append((argv, stdin))
                 return ProcessResult(returncode=1)
-            return ProcessResult(returncode=0)
+            return await super().run(argv, stdin=stdin)
 
     with pytest.raises(ComposeAdapterError, match="cleanup failed"):
         await MaterializedLabDockerRuntime(runner=_DoubleFailureRunner({})).run(_request())
@@ -621,3 +698,37 @@ def test_runner_admits_application_execute_only_with_fixed_argv() -> None:
     assert runner_module.require_exact_argv(expected) == expected
     with pytest.raises(ValueError):
         runner_module.require_exact_argv((*expected, "--caller-command"))
+
+
+def test_runner_admits_only_fixed_executed_container_identity_argv() -> None:
+    project = "swm2" + "1" * 32
+    compose_prefix = (
+        "docker",
+        "compose",
+        "--project-name",
+        project,
+        "--file",
+        str(runner_module._REAL_COMPOSE_FILE),
+    )
+    for service in ("materialized-lab", "provider-bridge"):
+        argv = (*compose_prefix, "ps", "--quiet", service)
+        assert runner_module.require_exact_argv(argv) == argv
+    for container in (_APP_CONTAINER, _BRIDGE_CONTAINER):
+        image_argv = ("docker", "inspect", "--format", "{{.Image}}", container)
+        assert runner_module.require_exact_argv(image_argv) == image_argv
+    revision_argv = (
+        "docker",
+        "inspect",
+        "--format",
+        runtime._SOURCE_REVISION_FORMAT,
+        _APP_CONTAINER,
+    )
+    assert runner_module.require_exact_argv(revision_argv) == revision_argv
+    with pytest.raises(ValueError):
+        runner_module.require_exact_argv(
+            (*compose_prefix, "ps", "--quiet", "caller-controlled-service")
+        )
+    with pytest.raises(ValueError):
+        runner_module.require_exact_argv(
+            ("docker", "inspect", "--format", "{{json .Config.Labels}}", _APP_CONTAINER)
+        )

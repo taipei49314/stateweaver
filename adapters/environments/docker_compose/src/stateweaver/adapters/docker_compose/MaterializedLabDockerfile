@@ -1,5 +1,10 @@
 FROM python:3.13-alpine3.22@sha256:e81548ac35b07a3bd4805f275107592ef458b1e893c0e04d45aedaa19416cca5
 
+ARG STATEWEAVER_SOURCE_SHA
+RUN test "${#STATEWEAVER_SOURCE_SHA}" -eq 40 \
+    && case "${STATEWEAVER_SOURCE_SHA}" in *[!0-9a-f]*) exit 1;; *) exit 0;; esac
+LABEL org.opencontainers.image.revision="${STATEWEAVER_SOURCE_SHA}"
+
 WORKDIR /opt/stateweaver
 ENV PYTHONPATH=/opt/stateweaver/contracts:/opt/stateweaver/policy:/opt/stateweaver/lab:/opt/stateweaver/adapter \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \

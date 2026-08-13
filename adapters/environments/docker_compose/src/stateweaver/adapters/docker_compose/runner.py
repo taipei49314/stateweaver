@@ -19,6 +19,7 @@ _REAL_COMPOSE_FILE = Path(__file__).with_name("real_compose.yaml")
 _PROJECT_PATTERN = re.compile(r"^swm2[0-9a-f]{32}$")
 _CONTAINER_ID_PATTERN = re.compile(r"^[0-9a-f]{12,64}$")
 _PROJECT_LABEL_PREFIX = "label=com.docker.compose.project="
+_SOURCE_REVISION_FORMAT = '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
 MAX_STATE_ARCHIVE_BYTES = 1_048_576
 MAX_PROCESS_STREAM_BYTES: Final = MAX_STATE_ARCHIVE_BYTES
 PROCESS_DEADLINE_SECONDS: Final = 60.0
@@ -66,6 +67,8 @@ _REAL_COMPOSE_OPERATIONS = frozenset(
         ("up", "--detach", "--wait", "--no-build"),
         ("down", "--volumes", "--remove-orphans"),
         ("ps", "--format", "json", "provider-bridge"),
+        ("ps", "--quiet", "materialized-lab"),
+        ("ps", "--quiet", "provider-bridge"),
         (*_REAL_STATE_BRIDGE_PREFIX, "export"),
         (*_REAL_STATE_BRIDGE_PREFIX, "import"),
         (*_REAL_STATE_BRIDGE_PREFIX, "mutate"),
@@ -443,18 +446,10 @@ def require_exact_argv(argv: Sequence[str]) -> tuple[str, ...]:
         "stateweaver-real-provider-bridge:local",
     ):
         return exact
-    if exact == (
-        "docker",
-        "image",
-        "inspect",
-        "--format",
-        "{{.Id}}",
-        "stateweaver-materialized-lab:local",
-    ):
-        return exact
     if (
         len(exact) == 5
-        and exact[:4] == ("docker", "inspect", "--format", "{{.Image}}")
+        and exact[:3] == ("docker", "inspect", "--format")
+        and exact[3] in {"{{.Image}}", _SOURCE_REVISION_FORMAT}
         and _CONTAINER_ID_PATTERN.fullmatch(exact[4])
     ):
         return exact

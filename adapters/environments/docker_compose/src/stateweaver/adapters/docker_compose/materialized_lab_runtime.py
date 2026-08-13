@@ -57,8 +57,6 @@ from .real_provider_bridge import (
 from .runner import ProcessBoundaryError, ProcessResult, ProcessRunner
 
 _COMPOSE_FILE: Final = Path(__file__).with_name("real_compose.yaml")
-_APPLICATION_IMAGE: Final = "stateweaver-materialized-lab:local"
-_BRIDGE_IMAGE: Final = "stateweaver-real-provider-bridge:local"
 _PROVIDER_IMAGE_REFS: Final = (
     "postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193",
     "rabbitmq:4-management-alpine@sha256:44bf7eb50fe1765885659e49ccfdc775f8e531964d979321aee380a071f49f94",
@@ -66,7 +64,9 @@ _PROVIDER_IMAGE_REFS: Final = (
     "selenium/standalone-chromium@sha256:81c80050126f610675e40eeac529a821dc5a0d38acf26c6d44f792a6e7ea8ac5",
 )
 _IMAGE_ID = re.compile(r"^sha256:[0-9a-f]{64}$")
+_CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
 _PROJECT = re.compile(r"^swm2[0-9a-f]{32}$")
+_SOURCE_REVISION_FORMAT: Final = '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
 _MAX_WITNESS_BYTES: Final = 1_048_576
 _RUNTIME_PREFIX: Final = (
     "exec",
@@ -205,8 +205,12 @@ class MaterializedLabRunRequest(_RuntimeModel):
 
 
 class ApplicationImageBinding(_RuntimeModel):
+    application_container_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     application_image_id: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    application_source_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    bridge_container_id: str = Field(pattern=r"^[0-9a-f]{64}$")
     bridge_image_id: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    image_identity_provenance: Literal["EXECUTED_COMPOSE_CONTAINERS"]
     provider_image_refs: tuple[str, ...]
     provider_image_set_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     provider_image_provenance: Literal["PINNED_MANIFEST_REFS_NOT_RUNTIME_IMAGE_IDS"]
@@ -215,7 +219,8 @@ class ApplicationImageBinding(_RuntimeModel):
     @model_validator(mode="after")
     def _bound(self) -> ApplicationImageBinding:
         if (
-            self.provider_image_refs != _PROVIDER_IMAGE_REFS
+            self.application_container_id == self.bridge_container_id
+            or self.provider_image_refs != _PROVIDER_IMAGE_REFS
             or self.provider_image_set_digest != sha256_digest(_PROVIDER_IMAGE_REFS)
             or self.provider_image_provenance != "PINNED_MANIFEST_REFS_NOT_RUNTIME_IMAGE_IDS"
             or self.binding_digest
@@ -407,6 +412,7 @@ class MaterializedLabRunReceipt(_RuntimeModel):
         )
         if (
             self.request_digest != _digest(self.request)
+            or self.image_binding.application_source_revision != self.request.repository_marker
             or self.application_schema_digest
             != sha256_digest(create_app(self.request.mode).openapi())
             or len(self.steps) != len(self.request.actions)
@@ -449,8 +455,8 @@ class MaterializedLabDockerRuntime:
         execution_error: BaseException | None = None
         cleanup_error: BaseException | None = None
         try:
-            binding = await self._image_binding()
             await self._run(_compose(project, "up", "--detach", "--wait", "--no-build"))
+            binding = await self._executed_image_binding(project, closed.repository_marker)
             process = await self._run(
                 _compose(project, *_RUNTIME_PREFIX), stdin=_runtime_payload(closed, binding)
             )
@@ -473,25 +479,56 @@ class MaterializedLabDockerRuntime:
         except (ValueError, json.JSONDecodeError, TypeError):
             raise ComposeAdapterError("M5 application runtime failed closed") from None
 
-    async def _image_binding(self) -> ApplicationImageBinding:
+    async def _executed_image_binding(
+        self, project: str, repository_marker: str
+    ) -> ApplicationImageBinding:
+        application_container = await self._service_container_id(project, "materialized-lab")
+        bridge_container = await self._service_container_id(project, "provider-bridge")
+        if application_container == bridge_container:
+            raise ComposeAdapterError("M5 executed container identity is invalid")
         application = (
-            await self._run(
-                ("docker", "image", "inspect", "--format", "{{.Id}}", _APPLICATION_IMAGE)
-            )
+            await self._run(("docker", "inspect", "--format", "{{.Image}}", application_container))
         ).stdout.strip()
         bridge = (
-            await self._run(("docker", "image", "inspect", "--format", "{{.Id}}", _BRIDGE_IMAGE))
+            await self._run(("docker", "inspect", "--format", "{{.Image}}", bridge_container))
         ).stdout.strip()
-        if _IMAGE_ID.fullmatch(application) is None or _IMAGE_ID.fullmatch(bridge) is None:
-            raise ComposeAdapterError("M5 application image identity is invalid")
+        source_revision = (
+            await self._run(
+                (
+                    "docker",
+                    "inspect",
+                    "--format",
+                    _SOURCE_REVISION_FORMAT,
+                    application_container,
+                )
+            )
+        ).stdout.strip()
+        if (
+            _IMAGE_ID.fullmatch(application) is None
+            or _IMAGE_ID.fullmatch(bridge) is None
+            or source_revision != repository_marker
+        ):
+            raise ComposeAdapterError("M5 executed application source revision is invalid")
         values: dict[str, object] = {
+            "application_container_id": application_container,
             "application_image_id": application,
+            "application_source_revision": source_revision,
+            "bridge_container_id": bridge_container,
             "bridge_image_id": bridge,
+            "image_identity_provenance": "EXECUTED_COMPOSE_CONTAINERS",
             "provider_image_refs": _PROVIDER_IMAGE_REFS,
             "provider_image_set_digest": sha256_digest(_PROVIDER_IMAGE_REFS),
             "provider_image_provenance": "PINNED_MANIFEST_REFS_NOT_RUNTIME_IMAGE_IDS",
         }
         return ApplicationImageBinding.model_validate({**values, "binding_digest": _digest(values)})
+
+    async def _service_container_id(self, project: str, service: str) -> str:
+        if service not in {"materialized-lab", "provider-bridge"}:
+            raise ValueError("M5 application service identity is invalid")
+        container_id = (await self._run(_compose(project, "ps", "--quiet", service))).stdout.strip()
+        if _CONTAINER_ID.fullmatch(container_id) is None:
+            raise ComposeAdapterError("M5 executed container identity is invalid")
+        return container_id
 
     async def _run(self, argv: tuple[str, ...], *, stdin: bytes | None = None) -> ProcessResult:
         result = await self._runner.run(argv, stdin=stdin)
