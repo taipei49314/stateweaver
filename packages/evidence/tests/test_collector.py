@@ -893,6 +893,10 @@ def test_rejects_malformed_junit_as_a_safe_evidence_error(tmp_path: Path) -> Non
     [
         (
             "contracts",
+            "tests.test_reality_broker::test_policy_rejects_consumer_that_matches_the_issuer",
+        ),
+        (
+            "contracts",
             "tests.test_event_history::test_event_history_round_trip_binds_exact_chain_and_head",
         ),
         (
@@ -906,6 +910,14 @@ def test_rejects_malformed_junit_as_a_safe_evidence_error(tmp_path: Path) -> Non
         (
             "replay",
             "packages.evidence.tests.test_acceptance_registry::test_registry_resource_is_canonical_and_exact",
+        ),
+        (
+            "replay",
+            "packages.evidence.tests.test_m7_preregistration::test_internal_preregistration_remains_non_external",
+        ),
+        (
+            "replay",
+            "packages.evidence.tests.test_reality_broker_verification::test_valid_complete_snapshot_is_only_a_non_authoritative_candidate",
         ),
         (
             "replay",
