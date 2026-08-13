@@ -1,4 +1,4 @@
-"""Build and admit the fixed GitHub-hosted M2-M4 qualification artifacts."""
+"""Build hosted M2-M4 admission with an exact retained M5 receipt."""
 
 from __future__ import annotations
 
@@ -25,12 +25,20 @@ from stateweaver.evidence.hosted_qualification import (
     M2HostedProjection,
     M2RealProviderObservation,
     M4HostedProjection,
+    M5HostedProjection,
     load_hosted_docker_qualification,
 )
 
+from .materialized_chain_qualification import ActualMaterializedChainQualificationReceipt
 from .materialized_search_qualification import MaterializedSearchQualificationReceipt
+from .observed_chain_qualification import ObservedChainQualificationReceipt
 
-_MAX_FILE_BYTES = 4 * 1_048_576
+# The actual-ASGI composite retains ten bounded checkpoint lineages.  Its own
+# nested models cap every checkpoint at 128 KiB; these outer limits leave room
+# for the exact repeated request/trace bytes while remaining below the
+# candidate payload's independent 64 MiB per-file ceiling.
+_MAX_FILE_BYTES = 64 * 1_048_576
+_MAX_PRODUCER_BYTES = 64 * 1_048_576
 _M2_FILES = (
     "cleanup-cancellation.json",
     "cleanup-partial-failure.json",
@@ -63,6 +71,8 @@ _M2_FILES = (
     "volumes-before.txt",
 )
 _M4_FILES = ("junit.xml", "materialized-search-receipt.json")
+_M5_FILES = ("materialized-chain-replay.json", "observed-chain-receipt.json")
+_LEGACY_M5_FILES = ("materialized-provider-receipt.json", "observed-chain-receipt.json")
 _CLEANUP_CASE_FILES = (
     "cleanup-success.json",
     "cleanup-timeout.json",
@@ -70,20 +80,23 @@ _CLEANUP_CASE_FILES = (
     "cleanup-partial-failure.json",
 )
 _LIMITATIONS = (
-    (
-        "This admission proves repository-controlled GitHub-hosted M2 and M4 execution "
-        "for one exact SHA."
-    ),
-    "It does not prove a separate clean host, M5 materialized replay, or external M6-M8 trust.",
+    "This admission proves repository-controlled GitHub-hosted M2 through M5 execution for one "
+    "exact SHA.",
+    "A separate clean host and external M6-M8 trust remain pending.",
 )
 
 
-def _read_regular(path: Path, *, allow_empty: bool = False) -> bytes:
+def _read_regular(
+    path: Path,
+    *,
+    allow_empty: bool = False,
+    max_bytes: int = _MAX_FILE_BYTES,
+) -> bytes:
     try:
         if path.is_symlink() or not path.is_file():
             raise HostedQualificationError("hosted qualification artifact is not a regular file")
         size = path.stat().st_size
-        if size > _MAX_FILE_BYTES or (not allow_empty and size == 0):
+        if size > max_bytes or (not allow_empty and size == 0):
             raise HostedQualificationError("hosted qualification artifact size is invalid")
         content = path.read_bytes()
     except OSError:
@@ -124,6 +137,48 @@ def _json_model[T: BaseModel](content: bytes, model: type[T]) -> T:
         RecursionError,
     ):
         raise HostedQualificationError("hosted qualification JSON is invalid") from None
+
+
+def _actual_materialized_m5(
+    files: dict[str, bytes],
+    *,
+    m4_bytes: bytes,
+    process_receipt: ObservedChainQualificationReceipt,
+    repository_marker: str,
+) -> ActualMaterializedChainQualificationReceipt:
+    """Parse and cross-bind the exact Phase-D Docker application composite."""
+
+    if tuple(sorted(files)) != tuple(sorted(_M5_FILES)):
+        raise HostedQualificationError("hosted actual M5 artifact set is not exact")
+    actual = _json_model(
+        files["materialized-chain-replay.json"],
+        ActualMaterializedChainQualificationReceipt,
+    )
+    process_bytes = contract_json_bytes(process_receipt) + b"\n"
+    if (
+        actual.repository_marker != repository_marker
+        or actual.m4_receipt_json.encode("utf-8") != m4_bytes
+        or actual.process_receipt_json.encode("utf-8") != process_bytes
+        or actual.m4_receipt_digest != process_receipt.m4_receipt_digest
+        or actual.process_receipt_digest != process_receipt.receipt_digest
+        or actual.cleanup_count != 10
+        or actual.all_cleanups_passed is not True
+        or actual.all_projects_destroyed is not True
+    ):
+        raise HostedQualificationError("hosted actual M5 composite is not cross-bound")
+    return actual
+
+
+def _hosted_artifact_role(name: str) -> str:
+    """Classify only the fixed hosted artifact filenames."""
+
+    if name.endswith("junit.xml") or name == "junit.xml":
+        return "junit"
+    if name.endswith("receipt.json") or name == "materialized-chain-replay.json":
+        return "qualification-receipt"
+    if name.endswith("after.txt") or name.endswith("before.txt"):
+        return "cleanup-inventory"
+    return "runtime-provenance"
 
 
 def _junit(content: bytes, *, artifact_path: str) -> HostedJunitBinding:
@@ -190,6 +245,7 @@ def build_hosted_docker_qualification(
     *,
     m2_root: Path,
     m4_root: Path,
+    m5_root: Path,
     repository_marker: str,
     tree_sha: str,
     workflow_run_id: int,
@@ -202,6 +258,7 @@ def build_hosted_docker_qualification(
 
     m2_files = _require_exact_tree(m2_root, _M2_FILES)
     m4_files = _require_exact_tree(m4_root, _M4_FILES)
+    m5_files = _require_exact_tree(m5_root, _M5_FILES)
     _exact_sha_text(m2_files["commit.txt"], repository_marker)
     _exact_sha_text(m2_files["tree.txt"], tree_sha)
     real_provider = _json_model(m2_files["real-provider-receipt.json"], M2RealProviderObservation)
@@ -220,20 +277,29 @@ def build_hosted_docker_qualification(
         raise HostedQualificationError("hosted M4 receipt is not canonical")
     if m4_receipt.residual_allocation_ids:
         raise HostedQualificationError("hosted M4 receipt retained residual allocations")
+    m5_receipt = _json_model(
+        m5_files["observed-chain-receipt.json"], ObservedChainQualificationReceipt
+    )
+    if (
+        m5_receipt.repository_marker != repository_marker
+        or m5_receipt.m4_receipt_json.encode("utf-8")
+        != m4_files["materialized-search-receipt.json"]
+        or m5_receipt.m4_receipt_digest != m4_receipt.receipt_digest
+    ):
+        raise HostedQualificationError("hosted M5 receipt is not bound to exact M4 bytes")
+    canonical_m5 = contract_json_bytes(m5_receipt) + b"\n"
+    actual_m5 = _actual_materialized_m5(
+        m5_files,
+        m4_bytes=m4_files["materialized-search-receipt.json"],
+        process_receipt=m5_receipt,
+        repository_marker=repository_marker,
+    )
 
     def artifact_entries(prefix: str, files: dict[str, bytes]) -> list[HostedArtifactEntry]:
         return [
             HostedArtifactEntry(
                 path=f"{prefix}/{name}",
-                role=(
-                    "junit"
-                    if name.endswith("junit.xml") or name == "junit.xml"
-                    else "qualification-receipt"
-                    if name.endswith("receipt.json")
-                    else "cleanup-inventory"
-                    if name.endswith("after.txt") or name.endswith("before.txt")
-                    else "runtime-provenance"
-                ),
+                role=_hosted_artifact_role(name),
                 sha256=_sha256(content),
                 size=len(content),
             )
@@ -242,7 +308,11 @@ def build_hosted_docker_qualification(
 
     artifacts = tuple(
         sorted(
-            (*artifact_entries("m2-live", m2_files), *artifact_entries("m4-live", m4_files)),
+            (
+                *artifact_entries("m2-live", m2_files),
+                *artifact_entries("m4-live", m4_files),
+                *artifact_entries("m5-clean-root", m5_files),
+            ),
             key=lambda item: item.path,
         )
     )
@@ -298,9 +368,44 @@ def build_hosted_docker_qualification(
         winner_candidate_id=m4_receipt.winner.candidate_id,
         receipt_digest=m4_receipt.receipt_digest,
     )
+    patched_step = m5_receipt.patched_run.steps[-1]
+    if (
+        m5_receipt.patched_run.failed_step_id != "step.08"
+        or patched_step.failure_code != "ORACLE_EXPECTATION_MISMATCH"
+    ):
+        raise HostedQualificationError("hosted M5 receipt lacks its boundary result")
+    m5 = M5HostedProjection(
+        m4_receipt_sha256=actual_m5.m4_receipt_sha256,
+        m4_receipt_digest=actual_m5.m4_receipt_digest,
+        process_receipt_sha256=actual_m5.process_receipt_sha256,
+        process_receipt_digest=actual_m5.process_receipt_digest,
+        actual_receipt_digest=actual_m5.receipt_digest,
+        runtime=actual_m5.runtime,
+        m4_winner_state_binding_digest=actual_m5.m4_winner_state_binding_digest,
+        m4_source_snapshot_digest=actual_m5.m4_source_snapshot_digest,
+        m4_after_archive_digest=actual_m5.m4_after_archive_digest,
+        m4_provider_state_digest=actual_m5.m4_provider_state_digest,
+        execution_plan_digest=actual_m5.execution_plan_digest,
+        primary_plan_digest=actual_m5.primary_plan_digest,
+        application_image_binding_digest=actual_m5.application_image_binding.binding_digest,
+        clean_root_run_ids=tuple(item.run_id for item in actual_m5.clean_root_runs),
+        clean_root_materialized_receipt_digests=tuple(
+            item.materialized_run_receipt_digest for item in actual_m5.clean_root_runs
+        ),
+        vulnerable_deterministic_signatures=actual_m5.vulnerable_deterministic_signatures,
+        initial_checkpoint_bytes_digest=actual_m5.initial_checkpoint_bytes_digest,
+        patched_run_id="run.m5.patched-01",
+        patched_materialized_receipt_digest=(actual_m5.patched_run.materialized_run_receipt_digest),
+        negative_control_names=tuple(item.name for item in actual_m5.negative_controls),
+        negative_control_materialized_receipt_digests=tuple(
+            item.materialized_run_receipt_digest for item in actual_m5.negative_controls
+        ),
+        cleanup_count=actual_m5.cleanup_count,
+        receipt_digest=actual_m5.receipt_digest,
+    )
     values: dict[str, object] = {
-        "schema_version": "stateweaver-hosted-docker-qualification-v1",
-        "status": "HOSTED_M2_M4_QUALIFIED",
+        "schema_version": "stateweaver-hosted-docker-qualification-v3",
+        "status": "HOSTED_M2_M5_QUALIFIED",
         "repository_url": "https://github.com/taipei49314/stateweaver",
         "repository_marker": repository_marker,
         "tree_sha": tree_sha,
@@ -318,6 +423,11 @@ def build_hosted_docker_qualification(
         "m4_receipt_json": (canonical_m4 + b"\n").decode("utf-8"),
         "m4_receipt_sha256": _sha256(canonical_m4 + b"\n"),
         "m4": m4,
+        "m5_receipt_json": canonical_m5.decode("utf-8"),
+        "m5_receipt_sha256": _sha256(canonical_m5),
+        "m5_actual_receipt_json": m5_files["materialized-chain-replay.json"].decode("utf-8"),
+        "m5_actual_receipt_sha256": _sha256(m5_files["materialized-chain-replay.json"]),
+        "m5": m5,
         "release_eligible": False,
         "limitations": _LIMITATIONS,
     }
@@ -353,8 +463,8 @@ def build_hosted_qualification_admission(
         exit_code=0,
     )
     values: dict[str, object] = {
-        "schema_version": "stateweaver-hosted-qualification-admission-v1",
-        "status": "HOSTED_QUALIFICATION_ADMITTED",
+        "schema_version": "stateweaver-hosted-qualification-admission-v3",
+        "status": "HOSTED_M2_M5_ADMITTED",
         "qualification_receipt_json": qualification_json,
         "qualification_receipt_sha256": qualification_sha,
         "attestation": attestation,
@@ -379,7 +489,10 @@ def admit_hosted_qualification(
         expected_repository_marker=expected_repository_marker,
     )
     qualification_bytes = contract_json_bytes(qualification.model_dump(mode="json")) + b"\n"
-    if _read_regular(qualification_receipt_path) != qualification_bytes:
+    if (
+        _read_regular(qualification_receipt_path, max_bytes=_MAX_PRODUCER_BYTES)
+        != qualification_bytes
+    ):
         raise HostedQualificationError("hosted Docker qualification receipt changed")
     bundle_bytes = _read_regular(attestation_bundle_path)
     executable_name = shutil.which("gh")

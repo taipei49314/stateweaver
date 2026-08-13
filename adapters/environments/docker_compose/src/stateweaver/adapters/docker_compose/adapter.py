@@ -15,6 +15,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Final, cast
 
+from stateweaver.contracts import canonical_json_bytes, sha256_digest
 from stateweaver.worlds import (
     AdapterPin,
     CapabilityLevel,
@@ -28,7 +29,21 @@ from stateweaver.worlds import (
 )
 
 from .errors import ComposeAdapterError, ComposeUnavailableError
-from .materialization import MaterializedCandidateRequest, MaterializedProviderReceipt
+from .materialization import (
+    M4MaterializedStateBinding,
+    M5MaterializedProviderRunReceipt,
+    M5MaterializedProviderRunRequest,
+    M5MaterializedProviderStep,
+    M5ProviderDigest,
+    MaterializedCandidateRequest,
+    MaterializedProviderReceipt,
+    ProviderName,
+)
+from .materialized_lab_runtime import (
+    MaterializedLabDockerRuntime,
+    MaterializedLabRunReceipt,
+    MaterializedLabRunRequest,
+)
 from .runner import (
     MAX_PROCESS_STREAM_BYTES,
     MAX_STATE_ARCHIVE_BYTES,
@@ -77,6 +92,7 @@ _REAL_STATE_BRIDGE: Final = (
     "python",
     "/opt/stateweaver/real_provider_bridge.py",
 )
+_REAL_M5_STATE_BRIDGE: Final = (*_REAL_STATE_BRIDGE, "m5-replay")
 _QUOTAS: Final = ResourceQuotas(
     cpu_seconds=60, memory_mb=512, pids=64, requests=1_000, concurrent_actions=4
 )
@@ -216,6 +232,7 @@ class _FixedDockerComposeEnvironmentAdapter:
             target=stored.manifest.target,
             root_snapshot_id=stored.manifest.root_snapshot_id,
             image_identity=image_identity,
+            source_snapshot=stored.manifest,
         )
         live = self._require_live(env)
         try:
@@ -326,12 +343,36 @@ class _FixedDockerComposeEnvironmentAdapter:
                 tick=closed_request.tick,
             )
             try:
+                if live.source_snapshot is None:
+                    raise ComposeAdapterError("M4 materialization has no retained source snapshot")
+                provider_state_digest = sha256_digest(
+                    {
+                        provider: after[provider]
+                        for provider in (
+                            "cache",
+                            "clock",
+                            "database",
+                            "filesystem",
+                            "queue",
+                            "session",
+                        )
+                    }
+                )
+                state_binding = M4MaterializedStateBinding.create(
+                    adapter_pin=live.handle.adapter,
+                    bridge_image_id=live.image_identity.bridge,
+                    provider_image_refs=tuple(sorted(self._profile.provider_image_refs)),
+                    source_snapshot=live.source_snapshot,
+                    after_archive_digest=_archive_digest(after_archive),
+                    provider_state_digest=provider_state_digest,
+                )
                 return MaterializedProviderReceipt.create(
                     request=closed_request,
                     environment_id=live.handle.environment_id,
                     before=before,
                     after=after,
                     elapsed_ns=elapsed_ns,
+                    state_binding=state_binding,
                 )
             except ValueError:
                 raise ComposeAdapterError("materialized provider oracle failed") from None
@@ -342,6 +383,7 @@ class _FixedDockerComposeEnvironmentAdapter:
         target: TargetSpec,
         root_snapshot_id: str | None,
         image_identity: _ImageIdentity,
+        source_snapshot: SnapshotManifest | None = None,
     ) -> EnvironmentHandle:
         project, environment_id = self._allocate_environment_identity()
         namespace = WorldNamespace(
@@ -365,6 +407,7 @@ class _FixedDockerComposeEnvironmentAdapter:
             root_snapshot_id=root_snapshot_id or f"root:{environment_id}",
             handle=handle,
             image_identity=image_identity,
+            source_snapshot=source_snapshot,
         )
         try:
             await self._compose(project, "up", "--detach", "--wait", "--no-build")
@@ -708,6 +751,134 @@ class RealDockerComposeEnvironmentAdapter(_FixedDockerComposeEnvironmentAdapter)
 
         return await self._materialize_observed_candidate(env, request)
 
+    async def run_m5_materialized_provider(
+        self,
+        request: M5MaterializedProviderRunRequest,
+    ) -> M5MaterializedProviderRunReceipt:
+        """Run one closed provider-side M5 scenario from an exact M4 winner state.
+
+        This is intentionally a bounded provider execution witness.  It does not
+        pretend to execute or observe the FastAPI application itself.
+        """
+
+        try:
+            closed_request = M5MaterializedProviderRunRequest.model_validate(
+                request.model_dump(mode="python")
+            )
+        except (AttributeError, TypeError, ValueError):
+            raise ComposeAdapterError("M5 materialized replay request is invalid") from None
+        target = TargetSpec(target_id=_REAL_TARGET_ID, target_version=_REAL_TARGET_VERSION)
+        root: EnvironmentHandle | None = None
+        environment: EnvironmentHandle | None = None
+        try:
+            root = await self.prepare(target)
+            clean = await self.snapshot(root)
+            environment = await self.fork(clean)
+            live = self._require_live(environment)
+            await self._restore_m4_winner_state(live, closed_request.m4_provider_receipt)
+            retained_archive, retained_hashes = await self._export_state(live)
+            baseline = _m5_provider_digests(retained_hashes)
+            expected_baseline = tuple(
+                M5ProviderDigest(provider=item.provider, sha256=item.after_sha256)
+                for item in closed_request.m4_provider_receipt.providers
+            )
+            if baseline != expected_baseline:
+                raise ComposeAdapterError("M5 retained winner provider state does not match M4")
+            payload = _m5_bridge_payload(closed_request)
+            result = await self._compose(
+                live.project,
+                *_REAL_M5_STATE_BRIDGE,
+                stdin=payload,
+            )
+            steps = _parse_m5_bridge_steps(
+                result.stdout,
+                closed_request,
+                image_id=live.image_identity.binding,
+            )
+            _current_archive, current_hashes = await self._export_state(live)
+            final_state = _m5_provider_digests(current_hashes)
+            if final_state != steps[-1].after:
+                raise ComposeAdapterError("M5 provider replay final state was not retained")
+            await self._import_exact_archive(live, retained_archive)
+            restored_archive, restored_hashes = await self._export_state(live)
+            if restored_archive != retained_archive:
+                raise ComposeAdapterError("M5 provider replay restore identity failed")
+            restored = _m5_provider_digests(restored_hashes)
+            if restored != baseline:
+                raise ComposeAdapterError("M5 provider replay restore state changed")
+            values: dict[str, object] = {
+                "schema_version": "stateweaver-m5-materialized-provider-run-v1",
+                "status": "M5_MATERIALIZED_PROVIDER_RUN_QUALIFIED",
+                "request": closed_request,
+                "request_digest": sha256_digest(closed_request),
+                "steps": steps,
+                "final_provider_state": final_state,
+                "restored_provider_state": restored,
+                "cleanup_status": "PASS",
+                "destroyed": True,
+            }
+            receipt = M5MaterializedProviderRunReceipt.model_validate(
+                {**values, "receipt_digest": sha256_digest(values)}
+            )
+        except (ValueError, json.JSONDecodeError, TypeError):
+            raise ComposeAdapterError("M5 materialized provider replay failed") from None
+        finally:
+            # Ownership is local and cleanup is always asserted by destroy for the real profile.
+            try:
+                if environment is not None:
+                    await self.destroy(environment)
+            finally:
+                if root is not None:
+                    await self.destroy(root)
+        return receipt
+
+    async def run_m5_materialized_application(
+        self,
+        request: MaterializedLabRunRequest,
+    ) -> MaterializedLabRunReceipt:
+        """Run the fixed FastAPI application witness in a separate Compose project.
+
+        The receipt proves one executed scenario over six immutable checkpoint
+        shards with PostgreSQL CAS visibility.  Composite qualification and
+        hosted SW-M5 admission remain separate gates.
+        """
+
+        return await MaterializedLabDockerRuntime(runner=self._runner).run(request)
+
+    async def _restore_m4_winner_state(
+        self,
+        live: _LiveWorld,
+        receipt: MaterializedProviderReceipt,
+    ) -> None:
+        payload = json.dumps(
+            {"marker": receipt.marker, "tick": receipt.tick},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        acknowledgement = await self._compose(
+            live.project,
+            *self._profile.state_bridge,
+            "mutate",
+            stdin=payload,
+        )
+        if acknowledgement.stdout != '{"accepted":true,"schema_version":"2.0"}':
+            raise ComposeAdapterError("M5 retained winner reconstruction was not acknowledged")
+        archive, hashes = await self._export_state(live)
+        _require_materialized_archive(archive, marker=receipt.marker, tick=receipt.tick)
+        expected = {item.provider: item.after_sha256 for item in receipt.providers}
+        if hashes != expected:
+            raise ComposeAdapterError("M5 retained winner reconstruction differs from M4")
+
+    async def _import_exact_archive(self, live: _LiveWorld, archive: bytes) -> None:
+        acknowledgement = await self._compose(
+            live.project,
+            *self._profile.state_bridge,
+            "import",
+            stdin=archive,
+        )
+        if acknowledgement.stdout != '{"accepted":true,"schema_version":"2.0"}':
+            raise ComposeAdapterError("M5 retained winner restore was not acknowledged")
+
 
 @dataclass(frozen=True)
 class _LiveWorld:
@@ -716,6 +887,7 @@ class _LiveWorld:
     root_snapshot_id: str
     handle: EnvironmentHandle
     image_identity: _ImageIdentity
+    source_snapshot: SnapshotManifest | None
     operation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, compare=False, repr=False)
 
 
@@ -802,6 +974,12 @@ def _hash(value: object) -> str:
     return f"sha256:{sha256(encoded).hexdigest()}"
 
 
+def _archive_digest(archive: bytes) -> str:
+    """Hash the exact canonical provider archive retained by the bridge."""
+
+    return f"sha256:{sha256(archive).hexdigest()}"
+
+
 def _require_materialized_archive(archive: bytes, *, marker: str, tick: int) -> None:
     """Require the exact six-provider semantic state promised by an M4 mutation."""
 
@@ -831,3 +1009,97 @@ def _require_materialized_archive(archive: bytes, *, marker: str, tick: int) -> 
     }
     if not isinstance(document, dict) or document.get("components") != expected:
         raise ComposeAdapterError("materialized provider oracle failed")
+
+
+def _m5_provider_digests(hashes: dict[str, str]) -> tuple[M5ProviderDigest, ...]:
+    if tuple(sorted(hashes)) != ("cache", "clock", "database", "filesystem", "queue", "session"):
+        raise ComposeAdapterError("M5 provider capture does not cover every provider")
+    return tuple(
+        M5ProviderDigest(provider=cast(ProviderName, provider), sha256=hashes[provider])
+        for provider in ("cache", "clock", "database", "filesystem", "queue", "session")
+    )
+
+
+def _m5_bridge_payload(request: M5MaterializedProviderRunRequest) -> bytes:
+    actions: list[dict[str, object]] = []
+    for action in request.actions:
+        envelope = action.model_dump(mode="json")
+        actions.append({"envelope": envelope, "action_digest": sha256_digest(action)})
+    return canonical_json_bytes(
+        {"scenario": request.scenario, "mode": request.mode, "actions": actions}
+    )
+
+
+def _parse_m5_bridge_steps(
+    stdout: str,
+    request: M5MaterializedProviderRunRequest,
+    *,
+    image_id: str,
+) -> tuple[M5MaterializedProviderStep, ...]:
+    try:
+        payload = json.loads(
+            stdout,
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (json.JSONDecodeError, ValueError):
+        raise ComposeAdapterError("M5 provider bridge response is invalid") from None
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"accepted", "schema_version", "steps"}
+        or payload["accepted"] is not True
+        or payload["schema_version"] != "m5.1"
+        or not isinstance(payload["steps"], list)
+        or len(payload["steps"]) != len(request.actions)
+    ):
+        raise ComposeAdapterError("M5 provider bridge response is invalid")
+    steps: list[M5MaterializedProviderStep] = []
+    for index, (raw, action) in enumerate(
+        zip(payload["steps"], request.actions, strict=True), start=1
+    ):
+        if not isinstance(raw, dict) or set(raw) != {
+            "step_id",
+            "action_id",
+            "action_digest",
+            "response_status",
+            "oracle_outcome",
+            "before",
+            "after",
+        }:
+            raise ComposeAdapterError("M5 provider bridge step is invalid")
+        try:
+            before = _m5_digests_from_archive(raw["before"], image_id=image_id)
+            after = _m5_digests_from_archive(raw["after"], image_id=image_id)
+            step = M5MaterializedProviderStep(
+                step_id=raw["step_id"],
+                action=action,
+                action_digest=raw["action_digest"],
+                response_status=raw["response_status"],
+                oracle_outcome=raw["oracle_outcome"],
+                before=before,
+                after=after,
+            )
+        except (TypeError, ValueError):
+            raise ComposeAdapterError("M5 provider bridge step is invalid") from None
+        if step.step_id != f"step.{index:02d}" or raw["action_id"] != action.action_id:
+            raise ComposeAdapterError("M5 provider bridge action order is invalid")
+        if index == len(request.actions) and (
+            step.oracle_outcome != request.expected_oracle_outcome
+            or step.response_status != request.expected_response_status
+        ):
+            raise ComposeAdapterError("M5 provider bridge terminal boundary is invalid")
+        steps.append(step)
+    return tuple(steps)
+
+
+def _m5_digests_from_archive(raw: object, *, image_id: str) -> tuple[M5ProviderDigest, ...]:
+    try:
+        encoded = canonical_json_bytes(raw)
+        _archive, hashes = _decode_archive(
+            encoded.decode("utf-8"),
+            image_id=image_id,
+            profile=_REAL_PROFILE,
+        )
+    except (UnicodeDecodeError, ValueError):
+        raise ComposeAdapterError("M5 provider capture archive is invalid") from None
+    return _m5_provider_digests(hashes)

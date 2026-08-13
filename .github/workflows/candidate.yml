@@ -128,7 +128,7 @@ jobs:
           npm audit --audit-level=high
 
   admit_hosted_qualification:
-    name: Admit exact-SHA hosted M2-M4 receipts
+    name: Admit exact-SHA hosted M2-M5 actual qualification
     needs: preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -336,7 +336,7 @@ jobs:
             tests/integration/compiler \
             --junitxml=artifacts/acceptance/junit/replay.xml
 
-      - name: Download the exact-SHA hosted M2-M4 admission
+      - name: Download the exact-SHA hosted M2-M5 actual admission
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: hosted-qualification-admission-${{ needs.preflight.outputs.source_sha }}
@@ -435,7 +435,7 @@ jobs:
           from pathlib import Path
 
           summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["summary"]
-          expected = {"blocked": 23, "failed": 0, "not_run": 0, "passed": 69, "required": 92}
+          expected = {"blocked": 21, "failed": 0, "not_run": 0, "passed": 71, "required": 92}
           if summary != expected:
               raise SystemExit(f"unexpected acceptance summary: {summary!r}")
           PY
@@ -813,6 +813,6 @@ jobs:
             echo "## CANDIDATE_READY_FOR_EXTERNAL_QUALIFICATION"
             echo
             echo "Payload manifest: $MANIFEST_SHA256"
-            echo "The exact-SHA hosted M2 four-way/provider/cleanup rows, M3 observed chain, and M4 materialization row are admitted by this candidate proof. SW-M2-LIVE still needs a separate clean host; M5 exact-byte actual-ASGI replay is implemented but its Docker-materialized exit remains pending; M6-M8 retain implementation and external-qualification blockers."
+            echo "This candidate proof admits the exact-SHA GitHub-hosted M2 four-way/provider/cleanup rows, M3 observed chain, M4 materialization row, and M5 ten-scenario actual-ASGI clean-root replay. Acceptance registry: 71 PASS, 21 BLOCKED, 92 required. SW-M2-LIVE still requires a separate clean host; M6-M8 retain implementation and external-qualification blockers."
             echo "No tag or GitHub Release was created."
           } >> "$GITHUB_STEP_SUMMARY"

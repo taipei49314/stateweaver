@@ -63,11 +63,34 @@ _REPOSITORY_MARKER_RE = re.compile(r"^[0-9a-f]{40}$")
 _TRACE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _SPAN_ID_RE = re.compile(r"^[0-9a-f]{16}$")
 _ROUTE_RE = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%{}/-]{1,511}$")
+_ROUTE_PARAMETER_RE = re.compile(r"^\{[A-Za-z_][A-Za-z0-9_]*\}$")
 _LIMITATIONS = (
     "This receipt qualifies one repository-owned socket-free ASGI runtime observation.",
     "It is not a live-provider, materialized-world, trusted-broker, or public-release receipt.",
 )
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _route_template_matches(template: str, concrete_path: str) -> bool:
+    if (
+        _ROUTE_RE.fullmatch(template) is None
+        or _ROUTE_RE.fullmatch(concrete_path) is None
+        or "{" in concrete_path
+        or "}" in concrete_path
+    ):
+        return False
+    template_segments = template.split("/")
+    concrete_segments = concrete_path.split("/")
+    if len(template_segments) != len(concrete_segments) or any(
+        ("{" in segment or "}" in segment) and _ROUTE_PARAMETER_RE.fullmatch(segment) is None
+        for segment in template_segments
+    ):
+        return False
+    return all(
+        expected == observed
+        or (_ROUTE_PARAMETER_RE.fullmatch(expected) is not None and bool(observed))
+        for expected, observed in zip(template_segments, concrete_segments, strict=True)
+    )
 
 
 def _assert_runtime_redacted(value: object) -> None:
@@ -252,7 +275,7 @@ class RuntimeObservationProjection(_QualificationModel):
         if (
             target is None
             or target.host not in {"localhost", "127.0.0.1"}
-            or target.path != self.expected_route
+            or not _route_template_matches(self.expected_route, target.path)
             or self.trace.method is not action.method
             or self.trace.route != self.expected_route
             or self.trace.status not in action.expected_statuses

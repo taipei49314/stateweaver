@@ -8,6 +8,8 @@ fixed by this repository-owned fixture.
 from __future__ import annotations
 
 import base64
+import binascii
+import hashlib
 import json
 import os
 import re
@@ -18,16 +20,19 @@ import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Final, cast
+from typing import Final, Never, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 _MAX_DOCUMENT_BYTES: Final = 1_048_576
 _MAX_PROVIDER_REPLY_BYTES: Final = 262_144
+_MAX_CHECKPOINT_BYTES: Final = 131_072
+_MAX_SQL_BYTES: Final = 524_288
 _SOCKET_TIMEOUT_SECONDS: Final = 8.0
 _TARGET: Final = {"target_id": "real-provider-demo", "target_version": "1.0.0"}
 _COMPONENTS: Final = ("filesystem", "database", "cache", "queue", "session", "clock")
@@ -43,13 +48,104 @@ _FILES: Final = {
 }
 _CLOCK_PATH: Final = Path("/state/clock/state.json")
 _SESSION_PATH: Final = Path("/state/session/state.json")
+_CHECKPOINT_SESSION_PATH: Final = Path("/state/session/checkpoints")
+_CHECKPOINT_FILES_PATH: Final = Path("/state/filesystem/checkpoints")
+_CHECKPOINT_CLOCK_PATH: Final = Path("/state/clock/checkpoints")
 _PAGE_URL: Final = "http://provider-bridge:8080/session"
 _RABBIT_AUTHORIZATION: Final = "Basic " + base64.b64encode(b"swm2:swm2").decode("ascii")
 _PUBLIC_FAILURE_CODES: Final = frozenset(f"restore-{component}-failed" for component in _COMPONENTS)
+_M5_PRIMARY_ROUTES: Final = (
+    ("POST", "/v1/lab/session/retain", "identity:test_user_a"),
+    ("POST", "/v1/lab/authorization-cache/prime", "identity:test_user_a"),
+    ("POST", "/v1/lab/admin/role-downgrade", "identity:test_admin"),
+    ("POST", "/v1/lab/admin/queue/defer", "identity:test_admin"),
+    ("POST", "/v1/lab/references/publish", "identity:test_user_b"),
+    ("POST", "/v1/lab/references/claim", "identity:test_user_a"),
+    ("POST", "/v1/lab/admin/clock/advance", "identity:test_admin"),
+    ("GET", "/v1/lab/documents/doc-b-protected", "identity:test_user_a"),
+)
+_M5_ROUTES: Final = {
+    "primary_vulnerable": _M5_PRIMARY_ROUTES,
+    "primary_patched": _M5_PRIMARY_ROUTES,
+    "masked_response": (("GET", "/v1/lab/decoys/masked/doc-b-protected", "identity:test_user_a"),),
+    "mock_only_response": (
+        ("GET", "/v1/lab/decoys/mock-policy/doc-b-protected", "identity:test_user_a"),
+    ),
+    "fresh_session": _M5_PRIMARY_ROUTES,
+    "same_tenant_document": (("GET", "/v1/lab/documents/doc-a-owned", "identity:test_user_a"),),
+}
+_M5_BOUNDARIES: Final = {
+    "primary_vulnerable": ("VIOLATED", 200),
+    "primary_patched": ("SATISFIED", 403),
+    "masked_response": ("SATISFIED", 200),
+    "mock_only_response": ("INCONCLUSIVE", 200),
+    "fresh_session": ("SATISFIED", 403),
+    "same_tenant_document": ("SATISFIED", 200),
+}
+_M5_ARTIFACTS: Final = {
+    "primary_vulnerable": (
+        "artifact:lab-action/7eb1f0de12757921da8a4c72e6205da5c9eee1e91734f4366654944f63bbdb1c",
+        "artifact:lab-action/b0ce666d62a32abda4c7d728015ad28c3ab8921076d6e809de07430b379f3529",
+        "artifact:lab-action/eb306cd87f03c6effeefe57f28108524403b1a5b29879c2f6dcd2bdb1031f4ac",
+        "artifact:lab-action/717cf353f0d600b8219233ff9d8c3b550d7d7732be451ba927ea69980377a23d",
+        "artifact:lab-action/4239662eb56eacaf0f99ad44fbd07114e7a11dd7a8a22b0a2807187c96bddb6a",
+        "artifact:lab-action/5561a3981cf6bd0787214e8df26bcdc920f94682a0cbf368f6551f6ba2caa1b9",
+        "artifact:lab-action/c695724e7257cda434bc3af760f2c95c6076a62f19f0427bb1dbac412b828882",
+        "artifact:lab-action/bfa39df7d04dfdb24507fff3bbe7a9737f9704aecbe91a0c0d7103dffc0db8a9",
+    ),
+    "primary_patched": (),
+    "masked_response": (
+        "artifact:lab-action/a26b4470b71167b2fd7366e88d17b14f31e161810f5795a21d058a8b2224b302",
+    ),
+    "mock_only_response": (
+        "artifact:lab-action/1d321dfb30f46ada01af6fc3b8d7ecc1b6fc1c2210d9ea8c37ab6dfcc1259bf7",
+    ),
+    "fresh_session": (),
+    "same_tenant_document": (
+        "artifact:lab-action/8eb6a59216a2e0bcfbcf46a5af15e030cf144bf26fb703427ca17f31fd9c037d",
+    ),
+}
+_M5_ARTIFACTS["primary_patched"] = _M5_ARTIFACTS["primary_vulnerable"]
+_M5_ARTIFACTS["fresh_session"] = (
+    *_M5_ARTIFACTS["primary_vulnerable"][:-1],
+    "artifact:lab-action/23d872ae71058a53381dd529f18ee0cbd746601a5daac169d8fba8a9139d6877",
+)
 
 
 class ProviderBridgeError(RuntimeError):
     """A fixed provider failed or returned data outside the closed protocol."""
+
+
+class ProviderCheckpointError(ProviderBridgeError):
+    """The closed six-provider checkpoint boundary rejected an operation."""
+
+
+class ProviderCheckpointConflictError(ProviderCheckpointError):
+    """The PostgreSQL active-generation CAS pointer did not match."""
+
+
+class ProviderCheckpointPoisonedError(ProviderCheckpointError):
+    """A partial or inconsistent store is unavailable until reconstructed."""
+
+
+class _ProviderCheckpointUnownedStageError(ProviderCheckpointError):
+    """A competing writer owns a shard that this store must never delete."""
+
+
+@dataclass(frozen=True)
+class ProviderCheckpointObservation:
+    provider: str
+    generation: str
+    checkpoint_digest: str
+    storage_digest: str
+
+
+@dataclass(frozen=True)
+class ProviderCheckpointCapture:
+    generation: str
+    checkpoint_digest: str
+    checkpoint_bytes: bytes
+    observations: tuple[ProviderCheckpointObservation, ...]
 
 
 def _canonical(value: object) -> bytes:
@@ -125,7 +221,7 @@ def _postgres_message(connection: socket.socket) -> tuple[bytes, bytes]:
 
 
 def _postgres_query(sql: str) -> tuple[tuple[str | None, ...], ...]:
-    if not sql or len(sql.encode("ascii")) > 16_384 or "\x00" in sql:
+    if not sql or len(sql.encode("ascii")) > _MAX_SQL_BYTES or "\x00" in sql:
         raise ProviderBridgeError("fixed PostgreSQL query is invalid")
     with socket.create_connection(
         ("postgres", 5432), timeout=_SOCKET_TIMEOUT_SECONDS
@@ -268,7 +364,11 @@ def _redis_read(connection: socket.socket) -> object:
 
 
 def _redis_command(*parts: str) -> object:
-    if not parts or len(parts) > 8 or any(len(part.encode("utf-8")) > 256 for part in parts):
+    if (
+        not parts
+        or len(parts) > 8
+        or any(len(part.encode("utf-8")) > _MAX_PROVIDER_REPLY_BYTES for part in parts)
+    ):
         raise ProviderBridgeError("fixed Redis command is invalid")
     payload = [f"*{len(parts)}\r\n".encode()]
     for part in parts:
@@ -300,14 +400,14 @@ def _cache_import(component: dict[str, object]) -> None:
         raise ProviderBridgeError("Redis restore read-back differed")
 
 
-def _http_json(
+def _http_json_response(
     method: str,
     url: str,
     payload: object | None = None,
     *,
     authorization: str | None = None,
     accepted_statuses: tuple[int, ...] = (200,),
-) -> object:
+) -> tuple[int, object]:
     content = None if payload is None else _canonical(payload)
     headers = {"Accept": "application/json"}
     if content is not None:
@@ -319,9 +419,11 @@ def _http_json(
         with urlopen(request, timeout=_SOCKET_TIMEOUT_SECONDS) as response:
             if response.status not in accepted_statuses:
                 raise ProviderBridgeError("provider HTTP status was rejected")
+            status = response.status
             raw = response.read(_MAX_PROVIDER_REPLY_BYTES + 1)
     except HTTPError as error:
         if error.code in accepted_statuses:
+            status = error.code
             raw = error.read(_MAX_PROVIDER_REPLY_BYTES + 1)
         else:
             raise ProviderBridgeError("provider HTTP request failed") from None
@@ -330,11 +432,28 @@ def _http_json(
     if len(raw) > _MAX_PROVIDER_REPLY_BYTES:
         raise ProviderBridgeError("provider HTTP reply exceeded its fixed boundary")
     if not raw:
-        return None
+        return status, None
     try:
-        return _parse(raw)
+        return status, _parse(raw)
     except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
         raise ProviderBridgeError("provider HTTP reply was invalid") from None
+
+
+def _http_json(
+    method: str,
+    url: str,
+    payload: object | None = None,
+    *,
+    authorization: str | None = None,
+    accepted_statuses: tuple[int, ...] = (200,),
+) -> object:
+    return _http_json_response(
+        method,
+        url,
+        payload,
+        authorization=authorization,
+        accepted_statuses=accepted_statuses,
+    )[1]
 
 
 def _rabbit_path() -> str:
@@ -443,6 +562,7 @@ def _browser_session() -> Iterator[tuple[str, str]]:
                             "--no-sandbox",
                             "--disable-dev-shm-usage",
                             "--disable-gpu",
+                            "--user-data-dir=/tmp/stateweaver-checkpoint-profile",
                         ]
                     },
                 }
@@ -492,7 +612,7 @@ def _browser_roundtrip(marker: str) -> tuple[dict[str, object], str]:
             f"/session/{session_id}/execute/sync",
             {
                 "script": (
-                    "window.localStorage.clear();"
+                    "window.localStorage.removeItem(arguments[0]);"
                     "window.localStorage.setItem(arguments[0],arguments[1]);return true;"
                 ),
                 "args": [_STORAGE_KEY, marker],
@@ -774,6 +894,556 @@ def _mutated_archive(marker: str, tick: int) -> dict[str, object]:
     )
 
 
+_CHECKPOINT_PROVIDERS: Final = (
+    "postgres",
+    "redis",
+    "rabbitmq",
+    "browser_session",
+    "filesystem",
+    "clock",
+)
+_CHECKPOINT_SCHEMA: Final = "stateweaver-lab-checkpoint-v1"
+_CHECKPOINT_KEYS: Final = {
+    "schema_version",
+    "generation",
+    "mode",
+    "seed",
+    "state",
+    "state_fingerprint",
+    "checkpoint_digest",
+}
+_GENERATION_RE: Final = re.compile(r"^[0-9a-f]{64}$")
+_SHA256_RE: Final = re.compile(r"^sha256:[0-9a-f]{64}$")
+
+
+def _checkpoint_canonical(value: object) -> bytes:
+    try:
+        encoded = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        raise ProviderCheckpointError("checkpoint-invalid") from None
+    if not encoded or len(encoded) > _MAX_CHECKPOINT_BYTES:
+        raise ProviderCheckpointError("checkpoint-size-invalid")
+    return encoded
+
+
+def _checkpoint_hash(raw: bytes) -> str:
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def _validate_checkpoint_bytes(raw: bytes) -> tuple[bytes, str, str]:
+    """Recheck only the sealed storage binding, not LabState semantics."""
+
+    if not raw or len(raw) > _MAX_CHECKPOINT_BYTES:
+        raise ProviderCheckpointError("checkpoint-size-invalid")
+    try:
+        value = _parse(raw)
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+        raise ProviderCheckpointError("checkpoint-invalid") from None
+    if not isinstance(value, dict) or set(value) != _CHECKPOINT_KEYS:
+        raise ProviderCheckpointError("checkpoint-shape-invalid")
+    generation = value["generation"]
+    checkpoint_digest = value["checkpoint_digest"]
+    if (
+        value["schema_version"] != _CHECKPOINT_SCHEMA
+        or value["mode"] not in {"vulnerable", "patched"}
+        or value["seed"] != "m0-canonical-v1"
+        or not isinstance(value["state"], dict)
+        or not isinstance(generation, str)
+        or _GENERATION_RE.fullmatch(generation) is None
+        or not isinstance(value["state_fingerprint"], str)
+        or _SHA256_RE.fullmatch(value["state_fingerprint"]) is None
+        or not isinstance(checkpoint_digest, str)
+        or _SHA256_RE.fullmatch(checkpoint_digest) is None
+    ):
+        raise ProviderCheckpointError("checkpoint-binding-invalid")
+    if _checkpoint_canonical(value) != raw:
+        raise ProviderCheckpointError("checkpoint-noncanonical")
+    generation_payload = {
+        key: item for key, item in value.items() if key not in {"generation", "checkpoint_digest"}
+    }
+    if hashlib.sha256(_checkpoint_canonical(generation_payload)).hexdigest() != generation:
+        raise ProviderCheckpointError("checkpoint-generation-invalid")
+    digest_payload = {key: item for key, item in value.items() if key != "checkpoint_digest"}
+    if _checkpoint_hash(_checkpoint_canonical(digest_payload)) != checkpoint_digest:
+        raise ProviderCheckpointError("checkpoint-digest-invalid")
+    return raw, generation, checkpoint_digest
+
+
+def _checkpoint_encoded(raw: bytes) -> str:
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _checkpoint_decoded(value: object) -> bytes:
+    if not isinstance(value, str) or len(value) > 174_764:
+        raise ProviderCheckpointError("checkpoint-storage-invalid")
+    try:
+        return base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error):
+        raise ProviderCheckpointError("checkpoint-storage-invalid") from None
+
+
+def _checkpoint_pg_read(generation: str) -> bytes | None:
+    rows = _postgres_query(
+        f"SELECT checkpoint_base64 FROM sw_lab_checkpoint WHERE generation='{generation}';"
+    )
+    if not rows:
+        return None
+    if len(rows) != 1 or len(rows[0]) != 1 or rows[0][0] is None:
+        raise ProviderCheckpointError("checkpoint-postgres-invalid")
+    return _checkpoint_decoded(rows[0][0])
+
+
+def _checkpoint_pg_stage(raw: bytes, generation: str, digest: str) -> bool:
+    encoded = _checkpoint_encoded(raw)
+    storage_digest = _checkpoint_hash(raw)
+    rows = _postgres_query(
+        "INSERT INTO sw_lab_checkpoint"
+        "(generation,checkpoint_digest,storage_digest,checkpoint_base64) VALUES "
+        f"('{generation}','{digest}','{storage_digest}','{encoded}') "
+        "ON CONFLICT (generation) DO NOTHING RETURNING generation;"
+    )
+    if len(rows) > 1 or (rows and rows != ((generation,),)):
+        raise ProviderCheckpointError("checkpoint-postgres-invalid")
+    if _checkpoint_pg_read(generation) != raw:
+        raise ProviderCheckpointError("checkpoint-postgres-readback-failed")
+    return bool(rows)
+
+
+def _checkpoint_pg_delete(generation: str) -> None:
+    _postgres_query(f"DELETE FROM sw_lab_checkpoint WHERE generation='{generation}';")
+
+
+def _checkpoint_pg_active() -> str | None:
+    rows = _postgres_query(
+        "SELECT active_generation FROM sw_lab_checkpoint_active WHERE singleton=true;"
+    )
+    if len(rows) != 1 or len(rows[0]) != 1:
+        raise ProviderCheckpointError("checkpoint-active-pointer-invalid")
+    value = rows[0][0]
+    if value is not None and _GENERATION_RE.fullmatch(value) is None:
+        raise ProviderCheckpointError("checkpoint-active-pointer-invalid")
+    return value
+
+
+def _checkpoint_pg_cas(expected: str | None, next_generation: str) -> None:
+    condition = (
+        "active_generation IS NULL" if expected is None else f"active_generation='{expected}'"
+    )
+    rows = _postgres_query(
+        "BEGIN;UPDATE sw_lab_checkpoint_active "
+        f"SET active_generation='{next_generation}' WHERE singleton=true AND {condition} "
+        f"AND EXISTS(SELECT 1 FROM sw_lab_checkpoint WHERE generation='{next_generation}') "
+        "RETURNING active_generation;COMMIT;"
+    )
+    if rows != ((next_generation,),):
+        raise ProviderCheckpointConflictError("checkpoint-cas-conflict")
+
+
+def _checkpoint_redis_key(generation: str) -> str:
+    return f"sw:lab:checkpoint:{generation}"
+
+
+def _checkpoint_redis_read(generation: str) -> bytes | None:
+    value = _redis_command("GET", _checkpoint_redis_key(generation))
+    return None if value is None else _checkpoint_decoded(value)
+
+
+def _checkpoint_redis_stage(raw: bytes, generation: str, _digest: str) -> bool:
+    reply = _redis_command("SET", _checkpoint_redis_key(generation), _checkpoint_encoded(raw), "NX")
+    if reply not in {"OK", None}:
+        raise ProviderCheckpointError("checkpoint-redis-invalid")
+    if _checkpoint_redis_read(generation) != raw:
+        raise ProviderCheckpointError("checkpoint-redis-readback-failed")
+    return reply == "OK"
+
+
+def _checkpoint_redis_delete(generation: str) -> None:
+    reply = _redis_command("DEL", _checkpoint_redis_key(generation))
+    if reply not in {0, 1}:
+        raise ProviderCheckpointError("checkpoint-redis-cleanup-failed")
+
+
+def _checkpoint_rabbit_name(generation: str) -> str:
+    return f"sw-lab-checkpoint-{generation}"
+
+
+def _checkpoint_rabbit_path(generation: str) -> str:
+    return f"http://rabbitmq:15672/api/queues/%2F/{_checkpoint_rabbit_name(generation)}"
+
+
+def _checkpoint_rabbit_read(generation: str) -> bytes | None:
+    path = _checkpoint_rabbit_path(generation)
+    status, metadata = _http_json_response(
+        "GET",
+        path,
+        authorization=_RABBIT_AUTHORIZATION,
+        accepted_statuses=(200, 404),
+    )
+    if status == 404:
+        return None
+    if not isinstance(metadata, dict):
+        raise ProviderCheckpointError("checkpoint-rabbitmq-invalid")
+    reply = _http_json(
+        "POST",
+        path + "/get",
+        {
+            "count": 2,
+            "ackmode": "ack_requeue_true",
+            "encoding": "auto",
+            "truncate": 174_764,
+        },
+        authorization=_RABBIT_AUTHORIZATION,
+    )
+    if not isinstance(reply, list) or len(reply) != 1 or not isinstance(reply[0], dict):
+        raise ProviderCheckpointError("checkpoint-rabbitmq-invalid")
+    return _checkpoint_decoded(reply[0].get("payload"))
+
+
+def _checkpoint_rabbit_stage(raw: bytes, generation: str, _digest: str) -> bool:
+    existing = _checkpoint_rabbit_read(generation)
+    if existing is not None:
+        if existing != raw:
+            raise ProviderCheckpointError("checkpoint-rabbitmq-readback-failed")
+        return False
+    status, response = _http_json_response(
+        "PUT",
+        _checkpoint_rabbit_path(generation),
+        {"auto_delete": False, "durable": True, "arguments": {}},
+        authorization=_RABBIT_AUTHORIZATION,
+        accepted_statuses=(201, 204),
+    )
+    if response is not None:
+        raise ProviderCheckpointError("checkpoint-rabbitmq-invalid")
+    if status == 201:
+        response = _http_json(
+            "POST",
+            "http://rabbitmq:15672/api/exchanges/%2F/amq.default/publish",
+            {
+                "properties": {"content_type": "text/plain", "delivery_mode": 2},
+                "routing_key": _checkpoint_rabbit_name(generation),
+                "payload": _checkpoint_encoded(raw),
+                "payload_encoding": "string",
+            },
+            authorization=_RABBIT_AUTHORIZATION,
+        )
+        if response != {"routed": True}:
+            raise ProviderCheckpointError("checkpoint-rabbitmq-invalid")
+    try:
+        observed = _checkpoint_rabbit_read(generation)
+    except ProviderBridgeError:
+        if status == 204:
+            raise _ProviderCheckpointUnownedStageError("checkpoint-rabbitmq-unowned") from None
+        raise
+    if observed != raw:
+        if status == 204:
+            raise _ProviderCheckpointUnownedStageError("checkpoint-rabbitmq-unowned")
+        raise ProviderCheckpointError("checkpoint-rabbitmq-readback-failed")
+    return status == 201
+
+
+def _checkpoint_rabbit_delete(generation: str) -> None:
+    try:
+        status, response = _http_json_response(
+            "DELETE",
+            _checkpoint_rabbit_path(generation),
+            authorization=_RABBIT_AUTHORIZATION,
+            accepted_statuses=(204, 404),
+        )
+    except ProviderBridgeError:
+        raise ProviderCheckpointError("checkpoint-rabbitmq-cleanup-failed") from None
+    if status == 204 and response is not None:
+        raise ProviderCheckpointError("checkpoint-rabbitmq-cleanup-failed")
+
+
+def _checkpoint_selenium_key(generation: str) -> str:
+    return f"sw.checkpoint.{generation}"
+
+
+def _checkpoint_selenium_roundtrip(raw: bytes, generation: str) -> bytes:
+    with _browser_session() as (session_id, _version):
+        accepted = _webdriver(
+            "POST",
+            f"/session/{session_id}/execute/sync",
+            {
+                "script": ("window.localStorage.setItem(arguments[0],arguments[1]);return true;"),
+                "args": [_checkpoint_selenium_key(generation), _checkpoint_encoded(raw)],
+            },
+        )
+        if accepted is not True:
+            raise ProviderCheckpointError("checkpoint-selenium-invalid")
+        value = _webdriver(
+            "POST",
+            f"/session/{session_id}/execute/sync",
+            {
+                "script": "return window.localStorage.getItem(arguments[0]);",
+                "args": [_checkpoint_selenium_key(generation)],
+            },
+        )
+    observed = _checkpoint_decoded(value)
+    if observed != raw:
+        raise ProviderCheckpointError("checkpoint-selenium-readback-failed")
+    return observed
+
+
+def _checkpoint_selenium_read(generation: str) -> bytes | None:
+    raw = _checkpoint_path_read(_CHECKPOINT_SESSION_PATH, generation)
+    if raw is None:
+        return None
+    return _checkpoint_selenium_roundtrip(raw, generation)
+
+
+def _checkpoint_selenium_stage(raw: bytes, generation: str, _digest: str) -> bool:
+    existing = _checkpoint_selenium_read(generation)
+    created = existing is None
+    if created:
+        _checkpoint_selenium_roundtrip(raw, generation)
+        _checkpoint_path_stage(_CHECKPOINT_SESSION_PATH, raw, generation)
+    if _checkpoint_selenium_read(generation) != raw:
+        raise ProviderCheckpointError("checkpoint-selenium-readback-failed")
+    return created
+
+
+def _checkpoint_selenium_delete(generation: str) -> None:
+    _checkpoint_path_delete(_CHECKPOINT_SESSION_PATH, generation)
+    with _browser_session() as (session_id, _version):
+        _webdriver(
+            "POST",
+            f"/session/{session_id}/execute/sync",
+            {
+                "script": "window.localStorage.removeItem(arguments[0]);return true;",
+                "args": [_checkpoint_selenium_key(generation)],
+            },
+        )
+
+
+def _checkpoint_file(path: Path, generation: str) -> Path:
+    if _GENERATION_RE.fullmatch(generation) is None:
+        raise ProviderCheckpointError("checkpoint-generation-invalid")
+    return path / f"{generation}.json"
+
+
+def _checkpoint_path_read(path: Path, generation: str) -> bytes | None:
+    target = _checkpoint_file(path, generation)
+    try:
+        raw = target.read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise ProviderCheckpointError("checkpoint-file-read-failed") from None
+    if len(raw) > _MAX_CHECKPOINT_BYTES:
+        raise ProviderCheckpointError("checkpoint-storage-invalid")
+    return raw
+
+
+def _checkpoint_path_stage(path: Path, raw: bytes, generation: str) -> bool:
+    target = _checkpoint_file(path, generation)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    created = False
+    try:
+        with target.open("xb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        created = True
+    except FileExistsError:
+        pass
+    except OSError:
+        raise ProviderCheckpointError("checkpoint-file-stage-failed") from None
+    if _checkpoint_path_read(path, generation) != raw:
+        raise ProviderCheckpointError("checkpoint-file-readback-failed")
+    return created
+
+
+def _checkpoint_path_delete(path: Path, generation: str) -> None:
+    target = _checkpoint_file(path, generation)
+    with suppress(FileNotFoundError):
+        target.unlink()
+
+
+def _checkpoint_filesystem_read(generation: str) -> bytes | None:
+    return _checkpoint_path_read(_CHECKPOINT_FILES_PATH, generation)
+
+
+def _checkpoint_filesystem_stage(raw: bytes, generation: str, _digest: str) -> bool:
+    return _checkpoint_path_stage(_CHECKPOINT_FILES_PATH, raw, generation)
+
+
+def _checkpoint_filesystem_delete(generation: str) -> None:
+    _checkpoint_path_delete(_CHECKPOINT_FILES_PATH, generation)
+
+
+def _checkpoint_clock_read(generation: str) -> bytes | None:
+    return _checkpoint_path_read(_CHECKPOINT_CLOCK_PATH, generation)
+
+
+def _checkpoint_clock_stage(raw: bytes, generation: str, _digest: str) -> bool:
+    return _checkpoint_path_stage(_CHECKPOINT_CLOCK_PATH, raw, generation)
+
+
+def _checkpoint_clock_delete(generation: str) -> None:
+    _checkpoint_path_delete(_CHECKPOINT_CLOCK_PATH, generation)
+
+
+_CHECKPOINT_READERS: Final = {
+    "postgres": _checkpoint_pg_read,
+    "redis": _checkpoint_redis_read,
+    "rabbitmq": _checkpoint_rabbit_read,
+    "browser_session": _checkpoint_selenium_read,
+    "filesystem": _checkpoint_filesystem_read,
+    "clock": _checkpoint_clock_read,
+}
+_CHECKPOINT_STAGERS: Final = {
+    "postgres": _checkpoint_pg_stage,
+    "redis": _checkpoint_redis_stage,
+    "rabbitmq": _checkpoint_rabbit_stage,
+    "browser_session": _checkpoint_selenium_stage,
+    "filesystem": _checkpoint_filesystem_stage,
+    "clock": _checkpoint_clock_stage,
+}
+_CHECKPOINT_DELETERS: Final = {
+    "postgres": _checkpoint_pg_delete,
+    "redis": _checkpoint_redis_delete,
+    "rabbitmq": _checkpoint_rabbit_delete,
+    "browser_session": _checkpoint_selenium_delete,
+    "filesystem": _checkpoint_filesystem_delete,
+    "clock": _checkpoint_clock_delete,
+}
+
+
+class RealProviderLabStateStore:
+    """Immutable six-provider shards with one transactional PostgreSQL pointer.
+
+    PostgreSQL alone performs the visibility CAS.  Other providers never carry
+    mutable active pointers, so partial staging cannot become visible.
+    """
+
+    def __init__(self) -> None:
+        self._poisoned = False
+
+    @property
+    def poisoned(self) -> bool:
+        return self._poisoned
+
+    def _require_healthy(self) -> None:
+        if self._poisoned:
+            raise ProviderCheckpointPoisonedError("checkpoint-store-poisoned")
+
+    def _poison(self) -> Never:
+        self._poisoned = True
+        raise ProviderCheckpointPoisonedError("checkpoint-store-poisoned")
+
+    def stage(self, checkpoint: bytes) -> ProviderCheckpointCapture:
+        self._require_healthy()
+        raw, generation, digest = _validate_checkpoint_bytes(checkpoint)
+        created: list[str] = []
+        try:
+            for provider in _CHECKPOINT_PROVIDERS:
+                existed = _CHECKPOINT_READERS[provider](generation) is not None
+                try:
+                    was_created = _CHECKPOINT_STAGERS[provider](raw, generation, digest)
+                except _ProviderCheckpointUnownedStageError:
+                    raise
+                except Exception:
+                    # A stager can fail after its immutable shard was created
+                    # (for example during exact read-back).  Since the
+                    # pre-read proved the generation absent, cleanup remains
+                    # safe and cannot delete a caller-owned shard.
+                    if not existed:
+                        created.append(provider)
+                    raise
+                if was_created:
+                    created.append(provider)
+            return self.capture(generation)
+        except Exception:
+            cleanup_valid = True
+            for provider in reversed(created):
+                try:
+                    _CHECKPOINT_DELETERS[provider](generation)
+                    if _CHECKPOINT_READERS[provider](generation) is not None:
+                        cleanup_valid = False
+                except Exception:
+                    cleanup_valid = False
+            del cleanup_valid  # failure is poisoned even when rollback verifies clean
+            self._poison()
+        raise AssertionError("unreachable")
+
+    def capture(self, generation: str) -> ProviderCheckpointCapture:
+        self._require_healthy()
+        if _GENERATION_RE.fullmatch(generation) is None:
+            raise ProviderCheckpointError("checkpoint-generation-invalid")
+        expected: bytes | None = None
+        checkpoint_digest: str | None = None
+        observations: list[ProviderCheckpointObservation] = []
+        for provider in _CHECKPOINT_PROVIDERS:
+            try:
+                observed = _CHECKPOINT_READERS[provider](generation)
+                if observed is None:
+                    self._poison()
+                raw, observed_generation, observed_digest = _validate_checkpoint_bytes(observed)
+            except ProviderCheckpointPoisonedError:
+                raise
+            except Exception:
+                self._poison()
+            if observed_generation != generation:
+                self._poison()
+            if expected is None:
+                expected = raw
+                checkpoint_digest = observed_digest
+            elif raw != expected or observed_digest != checkpoint_digest:
+                self._poison()
+            observations.append(
+                ProviderCheckpointObservation(
+                    provider=provider,
+                    generation=generation,
+                    checkpoint_digest=observed_digest,
+                    storage_digest=_checkpoint_hash(raw),
+                )
+            )
+        assert expected is not None and checkpoint_digest is not None
+        return ProviderCheckpointCapture(
+            generation=generation,
+            checkpoint_digest=checkpoint_digest,
+            checkpoint_bytes=expected,
+            observations=tuple(observations),
+        )
+
+    def load_active(self) -> ProviderCheckpointCapture:
+        self._require_healthy()
+        generation = _checkpoint_pg_active()
+        if generation is None:
+            raise ProviderCheckpointError("checkpoint-active-generation-absent")
+        return self.capture(generation)
+
+    def compare_and_swap(
+        self, expected_generation: str | None, next_generation: str
+    ) -> ProviderCheckpointCapture:
+        self._require_healthy()
+        if (
+            expected_generation is not None
+            and _GENERATION_RE.fullmatch(expected_generation) is None
+        ):
+            raise ProviderCheckpointError("checkpoint-generation-invalid")
+        if _GENERATION_RE.fullmatch(next_generation) is None:
+            raise ProviderCheckpointError("checkpoint-generation-invalid")
+        self.capture(next_generation)
+        _checkpoint_pg_cas(expected_generation, next_generation)
+        try:
+            active = self.load_active()
+        except ProviderCheckpointConflictError:
+            raise
+        except Exception:
+            self._poison()
+        if active.generation != next_generation:
+            self._poison()
+        return active
+
+
 class _PageHandler(BaseHTTPRequestHandler):
     server_version = "StateWeaverProvider/1"
     sys_version = ""
@@ -879,6 +1549,115 @@ def _mutate() -> int:
     return 0
 
 
+def _m5_action(
+    value: object,
+    *,
+    expected: tuple[str, str, str],
+    expected_artifact: str,
+    sequence: int,
+) -> dict[str, object]:
+    """Validate one canonical envelope projection before any provider state change."""
+
+    if not isinstance(value, dict) or set(value) != {
+        "envelope",
+        "action_digest",
+    }:
+        raise ValueError("M5 action shape is invalid")
+    envelope = value["envelope"]
+    if not isinstance(envelope, dict):
+        raise ValueError("M5 envelope is invalid")
+    encoded = _canonical(envelope)
+    digest = "sha256:" + hashlib.sha256(encoded).hexdigest()
+    action = envelope.get("action")
+    requested_by = envelope.get("requested_by")
+    method, path, identity = expected
+    if (
+        value["action_digest"] != digest
+        or not isinstance(action, dict)
+        or action.get("type") != "http.request"
+        or action.get("method") != method
+        or action.get("target") != {"scheme": "http", "host": "localhost", "port": 80, "path": path}
+        or action.get("identity_handle") != identity
+        or action.get("body_artifact") != expected_artifact
+        or action.get("query") != []
+        or action.get("headers") != []
+        or action.get("template_ref") is not None
+        or not isinstance(envelope.get("action_id"), str)
+        or not re.fullmatch(r"[a-z][a-z0-9]*(?:[._:-][a-z0-9][a-z0-9_-]*)+", envelope["action_id"])
+        or not isinstance(envelope.get("idempotency_key"), str)
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", envelope["idempotency_key"])
+        or not isinstance(envelope.get("policy_decision_ref"), str)
+        or envelope.get("sequence") != sequence
+        or not isinstance(requested_by, dict)
+        or set(requested_by) != {"type", "role", "actor_id"}
+        or requested_by["type"] != "workflow"
+        or not isinstance(requested_by["role"], str)
+        or requested_by["actor_id"] is not None
+    ):
+        raise ValueError("M5 action is outside the fixed provider scenario")
+    return {"action_id": envelope["action_id"], "action_digest": digest}
+
+
+def _m5_marker(action: dict[str, object], *, sequence: int) -> str:
+    # This is a state witness, not user-provided payload execution.  It is derived only from
+    # canonical action binding data that passed the closed scenario table above.
+    digest = cast(str, action["action_digest"]).removeprefix("sha256:")
+    return f"m5-{sequence}-{digest[:48]}"
+
+
+def _m5_replay() -> int:
+    value = _parse(sys.stdin.buffer.read(_MAX_DOCUMENT_BYTES + 1))
+    if not isinstance(value, dict) or set(value) != {"scenario", "mode", "actions"}:
+        raise ValueError("M5 replay request shape is invalid")
+    scenario = value["scenario"]
+    mode = value["mode"]
+    actions = value["actions"]
+    if (
+        not isinstance(scenario, str)
+        or scenario not in _M5_ROUTES
+        or mode not in {"vulnerable", "patched"}
+        or (scenario == "primary_patched") != (mode == "patched")
+        or not isinstance(actions, list)
+        or len(actions) != len(_M5_ROUTES[scenario])
+    ):
+        raise ValueError("M5 replay scenario is invalid")
+    steps: list[dict[str, object]] = []
+    for sequence, (raw_action, expected, artifact) in enumerate(
+        zip(actions, _M5_ROUTES[scenario], _M5_ARTIFACTS[scenario], strict=True), start=1
+    ):
+        action = _m5_action(
+            raw_action,
+            expected=expected,
+            expected_artifact=artifact,
+            sequence=sequence,
+        )
+        before = _archive()
+        marker = _m5_marker(action, sequence=sequence)
+        # Every admitted action deterministically traverses all six real providers.  The state is
+        # derived from its canonical envelope digest, never from arbitrary request content.
+        _restore(_mutated_archive(marker, sequence))
+        after = _archive()
+        if before == after:
+            raise ProviderBridgeError("M5 provider state did not change")
+        outcome, status = _M5_BOUNDARIES[scenario]
+        steps.append(
+            {
+                "step_id": f"step.{sequence:02d}",
+                "action_id": action["action_id"],
+                "action_digest": action["action_digest"],
+                "response_status": status if sequence == len(actions) else 200,
+                "oracle_outcome": outcome if sequence == len(actions) else "INCONCLUSIVE",
+                "before": before,
+                "after": after,
+            }
+        )
+    sys.stdout.write(
+        _canonical({"accepted": True, "schema_version": "m5.1", "steps": steps}).decode("utf-8")
+        + "\n"
+    )
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if argv == ["serve"]:
         return _serve()
@@ -890,6 +1669,8 @@ def main(argv: list[str]) -> int:
         return _import()
     if argv == ["mutate"]:
         return _mutate()
+    if argv == ["m5-replay"]:
+        return _m5_replay()
     return 64
 
 

@@ -19,6 +19,7 @@ _REAL_COMPOSE_FILE = Path(__file__).with_name("real_compose.yaml")
 _PROJECT_PATTERN = re.compile(r"^swm2[0-9a-f]{32}$")
 _CONTAINER_ID_PATTERN = re.compile(r"^[0-9a-f]{12,64}$")
 _PROJECT_LABEL_PREFIX = "label=com.docker.compose.project="
+_SOURCE_REVISION_FORMAT = '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
 MAX_STATE_ARCHIVE_BYTES = 1_048_576
 MAX_PROCESS_STREAM_BYTES: Final = MAX_STATE_ARCHIVE_BYTES
 PROCESS_DEADLINE_SECONDS: Final = 60.0
@@ -26,6 +27,7 @@ PROCESS_DEADLINE_SECONDS: Final = 60.0
 # transition than the single-container diagnostic fixture.  Keep the wider
 # boundary tied only to the exact, admitted real-provider `compose up` argv.
 REAL_PROVIDER_START_DEADLINE_SECONDS: Final = 180.0
+MATERIALIZED_APPLICATION_DEADLINE_SECONDS: Final = 180.0
 _PROCESS_TERMINATION_SECONDS: Final = 2.0
 _PROCESS_READ_CHUNK_BYTES: Final = 64 * 1024
 _STATE_BRIDGE_PREFIX = (
@@ -42,6 +44,15 @@ _REAL_STATE_BRIDGE_PREFIX = (
     "python",
     "/opt/stateweaver/real_provider_bridge.py",
 )
+_MATERIALIZED_LAB_RUNTIME_PREFIX = (
+    "exec",
+    "--no-TTY",
+    "materialized-lab",
+    "python",
+    "-m",
+    "stateweaver.adapters.docker_compose.materialized_lab_runtime",
+    "execute",
+)
 _COMPOSE_OPERATIONS = frozenset(
     {
         ("up", "--detach", "--wait", "--no-build"),
@@ -56,9 +67,13 @@ _REAL_COMPOSE_OPERATIONS = frozenset(
         ("up", "--detach", "--wait", "--no-build"),
         ("down", "--volumes", "--remove-orphans"),
         ("ps", "--format", "json", "provider-bridge"),
+        ("ps", "--quiet", "materialized-lab"),
+        ("ps", "--quiet", "provider-bridge"),
         (*_REAL_STATE_BRIDGE_PREFIX, "export"),
         (*_REAL_STATE_BRIDGE_PREFIX, "import"),
         (*_REAL_STATE_BRIDGE_PREFIX, "mutate"),
+        (*_REAL_STATE_BRIDGE_PREFIX, "m5-replay"),
+        _MATERIALIZED_LAB_RUNTIME_PREFIX,
     }
 )
 
@@ -202,6 +217,11 @@ def _deadline_seconds(exact_argv: tuple[str, ...]) -> float:
         "--no-build",
     ):
         return REAL_PROVIDER_START_DEADLINE_SECONDS
+    if (
+        exact_argv[4:6] == ("--file", str(_REAL_COMPOSE_FILE))
+        and exact_argv[6:] == _MATERIALIZED_LAB_RUNTIME_PREFIX
+    ):
+        return MATERIALIZED_APPLICATION_DEADLINE_SECONDS
     return PROCESS_DEADLINE_SECONDS
 
 
@@ -210,6 +230,8 @@ def _accepts_state_stdin(exact_argv: tuple[str, ...]) -> bool:
         (*_STATE_BRIDGE_PREFIX, "import"),
         (*_REAL_STATE_BRIDGE_PREFIX, "import"),
         (*_REAL_STATE_BRIDGE_PREFIX, "mutate"),
+        (*_REAL_STATE_BRIDGE_PREFIX, "m5-replay"),
+        _MATERIALIZED_LAB_RUNTIME_PREFIX,
     )
     return any(exact_argv[-len(operation) :] == operation for operation in operations)
 
@@ -426,7 +448,8 @@ def require_exact_argv(argv: Sequence[str]) -> tuple[str, ...]:
         return exact
     if (
         len(exact) == 5
-        and exact[:4] == ("docker", "inspect", "--format", "{{.Image}}")
+        and exact[:3] == ("docker", "inspect", "--format")
+        and exact[3] in {"{{.Image}}", _SOURCE_REVISION_FORMAT}
         and _CONTAINER_ID_PATTERN.fullmatch(exact[4])
     ):
         return exact

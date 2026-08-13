@@ -16,10 +16,32 @@ from stateweaver.evidence import (
 from stateweaver.cli.__main__ import main
 from stateweaver.cli.runtime_qualification import (
     qualify_runtime_observation,
+    qualify_runtime_observation_chain,
     validate_runtime_qualification_against_adapter,
 )
 
 MARKER = "d" * 40
+
+
+def test_runtime_chain_observes_complete_cross_tenant_boundary() -> None:
+    chain = qualify_runtime_observation_chain(MARKER)
+
+    assert len(chain) == 8
+    assert tuple(item.projection.trace.route for item in chain) == (
+        "/v1/lab/session/retain",
+        "/v1/lab/authorization-cache/prime",
+        "/v1/lab/admin/role-downgrade",
+        "/v1/lab/admin/queue/defer",
+        "/v1/lab/references/publish",
+        "/v1/lab/references/claim",
+        "/v1/lab/admin/clock/advance",
+        "/v1/lab/documents/{document_id}",
+    )
+    assert chain[-1].projection.trace.status == 200
+    before = json.loads(chain[-1].projection.before_capture.payload_json)
+    after = json.loads(chain[-1].projection.after_capture.payload_json)
+    assert before["application"]["evidence_count"] == 7
+    assert after["application"]["evidence_count"] == 8
 
 
 def test_runtime_qualification_reexecutes_with_stable_semantics() -> None:

@@ -52,6 +52,7 @@ from .models import (
     TenantId,
 )
 from .oracle import DisclosureObservation, evaluate_disclosure
+from .provider_checkpoint import CheckpointError, LabStateCheckpoint
 
 
 class LabActionError(Exception):
@@ -666,6 +667,435 @@ class LabState:
                     now=self.clock.now,
                 ),
             )
+
+    def export_checkpoint(self) -> LabStateCheckpoint:
+        """Seal every mutable security-relevant field into canonical provider bytes.
+
+        Fixture bearer values and immutable document bodies are deliberately not
+        present.  The latter are re-bound to the closed canonical fixture on
+        restore, so a checkpoint cannot substitute protected content.
+        """
+
+        with self._lock:
+            return LabStateCheckpoint.create(
+                mode=self.mode,
+                state=self._checkpoint_state_unlocked(),
+                state_fingerprint=self._fingerprint_unlocked(),
+            )
+
+    @classmethod
+    def from_checkpoint(cls, checkpoint: LabStateCheckpoint) -> LabState:
+        """Restore a checkpoint only after its full closed shape is revalidated."""
+
+        state = cls.canonical(checkpoint.mode)
+        with state._lock:
+            try:
+                state._restore_checkpoint_unlocked(checkpoint)
+            except (TypeError, ValueError) as error:
+                raise CheckpointError("checkpoint state value is invalid") from error
+            if state._fingerprint_unlocked() != checkpoint.state_fingerprint:
+                raise CheckpointError("checkpoint fingerprint does not match restored state")
+            if state.export_checkpoint().generation != checkpoint.generation:
+                raise CheckpointError("checkpoint generation does not match restored state")
+        return state
+
+    def _checkpoint_state_unlocked(self) -> dict[str, object]:
+        cache = self.authorization_cache
+        job = self.queue_job
+        observation = self._last_disclosure
+        return {
+            "sequence": self._sequence,
+            "now": canonical_timestamp(self.clock.now),
+            "policy_generation": self.policy_generation,
+            "principals": [
+                {
+                    "principal_id": item.principal_id.value,
+                    "tenant_id": item.tenant_id.value,
+                    "role": item.role.value,
+                }
+                for item in sorted(
+                    self.principals.values(), key=lambda value: value.principal_id.value
+                )
+            ],
+            "sessions": [
+                {
+                    "session_id": item.session_id.value,
+                    "principal_id": item.principal_id.value,
+                    "issued_role": item.issued_role.value,
+                    "policy_generation": item.policy_generation,
+                    "issued_at": canonical_timestamp(item.issued_at),
+                    "expires_at": canonical_timestamp(item.expires_at),
+                }
+                for item in sorted(self.sessions.values(), key=lambda value: value.session_id.value)
+            ],
+            "document_ownership": [
+                {"document_id": item.document_id.value, "tenant_id": item.tenant_id.value}
+                for item in sorted(
+                    self.documents.values(), key=lambda value: value.document_id.value
+                )
+            ],
+            "retained_session_ids": sorted(item.value for item in self.retained_sessions),
+            "authorization_cache": None
+            if cache is None
+            else {
+                "principal_id": cache.principal_id.value,
+                "permission": cache.permission,
+                "allowed": cache.allowed,
+                "primed_document_id": cache.primed_document_id.value,
+                "tenant_scope": cache.tenant_scope.value,
+                "policy_generation": cache.policy_generation,
+            },
+            "queue_job": None
+            if job is None
+            else {
+                "job_id": job.job_id.value,
+                "principal_id": job.principal_id.value,
+                "due_at": canonical_timestamp(job.due_at),
+                "status": job.status,
+                "deliberately_delayed": job.deliberately_delayed,
+            },
+            "reference": {
+                "reference_id": self.reference.reference_id.value,
+                "document_id": self.reference.document_id.value,
+                "publisher_id": self.reference.publisher_id.value,
+                "recipient_id": self.reference.recipient_id.value,
+                "published": self.reference.published,
+                "claimed_by_session_id": (
+                    self.reference.claimed_by_session_id.value
+                    if self.reference.claimed_by_session_id is not None
+                    else None
+                ),
+            },
+            "role_downgraded_at": self._checkpoint_timestamp(self.role_downgraded_at),
+            "replay_window_opens_at": self._checkpoint_timestamp(self.replay_window_opens_at),
+            "replay_window_closes_at": self._checkpoint_timestamp(self.replay_window_closes_at),
+            "evidence": [
+                {
+                    "action_id": item.action_id,
+                    "evidence_id": item.evidence_id,
+                    "action_type": item.action_type,
+                    "actor_principal_id": item.actor_principal_id.value,
+                    "outcome": item.outcome,
+                    "at": canonical_timestamp(item.at),
+                    "resource_id": item.resource_id,
+                    "provenance": item.provenance.value,
+                }
+                for item in self._evidence
+            ],
+            "last_disclosure": None
+            if observation is None
+            else {
+                "evidence_id": observation.evidence_id,
+                "requester_tenant": observation.requester_tenant.value,
+                "owner_tenant": observation.owner_tenant.value,
+                "document_id": observation.document_id.value,
+                "response_status": observation.response_status,
+                "provenance": observation.provenance.value,
+            },
+        }
+
+    @staticmethod
+    def _checkpoint_timestamp(value: datetime | None) -> str | None:
+        return canonical_timestamp(value) if value is not None else None
+
+    def _restore_checkpoint_unlocked(self, checkpoint: LabStateCheckpoint) -> None:
+        raw = checkpoint.state
+        expected_keys = {
+            "sequence",
+            "now",
+            "policy_generation",
+            "principals",
+            "sessions",
+            "document_ownership",
+            "retained_session_ids",
+            "authorization_cache",
+            "queue_job",
+            "reference",
+            "role_downgraded_at",
+            "replay_window_opens_at",
+            "replay_window_closes_at",
+            "evidence",
+            "last_disclosure",
+        }
+        if set(raw) != expected_keys:
+            raise CheckpointError("checkpoint state coverage is invalid")
+        self._sequence = self._integer(raw["sequence"], "sequence", minimum=0)
+        self.clock._now = self._timestamp(raw["now"], "now")
+        self.policy_generation = self._integer(
+            raw["policy_generation"], "policy_generation", minimum=1
+        )
+        self.principals = {}
+        for item in self._records(
+            raw["principals"],
+            {"principal_id", "tenant_id", "role"},
+            "principals",
+        ):
+            principal_id = PrincipalId(self._string(item["principal_id"], "principal id"))
+            if principal_id in self.principals:
+                raise CheckpointError("checkpoint principal identifiers are duplicate")
+            self.principals[principal_id] = PrincipalFixture(
+                principal_id=principal_id,
+                tenant_id=TenantId(self._string(item["tenant_id"], "tenant id")),
+                role=Role(self._string(item["role"], "role")),
+            )
+        if set(self.principals) != set(PrincipalId):
+            raise CheckpointError("checkpoint principal coverage is invalid")
+        self.sessions = {}
+        for item in self._records(
+            raw["sessions"],
+            {
+                "session_id",
+                "principal_id",
+                "issued_role",
+                "policy_generation",
+                "issued_at",
+                "expires_at",
+            },
+            "sessions",
+        ):
+            session_id = FixtureSessionId(self._string(item["session_id"], "session id"))
+            if session_id in self.sessions:
+                raise CheckpointError("checkpoint session identifiers are duplicate")
+            self.sessions[session_id] = SessionFixture(
+                session_id=session_id,
+                principal_id=PrincipalId(self._string(item["principal_id"], "session principal")),
+                issued_role=Role(self._string(item["issued_role"], "session role")),
+                policy_generation=self._integer(item["policy_generation"], "session generation", 1),
+                issued_at=self._timestamp(item["issued_at"], "session issued_at"),
+                expires_at=self._timestamp(item["expires_at"], "session expires_at"),
+            )
+        baseline_sessions = {
+            FixtureSessionId.TENANT_A_OLD,
+            FixtureSessionId.TENANT_B_VIEWER,
+            FixtureSessionId.LAB_ADMIN,
+        }
+        if set(self.sessions) != baseline_sessions and set(self.sessions) != (
+            baseline_sessions | {FixtureSessionId.TENANT_A_FRESH}
+        ):
+            raise CheckpointError("checkpoint session coverage is invalid")
+        if self._checkpoint_document_ownership() != raw["document_ownership"]:
+            raise CheckpointError("checkpoint document ownership binding is invalid")
+        retained = raw["retained_session_ids"]
+        if not isinstance(retained, list) or len(retained) != len(set(retained)):
+            raise CheckpointError("checkpoint retained sessions are invalid")
+        self.retained_sessions = {
+            FixtureSessionId(self._string(item, "retained session")) for item in retained
+        }
+        if not self.retained_sessions <= set(self.sessions):
+            raise CheckpointError("checkpoint retained session is unknown")
+        self.authorization_cache = self._restore_cache(raw["authorization_cache"])
+        self.queue_job = self._restore_job(raw["queue_job"])
+        self.reference = self._restore_reference(raw["reference"])
+        self.role_downgraded_at = self._optional_timestamp(
+            raw["role_downgraded_at"], "role_downgraded_at"
+        )
+        self.replay_window_opens_at = self._optional_timestamp(
+            raw["replay_window_opens_at"], "replay_window_opens_at"
+        )
+        self.replay_window_closes_at = self._optional_timestamp(
+            raw["replay_window_closes_at"], "replay_window_closes_at"
+        )
+        self._evidence = self._restore_evidence(raw["evidence"])
+        if self._sequence != len(self._evidence):
+            raise CheckpointError("checkpoint sequence does not bind its evidence")
+        self._last_disclosure = self._restore_disclosure(raw["last_disclosure"])
+
+    def _checkpoint_document_ownership(self) -> list[dict[str, str]]:
+        return [
+            {"document_id": item.document_id.value, "tenant_id": item.tenant_id.value}
+            for item in sorted(self.documents.values(), key=lambda value: value.document_id.value)
+        ]
+
+    @staticmethod
+    def _mapping(value: object, fields: set[str], label: str) -> dict[str, object]:
+        if not isinstance(value, dict) or set(value) != fields:
+            raise CheckpointError(f"checkpoint {label} shape is invalid")
+        return value
+
+    @classmethod
+    def _records(cls, value: object, fields: set[str], label: str) -> list[dict[str, object]]:
+        if not isinstance(value, list):
+            raise CheckpointError(f"checkpoint {label} is invalid")
+        return [cls._mapping(item, fields, label) for item in value]
+
+    @staticmethod
+    def _integer(value: object, label: str, minimum: int) -> int:
+        if type(value) is not int or value < minimum:
+            raise CheckpointError(f"checkpoint {label} is invalid")
+        return value
+
+    @staticmethod
+    def _string(value: object, label: str) -> str:
+        if not isinstance(value, str):
+            raise CheckpointError(f"checkpoint {label} is invalid")
+        return value
+
+    @staticmethod
+    def _timestamp(value: object, label: str) -> datetime:
+        if not isinstance(value, str):
+            raise CheckpointError(f"checkpoint {label} is invalid")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise CheckpointError(f"checkpoint {label} is invalid") from error
+        if canonical_timestamp(parsed) != value:
+            raise CheckpointError(f"checkpoint {label} is not canonical")
+        return parsed
+
+    @classmethod
+    def _optional_timestamp(cls, value: object, label: str) -> datetime | None:
+        if value is None:
+            return None
+        return cls._timestamp(value, label)
+
+    def _restore_cache(self, value: object) -> AuthorizationCacheEntry | None:
+        if value is None:
+            return None
+        item = self._mapping(
+            value,
+            {
+                "principal_id",
+                "permission",
+                "allowed",
+                "primed_document_id",
+                "tenant_scope",
+                "policy_generation",
+            },
+            "authorization cache",
+        )
+        if item["permission"] != "document:read" or type(item["allowed"]) is not bool:
+            raise CheckpointError("checkpoint authorization cache is invalid")
+        return AuthorizationCacheEntry(
+            principal_id=PrincipalId(self._string(item["principal_id"], "cache principal")),
+            permission="document:read",
+            allowed=item["allowed"],
+            primed_document_id=DocumentId(
+                self._string(item["primed_document_id"], "cache document")
+            ),
+            tenant_scope=TenantId(self._string(item["tenant_scope"], "cache tenant")),
+            policy_generation=self._integer(item["policy_generation"], "cache generation", 1),
+        )
+
+    def _restore_job(self, value: object) -> QueueJobFixture | None:
+        if value is None:
+            return None
+        item = self._mapping(
+            value,
+            {"job_id", "principal_id", "due_at", "status", "deliberately_delayed"},
+            "queue job",
+        )
+        if (
+            item["status"] not in {"pending", "completed"}
+            or type(item["deliberately_delayed"]) is not bool
+        ):
+            raise CheckpointError("checkpoint queue job is invalid")
+        return QueueJobFixture(
+            job_id=QueueJobId(self._string(item["job_id"], "queue job id")),
+            principal_id=PrincipalId(self._string(item["principal_id"], "queue principal")),
+            due_at=self._timestamp(item["due_at"], "queue due_at"),
+            status=item["status"],
+            deliberately_delayed=item["deliberately_delayed"],
+        )
+
+    def _restore_reference(self, value: object) -> ReferenceFixture:
+        item = self._mapping(
+            value,
+            {
+                "reference_id",
+                "document_id",
+                "publisher_id",
+                "recipient_id",
+                "published",
+                "claimed_by_session_id",
+            },
+            "reference",
+        )
+        if type(item["published"]) is not bool:
+            raise CheckpointError("checkpoint reference is invalid")
+        claimed = item["claimed_by_session_id"]
+        if claimed is not None and not isinstance(claimed, str):
+            raise CheckpointError("checkpoint reference claim is invalid")
+        return ReferenceFixture(
+            reference_id=ReferenceId(self._string(item["reference_id"], "reference id")),
+            document_id=DocumentId(self._string(item["document_id"], "reference document")),
+            publisher_id=PrincipalId(self._string(item["publisher_id"], "reference publisher")),
+            recipient_id=PrincipalId(self._string(item["recipient_id"], "reference recipient")),
+            published=item["published"],
+            claimed_by_session_id=FixtureSessionId(claimed) if claimed is not None else None,
+        )
+
+    def _restore_evidence(self, value: object) -> list[InternalEvidence]:
+        records = self._records(
+            value,
+            {
+                "action_id",
+                "evidence_id",
+                "action_type",
+                "actor_principal_id",
+                "outcome",
+                "at",
+                "resource_id",
+                "provenance",
+            },
+            "evidence",
+        )
+        restored: list[InternalEvidence] = []
+        for index, item in enumerate(records, start=1):
+            if item["action_id"] != f"act-{index:03d}" or item["evidence_id"] != f"ev-{index:03d}":
+                raise CheckpointError("checkpoint evidence order is invalid")
+            if not all(
+                isinstance(item[key], str) for key in ("action_type", "outcome", "resource_id")
+            ):
+                raise CheckpointError("checkpoint evidence value is invalid")
+            restored.append(
+                InternalEvidence(
+                    action_id=item["action_id"],
+                    evidence_id=item["evidence_id"],
+                    action_type=self._string(item["action_type"], "evidence action type"),
+                    actor_principal_id=PrincipalId(
+                        self._string(item["actor_principal_id"], "evidence actor")
+                    ),
+                    outcome=self._string(item["outcome"], "evidence outcome"),
+                    at=self._timestamp(item["at"], "evidence at"),
+                    resource_id=self._string(item["resource_id"], "evidence resource"),
+                    provenance=Provenance(self._string(item["provenance"], "evidence provenance")),
+                )
+            )
+        return restored
+
+    def _restore_disclosure(self, value: object) -> DisclosureObservation | None:
+        if value is None:
+            return None
+        item = self._mapping(
+            value,
+            {
+                "evidence_id",
+                "requester_tenant",
+                "owner_tenant",
+                "document_id",
+                "response_status",
+                "provenance",
+            },
+            "last disclosure",
+        )
+        if type(item["response_status"]) is not int or not isinstance(item["evidence_id"], str):
+            raise CheckpointError("checkpoint last disclosure is invalid")
+        document_id = DocumentId(self._string(item["document_id"], "disclosure document"))
+        if document_id != DocumentId.TENANT_B_PROTECTED or item["evidence_id"] not in {
+            evidence.evidence_id for evidence in self._evidence
+        }:
+            raise CheckpointError("checkpoint last disclosure binding is invalid")
+        return DisclosureObservation(
+            evidence_id=item["evidence_id"],
+            requester_tenant=TenantId(
+                self._string(item["requester_tenant"], "disclosure requester")
+            ),
+            owner_tenant=TenantId(self._string(item["owner_tenant"], "disclosure owner")),
+            document_id=document_id,
+            response_status=item["response_status"],
+            body_marker=self.documents[document_id].body,
+            provenance=Provenance(self._string(item["provenance"], "disclosure provenance")),
+        )
 
     def _process_due_jobs(self) -> None:
         if (

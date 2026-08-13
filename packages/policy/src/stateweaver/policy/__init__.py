@@ -1,5 +1,10 @@
 """Public API for StateWeaver's fail-closed reference policy layer."""
 
+from .authorization import (
+    PolicyAuthorization,
+    PolicyAuthorizationDeniedError,
+    verify_policy_authorization,
+)
 from .evaluator import DeterministicPolicyEvaluator, evaluate_policy
 from .models import (
     BudgetSnapshot,
@@ -19,10 +24,13 @@ __all__ = [
     "ConstraintStatus",
     "DeterministicPolicyEvaluator",
     "EvaluationConstraints",
+    "PolicyAuthorization",
+    "PolicyAuthorizationDeniedError",
     "PolicyConstraint",
     "PolicyDecision",
     "PolicyOutcome",
     "PolicyReasonCode",
     "PolicyRequest",
     "evaluate_policy",
+    "verify_policy_authorization",
 ]

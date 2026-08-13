@@ -1,11 +1,14 @@
 """Public API for the fail-closed synthetic in-process lab adapter."""
 
+from stateweaver.policy import PolicyAuthorization
+
 from .environment import (
     ADAPTER_NAME,
     ADAPTER_VERSION,
     CANONICAL_RANDOM_SEED,
     InProcessLabEnvironment,
     InProcessLabRuntimeExecution,
+    state_capture_from_lab_checkpoint,
 )
 from .errors import (
     AdapterConfigurationError,
@@ -25,7 +28,6 @@ from .registry import (
     FixedLabActionRegistry,
     LabAction,
     LabHttpActionSpec,
-    PolicyAuthorization,
     lab_action_artifact,
     lab_http_action_spec,
 )
@@ -56,4 +58,5 @@ __all__ = [
     "UnknownLabActionError",
     "lab_action_artifact",
     "lab_http_action_spec",
+    "state_capture_from_lab_checkpoint",
 ]
