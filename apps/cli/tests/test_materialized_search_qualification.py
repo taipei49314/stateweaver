@@ -9,18 +9,29 @@ from pathlib import Path
 
 import pytest
 from stateweaver.adapters.docker_compose import (
+    M5MaterializedProviderRunReceipt,
+    M5MaterializedProviderRunRequest,
+    M5MaterializedProviderStep,
+    M5ProviderDigest,
     MaterializedCandidateRequest,
     MaterializedProviderReceipt,
     RealDockerComposeEnvironmentAdapter,
 )
 from stateweaver.adapters.in_process_lab import CANONICAL_RANDOM_SEED, InProcessLabEnvironment
-from stateweaver.contracts import ProvenanceKind, WorldTier, canonical_json_bytes, sha256_digest
+from stateweaver.contracts import (
+    OracleOutcome,
+    ProvenanceKind,
+    WorldTier,
+    canonical_json_bytes,
+    sha256_digest,
+)
 from stateweaver.evidence.hosted_qualification import (
     HostedQualificationError,
     hosted_qualification_admissions,
     hosted_qualification_payloads,
     validate_hosted_qualification_admission,
 )
+from stateweaver.replay import ReplayRunStatus
 from stateweaver.search import ScoreSource
 from stateweaver.worlds import (
     EnvironmentHandle,
@@ -36,6 +47,11 @@ from stateweaver.cli.hosted_qualification import (
     build_hosted_docker_qualification,
     build_hosted_qualification_admission,
     write_hosted_receipt,
+)
+from stateweaver.cli.materialized_chain_qualification import (
+    MaterializedChainQualificationReceipt,
+    qualify_materialized_chain,
+    write_materialized_chain_qualification,
 )
 from stateweaver.cli.materialized_search_qualification import (
     MaterializedSearchQualificationError,
@@ -78,11 +94,13 @@ def _hosted_roots(
     m4: MaterializedSearchQualificationReceipt,
     marker: str,
     tree_sha: str,
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, Path]:
     m2_root = tmp_path / "m2-live"
     m4_root = tmp_path / "m4-live"
+    m5_root = tmp_path / "m5-clean-root"
     m2_root.mkdir()
     m4_root.mkdir()
+    m5_root.mkdir()
     (m2_root / "commit.txt").write_bytes(f"{marker}\n".encode("ascii"))
     (m2_root / "tree.txt").write_bytes(f"{tree_sha}\n".encode("ascii"))
     (m2_root / "junit.xml").write_bytes(
@@ -173,7 +191,22 @@ def _hosted_roots(
         )
     )
     (m4_root / "materialized-search-receipt.json").write_bytes(canonical_json_bytes(m4) + b"\n")
-    return m2_root, m4_root
+    m5 = qualify_observed_chain(
+        m4_receipt_path=m4_root / "materialized-search-receipt.json",
+        repository_marker=marker,
+    )
+    (m5_root / "observed-chain-receipt.json").write_bytes(canonical_json_bytes(m5) + b"\n")
+    materialized = qualify_materialized_chain(
+        m4_receipt_path=m4_root / "materialized-search-receipt.json",
+        process_receipt_path=m5_root / "observed-chain-receipt.json",
+        repository_marker=marker,
+        adapter=_MemoryM5ProviderAdapter(),
+    )
+    write_materialized_chain_qualification(
+        m5_root / "materialized-provider-receipt.json",
+        materialized,
+    )
+    return m2_root, m4_root, m5_root
 
 
 class _MemoryRealProviderAdapter:
@@ -256,6 +289,70 @@ class _MemoryRealProviderAdapter:
 
     async def destroy(self, env: EnvironmentHandle) -> None:
         self._live.discard(env.environment_id)
+
+
+class _MemoryM5ProviderAdapter:
+    """Typed provider-run double; the live workflow uses the real Docker bridge."""
+
+    async def run_m5_materialized_provider(
+        self,
+        request: M5MaterializedProviderRunRequest,
+    ) -> M5MaterializedProviderRunReceipt:
+        current = tuple(
+            M5ProviderDigest(provider=item.provider, sha256=item.after_sha256)
+            for item in request.m4_provider_receipt.providers
+        )
+        steps: list[M5MaterializedProviderStep] = []
+        for index, action in enumerate(request.actions, start=1):
+            after = tuple(
+                M5ProviderDigest(
+                    provider=item.provider,
+                    sha256=sha256_digest(
+                        {
+                            "provider": item.provider,
+                            "action": sha256_digest(action),
+                            "step": index,
+                        }
+                    ),
+                )
+                for item in current
+            )
+            steps.append(
+                M5MaterializedProviderStep(
+                    step_id=f"step.{index:02d}",
+                    action=action,
+                    action_digest=sha256_digest(action),
+                    response_status=(
+                        request.expected_response_status if index == len(request.actions) else 200
+                    ),
+                    oracle_outcome=(
+                        request.expected_oracle_outcome
+                        if index == len(request.actions)
+                        else "INCONCLUSIVE"
+                    ),
+                    before=current,
+                    after=after,
+                )
+            )
+            current = after
+        baseline = tuple(
+            M5ProviderDigest(provider=item.provider, sha256=item.after_sha256)
+            for item in request.m4_provider_receipt.providers
+        )
+        values: dict[str, object] = {
+            "schema_version": "stateweaver-m5-materialized-provider-run-v1",
+            "status": "M5_MATERIALIZED_PROVIDER_RUN_QUALIFIED",
+            "request": request,
+            "request_digest": sha256_digest(request),
+            "steps": tuple(steps),
+            "final_provider_state": current,
+            "restored_provider_state": baseline,
+            "cleanup_status": "PASS",
+            "destroyed": True,
+        }
+        return M5MaterializedProviderRunReceipt.model_validate(
+            {**values, "receipt_digest": sha256_digest(values)}
+        )
 
 
 def test_ghost_batch_is_derived_from_the_exact_m3_observation() -> None:
@@ -362,11 +459,60 @@ def test_exact_m4_bytes_compile_and_replay_five_clean_actual_asgi_roots(
     receipt = qualify_observed_chain(m4_receipt_path=retained, repository_marker=MARKER)
 
     assert len(receipt.runs) == M5_REPLAY_COUNT
-    assert receipt.cleanup_count == M5_REPLAY_COUNT
+    assert receipt.cleanup_count == 10
     assert receipt.determinism.deterministic
     assert receipt.determinism.all_runs_succeeded
-    assert len(receipt.compiler_admission.compiled_chain.fragment_ids) == 3
+    assert len(receipt.compiler_admission.compiled_chain.fragment_ids) == 8
+    assert all(item.status is ReplayRunStatus.SUCCEEDED for item in receipt.runs)
+    assert all(
+        item.steps[-1].oracle_results[-1].result is OracleOutcome.VIOLATED for item in receipt.runs
+    )
+    assert all(
+        item.steps[-1].observations[-1].payload["response_status"] == 200 for item in receipt.runs
+    )
+    assert receipt.patched_run.status is ReplayRunStatus.FAILED
+    assert receipt.patched_run.failed_step_id == "step.08"
+    assert receipt.patched_run.steps[-1].failure_code == "ORACLE_EXPECTATION_MISMATCH"
+    assert receipt.patched_run.steps[-1].oracle_results[-1].result is OracleOutcome.SATISFIED
+    assert receipt.patched_run.steps[-1].observations[-1].payload["response_status"] == 403
+    assert receipt.patched_plan_digest == receipt.replay_plan_digest
+    assert tuple(item.name for item in receipt.negative_controls) == (
+        "masked_response",
+        "mock_only_response",
+        "fresh_session",
+        "same_tenant_document",
+    )
+    assert all(
+        item.result.status is ReplayRunStatus.SUCCEEDED for item in receipt.negative_controls
+    )
     assert receipt.m4_receipt_json.encode("utf-8") == retained.read_bytes()
+
+    substituted_plan = deepcopy(receipt.model_dump(mode="json"))
+    first_action = substituted_plan["replay_plan"]["steps"][0]["action"]
+    first_action["timeout_ms"] += 1
+    substituted_plan["replay_plan_digest"] = sha256_digest(substituted_plan["replay_plan"])
+    substituted_plan["patched_plan_digest"] = substituted_plan["replay_plan_digest"]
+    substituted_plan["receipt_digest"] = sha256_digest(
+        {key: value for key, value in substituted_plan.items() if key != "receipt_digest"}
+    )
+    with pytest.raises(ValueError, match="incoherent"):
+        type(receipt).model_validate_json(canonical_json_bytes(substituted_plan))
+
+    substituted_control = deepcopy(receipt.model_dump(mode="json"))
+    substituted_control["negative_controls"][0]["plan_digest"] = "sha256:" + "0" * 64
+    substituted_control["receipt_digest"] = sha256_digest(
+        {key: value for key, value in substituted_control.items() if key != "receipt_digest"}
+    )
+    with pytest.raises(ValueError, match="negative control"):
+        type(receipt).model_validate_json(canonical_json_bytes(substituted_control))
+
+    substituted_patched_root = deepcopy(receipt.model_dump(mode="json"))
+    substituted_patched_root["patched_root"]["target_version"] = "lab-vulnerable"
+    substituted_patched_root["receipt_digest"] = sha256_digest(
+        {key: value for key, value in substituted_patched_root.items() if key != "receipt_digest"}
+    )
+    with pytest.raises(ValueError, match="incoherent"):
+        type(receipt).model_validate_json(canonical_json_bytes(substituted_patched_root))
 
     retained.write_bytes(retained.read_bytes() + b" ")
     with pytest.raises(ObservedChainQualificationError, match="invalid"):
@@ -422,7 +568,7 @@ def test_hosted_receipt_admits_exact_m2_m4_rows_but_not_missing_clean_host(
         )
     )
     tree_sha = "a" * 40
-    m2_root, m4_root = _hosted_roots(
+    m2_root, m4_root, m5_root = _hosted_roots(
         tmp_path,
         m4=m4,
         marker=MARKER,
@@ -431,6 +577,7 @@ def test_hosted_receipt_admits_exact_m2_m4_rows_but_not_missing_clean_host(
     producer = build_hosted_docker_qualification(
         m2_root=m2_root,
         m4_root=m4_root,
+        m5_root=m5_root,
         repository_marker=MARKER,
         tree_sha=tree_sha,
         workflow_run_id=123456,
@@ -451,7 +598,27 @@ def test_hosted_receipt_admits_exact_m2_m4_rows_but_not_missing_clean_host(
     )
 
     admitted_rows = hosted_qualification_admissions(admitted)
-    assert len(hosted_qualification_payloads(admitted)) == 10
+    assert len(hosted_qualification_payloads(admitted)) == 12
+    assert "SW-M5-CHAIN" not in admitted_rows
+
+    materialized = MaterializedChainQualificationReceipt.model_validate_json(
+        (m5_root / "materialized-provider-receipt.json").read_bytes()
+    )
+    substituted = materialized.model_dump(mode="python")
+    first_run = substituted["clean_root_runs"][0]
+    provider_receipt = first_run["provider_run_receipt"]
+    provider_request = provider_receipt["request"]
+    provider_request["plan_digest"] = f"sha256:{'0' * 64}"
+    provider_receipt["request_digest"] = sha256_digest(provider_request)
+    provider_receipt["receipt_digest"] = sha256_digest(
+        {key: value for key, value in provider_receipt.items() if key != "receipt_digest"}
+    )
+    first_run["provider_run_receipt_digest"] = provider_receipt["receipt_digest"]
+    substituted["receipt_digest"] = sha256_digest(
+        {key: value for key, value in substituted.items() if key != "receipt_digest"}
+    )
+    with pytest.raises(ValueError, match="provider composite is incoherent"):
+        MaterializedChainQualificationReceipt.model_validate(substituted)
     assert {
         "M2-W01",
         "M2-W02",
@@ -466,12 +633,14 @@ def test_hosted_receipt_admits_exact_m2_m4_rows_but_not_missing_clean_host(
         "SW-M4-MATERIALIZED",
     } <= set(admitted_rows)
     assert "SW-M2-LIVE" not in admitted_rows
+    assert "SW-M5-CHAIN" not in admitted_rows
 
     (m2_root / "dirty-after.txt").write_bytes(b"untracked\n")
     with pytest.raises(HostedQualificationError, match="dirty state"):
         build_hosted_docker_qualification(
             m2_root=m2_root,
             m4_root=m4_root,
+            m5_root=m5_root,
             repository_marker=MARKER,
             tree_sha=tree_sha,
             workflow_run_id=123456,
@@ -494,7 +663,7 @@ def test_hosted_admission_runs_the_exact_constrained_attestation_command(
         )
     )
     tree_sha = "a" * 40
-    m2_root, m4_root = _hosted_roots(
+    m2_root, m4_root, m5_root = _hosted_roots(
         tmp_path,
         m4=m4,
         marker=MARKER,
@@ -503,6 +672,7 @@ def test_hosted_admission_runs_the_exact_constrained_attestation_command(
     producer = build_hosted_docker_qualification(
         m2_root=m2_root,
         m4_root=m4_root,
+        m5_root=m5_root,
         repository_marker=MARKER,
         tree_sha=tree_sha,
         workflow_run_id=123456,

@@ -48,7 +48,7 @@ def test_candidate_proof_includes_clean_wheel_and_hosted_m2_m4_receipts() -> Non
         'hosted_qualification_admission="$GITHUB_WORKSPACE/artifacts/'
         'qualification-inputs/hosted/hosted-qualification-admission.json"'
     ) in step
-    assert 'foundation qualify-runtime-observation' not in step
+    assert "foundation qualify-runtime-observation" not in step
     assert '--source-root "$GITHUB_WORKSPACE"' in step
     assert 'qualification_cwd="$RUNNER_TEMP/' in step
 

@@ -24,6 +24,10 @@ All notable changes are recorded here. The project has no published tag or GitHu
 - An M3-derived M4 qualification runner that evaluates 24 Ghost candidates, materializes only the
   4-to-2-to-1 promoted subset in real six-provider siblings, binds seven machine-oracle receipts to
   one conserved budget ledger, caps simultaneous allocations at four, and proves zero residue.
+- An exact-byte M5 qualification runner that compiles the complete eight-fragment observed chain,
+  performs five clean-root runs, retains the matching fixed-mode boundary and four controls, and
+  binds a distinct ten-run six-provider transition/restore/destroy witness into hosted evidence
+  without misrepresenting it as one Docker-backed application execution or admitting the row.
 - Fail-closed non-local result admissions: the M3 receipt digest promotes exactly five runtime
   rows, yielding 58 `PASS` / 34 `BLOCKED` only when every declared test and evidence input exists.
 - Candidate payload, checksum, SBOM, receipt, reproducibility, and fresh-downloader tooling.

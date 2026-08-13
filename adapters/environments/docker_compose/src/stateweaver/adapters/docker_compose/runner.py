@@ -59,6 +59,7 @@ _REAL_COMPOSE_OPERATIONS = frozenset(
         (*_REAL_STATE_BRIDGE_PREFIX, "export"),
         (*_REAL_STATE_BRIDGE_PREFIX, "import"),
         (*_REAL_STATE_BRIDGE_PREFIX, "mutate"),
+        (*_REAL_STATE_BRIDGE_PREFIX, "m5-replay"),
     }
 )
 
@@ -210,6 +211,7 @@ def _accepts_state_stdin(exact_argv: tuple[str, ...]) -> bool:
         (*_STATE_BRIDGE_PREFIX, "import"),
         (*_REAL_STATE_BRIDGE_PREFIX, "import"),
         (*_REAL_STATE_BRIDGE_PREFIX, "mutate"),
+        (*_REAL_STATE_BRIDGE_PREFIX, "m5-replay"),
     )
     return any(exact_argv[-len(operation) :] == operation for operation in operations)
 

@@ -133,6 +133,15 @@ jobs:
             --repository-marker "$GITHUB_SHA" \
             --output artifacts/m5-clean-root/observed-chain-receipt.json
 
+      - name: Retain bounded Docker provider witnesses for the exact M5 actions
+        run: |
+          set -euo pipefail
+          uv run stateweaver foundation qualify-materialized-chain \
+            --m4-receipt artifacts/m4-live/materialized-search-receipt.json \
+            --process-receipt artifacts/m5-clean-root/observed-chain-receipt.json \
+            --repository-marker "$GITHUB_SHA" \
+            --output artifacts/m5-clean-root/materialized-provider-receipt.json
+
       - name: Record and enforce cleanup inventory
         if: always()
         run: |
@@ -160,13 +169,14 @@ jobs:
           test ! -s artifacts/m2-live/managed-processes-after.txt
           test ! -s artifacts/m2-live/dirty-after.txt
 
-      - name: Build the exact hosted M2-M4 producer receipt
+      - name: Build hosted M2-M4 qualification with retained M5 receipt
         run: |
           set -euo pipefail
           mkdir -p artifacts/hosted-qualification
           uv run stateweaver foundation qualify-hosted-docker \
             --m2-root artifacts/m2-live \
             --m4-root artifacts/m4-live \
+            --m5-root artifacts/m5-clean-root \
             --repository-marker "$GITHUB_SHA" \
             --tree-sha "$(git rev-parse 'HEAD^{tree}')" \
             --workflow-run-id "$GITHUB_RUN_ID" \
@@ -194,7 +204,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Retain the M5 clean-root replay receipt
+      - name: Retain M5 process replay and bounded provider witnesses
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -203,7 +213,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Retain the hosted M2-M4 producer receipt
+      - name: Retain hosted M2-M4 qualification with M5 receipt
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hosted-docker-qualification-${{ github.run_id }}-${{ github.run_attempt }}
@@ -212,7 +222,7 @@ jobs:
           retention-days: 90
 
   attest-hosted-qualification:
-    name: Attest hosted M2-M4 qualification
+    name: Attest hosted M2-M4 qualification and M5 receipt
     needs: live-provider-worlds
     runs-on: ubuntu-latest
     timeout-minutes: 8

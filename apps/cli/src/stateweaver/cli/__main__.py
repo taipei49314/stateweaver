@@ -28,6 +28,11 @@ from .hosted_qualification import (
     build_hosted_docker_qualification,
     write_hosted_receipt,
 )
+from .materialized_chain_qualification import (
+    MaterializedChainQualificationError,
+    qualify_materialized_chain,
+    write_materialized_chain_qualification,
+)
 from .materialized_search_qualification import (
     qualify_materialized_search,
     write_materialized_search_qualification,
@@ -119,10 +124,11 @@ def _parser() -> argparse.ArgumentParser:
     materialized_search.add_argument("--repository-marker", required=True)
     hosted_docker = foundation_commands.add_parser(
         "qualify-hosted-docker",
-        help="validate and retain exact hosted M2-M4 Docker artifacts",
+        help="validate and retain exact hosted M2-M5 Docker artifacts",
     )
     hosted_docker.add_argument("--m2-root", type=Path, required=True)
     hosted_docker.add_argument("--m4-root", type=Path, required=True)
+    hosted_docker.add_argument("--m5-root", type=Path, required=True)
     hosted_docker.add_argument("--repository-marker", required=True)
     hosted_docker.add_argument("--tree-sha", required=True)
     hosted_docker.add_argument("--workflow-run-id", type=int, required=True)
@@ -146,6 +152,14 @@ def _parser() -> argparse.ArgumentParser:
     observed_chain.add_argument("--m4-receipt", type=Path, required=True)
     observed_chain.add_argument("--repository-marker", required=True)
     observed_chain.add_argument("--output", type=Path, required=True)
+    materialized_chain = foundation_commands.add_parser(
+        "qualify-materialized-chain",
+        help="retain prerequisite-only Docker provider witnesses for exact M5 bytes",
+    )
+    materialized_chain.add_argument("--m4-receipt", type=Path, required=True)
+    materialized_chain.add_argument("--process-receipt", type=Path, required=True)
+    materialized_chain.add_argument("--repository-marker", required=True)
+    materialized_chain.add_argument("--output", type=Path, required=True)
     check = foundation_commands.add_parser(
         "verify-evidence", help="verify hashes and causal bindings in a proof bundle"
     )
@@ -284,6 +298,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             hosted_receipt = build_hosted_docker_qualification(
                 m2_root=arguments.m2_root,
                 m4_root=arguments.m4_root,
+                m5_root=arguments.m5_root,
                 repository_marker=arguments.repository_marker,
                 tree_sha=arguments.tree_sha,
                 workflow_run_id=arguments.workflow_run_id,
@@ -363,6 +378,39 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "clean_root_replays": len(chain_receipt.runs),
                     "qualified": True,
                     "receipt_digest": chain_receipt.receipt_digest,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+
+    if arguments.foundation_command == "qualify-materialized-chain":
+        try:
+            witness = qualify_materialized_chain(
+                m4_receipt_path=arguments.m4_receipt,
+                process_receipt_path=arguments.process_receipt,
+                repository_marker=arguments.repository_marker,
+            )
+            write_materialized_chain_qualification(arguments.output, witness)
+        except (OSError, MaterializedChainQualificationError, RuntimeError, ValueError):
+            print(
+                json.dumps(
+                    {
+                        "qualified": False,
+                        "error": {"code": "materialized_chain_witness_not_retained"},
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 1
+        print(
+            json.dumps(
+                {
+                    "provider_witness_retained": True,
+                    "receipt_digest": witness.receipt_digest,
+                    "sw_m5_chain_admitted": False,
                 },
                 sort_keys=True,
                 separators=(",", ":"),

@@ -1,4 +1,4 @@
-"""Typed admission for exact-SHA GitHub-hosted M2-M4 qualification evidence."""
+"""Typed M2-M4 admission with an exact retained M5 receipt."""
 
 from __future__ import annotations
 
@@ -36,6 +36,10 @@ M2_FOUR_WAY_QUALIFICATION_PATH = "qualification/m2/four-way-receipt.json"
 M2_REAL_PROVIDER_QUALIFICATION_PATH = "qualification/m2/real-provider-receipt.json"
 M2_CLEANUP_QUALIFICATION_PATH = "qualification/m2/cleanup-receipt.json"
 M4_MATERIALIZED_QUALIFICATION_PATH = "qualification/m4/materialized-search-receipt.json"
+M5_OBSERVED_CHAIN_QUALIFICATION_PATH = "qualification/m5/observed-chain-receipt.json"
+M5_MATERIALIZED_PROVIDER_QUALIFICATION_PATH = "qualification/m5/materialized-provider-receipt.json"
+_MAX_HOSTED_PRODUCER_BYTES: Final = 8 * 1_048_576
+_MAX_HOSTED_ADMISSION_BYTES: Final = 16 * 1_048_576
 
 HOSTED_QUALIFICATION_DERIVED_PATHS: Final = (
     M2_LIVE_PROVIDER_QUALIFICATION_PATH,
@@ -47,6 +51,8 @@ HOSTED_QUALIFICATION_DERIVED_PATHS: Final = (
     RUNTIME_OBSERVATION_QUALIFICATION_PATH,
     OBSERVED_FRAGMENT_QUALIFICATION_PATH,
     M4_MATERIALIZED_QUALIFICATION_PATH,
+    M5_OBSERVED_CHAIN_QUALIFICATION_PATH,
+    M5_MATERIALIZED_PROVIDER_QUALIFICATION_PATH,
     HOSTED_QUALIFICATION_ADMISSION_PATH,
 )
 
@@ -82,7 +88,9 @@ class HostedArtifactEntry(_HostedModel):
 
     path: Annotated[
         str,
-        StringConstraints(pattern=r"^(?:m2-live|m4-live)/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"),
+        StringConstraints(
+            pattern=r"^(?:m2-live|m4-live|m5-clean-root)/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        ),
     ]
     role: Annotated[
         str,
@@ -245,11 +253,144 @@ class M4HostedProjection(_HostedModel):
         return self
 
 
+class M5HostedProjection(_HostedModel):
+    """The materialized-provider M5 receipt projected into a hosted admission.
+
+    The process-local M5 receipt is deliberately not sufficient: this projection only
+    exists after the Docker-backed receipt has cross-bound it byte-for-byte.
+    """
+
+    m4_receipt_sha256: Sha256Digest
+    m4_receipt_digest: Sha256Digest
+    process_receipt_sha256: Sha256Digest
+    process_receipt_digest: Sha256Digest
+    materialized_receipt_digest: Sha256Digest
+    provider_runtime: Literal["docker-compose-real-providers@0.1.0"]
+    observed_chain_digest: Sha256Digest
+    compiler_chain_fingerprint: Sha256Digest
+    fragment_ids: tuple[ContractId, ...]
+    replay_plan_digest: Sha256Digest
+    clean_root_run_ids: tuple[str, ...]
+    clean_root_result_digests: tuple[Sha256Digest, ...]
+    patched_result_digest: Sha256Digest
+    patched_failed_step_id: Literal["step.08"]
+    patched_failure_code: Literal["ORACLE_EXPECTATION_MISMATCH"]
+    negative_control_names: tuple[
+        Literal[
+            "masked_response",
+            "mock_only_response",
+            "fresh_session",
+            "same_tenant_document",
+        ],
+        ...,
+    ]
+    negative_controls_digest: Sha256Digest
+    cleanup_count: Literal[10]
+    receipt_digest: Sha256Digest
+
+    @model_validator(mode="after")
+    def _validate_projection(self) -> M5HostedProjection:
+        if (
+            len(self.fragment_ids) != 8
+            or len(set(self.fragment_ids)) != 8
+            or self.clean_root_run_ids
+            != tuple(f"run.m5.clean-root-{index:02d}" for index in range(1, 6))
+            or len(self.clean_root_result_digests) != 5
+            or self.negative_control_names
+            != (
+                "masked_response",
+                "mock_only_response",
+                "fresh_session",
+                "same_tenant_document",
+            )
+        ):
+            raise ValueError("M5 hosted projection is incomplete")
+        return self
+
+
+def _validate_materialized_m5_run(
+    value: object,
+    *,
+    expected_plan: Mapping[str, object],
+    expected_root: Mapping[str, object],
+    expected_run_id: str,
+    expected_status: str,
+    expected_outcome: str,
+    expected_response_status: int,
+) -> tuple[str, str]:
+    """Require one Docker-backed run to retain every action and provider boundary."""
+
+    if not isinstance(value, Mapping):
+        raise ValueError("hosted materialized M5 run is invalid")
+    try:
+        run_id = value["run_id"]
+        root = value["root"]
+        root_digest = value["root_digest"]
+        result = value["result"]
+        action_log = value["action_log"]
+        steps = value["steps"]
+        result_digest = value["result_digest"]
+        action_log_digest = value["action_log_digest"]
+    except KeyError:
+        raise ValueError("hosted materialized M5 run is incomplete") from None
+    plan_steps = expected_plan.get("steps")
+    if (
+        run_id != expected_run_id
+        or not isinstance(root, Mapping)
+        or root != expected_root
+        or root_digest != sha256_digest(root)
+        or not isinstance(result, Mapping)
+        or not isinstance(action_log, list)
+        or not isinstance(steps, list)
+        or not isinstance(plan_steps, list)
+        or not plan_steps
+        or len(action_log) != len(plan_steps)
+        or len(steps) != len(plan_steps)
+        or result.get("status") != expected_status
+        or not isinstance(result_digest, str)
+        or not isinstance(action_log_digest, str)
+        or result_digest != sha256_digest(result)
+        or action_log_digest != sha256_digest(action_log)
+    ):
+        raise ValueError("hosted materialized M5 run does not retain its result")
+    for expected, action, step in zip(plan_steps, action_log, steps, strict=True):
+        if (
+            not isinstance(expected, Mapping)
+            or not isinstance(action, Mapping)
+            or not isinstance(step, Mapping)
+            or action.get("step_id") != expected.get("step_id")
+            or action.get("action") != expected.get("action")
+            or step.get("action") != expected.get("action")
+            or step.get("action_digest") != sha256_digest(expected.get("action"))
+            or type(step.get("response_status")) is not int
+        ):
+            raise ValueError("hosted materialized M5 action log is invalid")
+        captures = step.get("provider_captures")
+        if not isinstance(captures, Mapping) or tuple(sorted(captures)) != _PROVIDERS:
+            raise ValueError("hosted materialized M5 provider capture is incomplete")
+        for provider in _PROVIDERS:
+            capture = captures[provider]
+            if (
+                not isinstance(capture, Mapping)
+                or not isinstance(capture.get("before"), str)
+                or not isinstance(capture.get("after"), str)
+                or capture["before"] == capture["after"]
+            ):
+                raise ValueError("hosted materialized M5 provider capture is invalid")
+    terminal = steps[-1]
+    if (
+        terminal.get("oracle_outcome") != expected_outcome
+        or terminal.get("response_status") != expected_response_status
+    ):
+        raise ValueError("hosted materialized M5 terminal boundary is invalid")
+    return result_digest, action_log_digest
+
+
 class HostedDockerQualificationReceipt(_HostedModel):
     """Producer receipt emitted only after the hosted Docker cleanup gate succeeds."""
 
-    schema_version: Literal["stateweaver-hosted-docker-qualification-v1"]
-    status: Literal["HOSTED_M2_M4_QUALIFIED"]
+    schema_version: Literal["stateweaver-hosted-docker-qualification-v2"]
+    status: Literal["HOSTED_M2_M4_QUALIFIED_M5_RETAINED"]
     repository_url: Literal["https://github.com/taipei49314/stateweaver"]
     repository_marker: str
     tree_sha: str
@@ -267,6 +408,13 @@ class HostedDockerQualificationReceipt(_HostedModel):
     m4_receipt_json: Annotated[str, StringConstraints(min_length=2, max_length=2 * 1_048_576)]
     m4_receipt_sha256: Sha256Digest
     m4: M4HostedProjection
+    m5_receipt_json: Annotated[str, StringConstraints(min_length=2, max_length=4 * 1_048_576)]
+    m5_receipt_sha256: Sha256Digest
+    m5_materialized_receipt_json: Annotated[
+        str, StringConstraints(min_length=2, max_length=4 * 1_048_576)
+    ]
+    m5_materialized_receipt_sha256: Sha256Digest
+    m5: M5HostedProjection
     release_eligible: Literal[False]
     limitations: tuple[str, ...]
     receipt_digest: Sha256Digest
@@ -325,6 +473,210 @@ class HostedDockerQualificationReceipt(_HostedModel):
         unsigned_m4 = {key: value for key, value in raw.items() if key != "receipt_digest"}
         if projection.receipt_digest != sha256_digest(unsigned_m4):
             raise ValueError("hosted M4 receipt semantic digest is invalid")
+        try:
+            raw_m5: object = json.loads(self.m5_receipt_json)
+            if (
+                not isinstance(raw_m5, dict)
+                or canonical_json_bytes(raw_m5).decode("utf-8") != self.m5_receipt_json
+            ):
+                raise ValueError("hosted M5 receipt is not canonical")
+        except (json.JSONDecodeError, EvidenceInputError, UnicodeError, ValueError, RecursionError):
+            raise ValueError("hosted M5 receipt is invalid") from None
+        m5_byte_digest = f"sha256:{hashlib.sha256(self.m5_receipt_json.encode()).hexdigest()}"
+        try:
+            raw_materialized: object = json.loads(self.m5_materialized_receipt_json)
+            if (
+                not isinstance(raw_materialized, dict)
+                or canonical_json_bytes(raw_materialized).decode("utf-8")
+                != self.m5_materialized_receipt_json
+            ):
+                raise ValueError("hosted materialized M5 receipt is not canonical")
+        except (json.JSONDecodeError, EvidenceInputError, UnicodeError, ValueError, RecursionError):
+            raise ValueError("hosted materialized M5 receipt is invalid") from None
+        materialized_byte_digest = (
+            f"sha256:{hashlib.sha256(self.m5_materialized_receipt_json.encode()).hexdigest()}"
+        )
+        m5 = self.m5
+        compiler = raw_m5.get("compiler_admission")
+        compiled_chain = compiler.get("compiled_chain") if isinstance(compiler, dict) else None
+        runs = raw_m5.get("runs")
+        patched = raw_m5.get("patched_run")
+        controls = raw_m5.get("negative_controls")
+        if (
+            not isinstance(compiler, dict)
+            or not isinstance(compiled_chain, dict)
+            or not isinstance(runs, list)
+            or not isinstance(patched, dict)
+            or not isinstance(controls, list)
+        ):
+            raise ValueError("hosted M5 receipt shape is invalid")
+        try:
+            process_run_ids = tuple(item["run_id"] for item in runs)
+            control_names = tuple(item["name"] for item in controls)
+            patched_steps = patched["steps"]
+            patched_failure = patched_steps[-1]["failure_code"]
+        except (IndexError, KeyError, TypeError):
+            raise ValueError("hosted M5 projection is invalid") from None
+        materialized_runs = raw_materialized.get("clean_root_runs")
+        materialized_controls = raw_materialized.get("negative_controls")
+        materialized_patched = raw_materialized.get("patched_run")
+        cleanup = raw_materialized.get("cleanup")
+        if (
+            not isinstance(materialized_runs, list)
+            or not isinstance(materialized_controls, list)
+            or not isinstance(materialized_patched, dict)
+            or not isinstance(cleanup, dict)
+        ):
+            raise ValueError("hosted materialized M5 receipt shape is invalid")
+        try:
+            materialized_run_ids = tuple(item["run_id"] for item in materialized_runs)
+            materialized_result_digests = tuple(item["result_digest"] for item in materialized_runs)
+            materialized_control_names = tuple(item["name"] for item in materialized_controls)
+        except (KeyError, TypeError):
+            raise ValueError("hosted materialized M5 projection is invalid") from None
+        replay_plan = raw_m5.get("replay_plan")
+        if not isinstance(replay_plan, Mapping):
+            raise ValueError("hosted M5 replay plan is invalid")
+        if raw_materialized.get("plan") != replay_plan:
+            raise ValueError("hosted materialized M5 plan is not exact")
+        for run, expected_run_id in zip(materialized_runs, process_run_ids, strict=True):
+            _validate_materialized_m5_run(
+                run,
+                expected_plan=replay_plan,
+                expected_root=raw_m5["clean_root"],
+                expected_run_id=expected_run_id,
+                expected_status="succeeded",
+                expected_outcome="VIOLATED",
+                expected_response_status=200,
+            )
+        _validate_materialized_m5_run(
+            materialized_patched,
+            expected_plan=replay_plan,
+            expected_root=raw_m5["patched_root"],
+            expected_run_id="run.m5.patched-01",
+            expected_status="failed",
+            expected_outcome="SATISFIED",
+            expected_response_status=403,
+        )
+        expected_controls = tuple(item.get("name") for item in controls)
+        if materialized_control_names != expected_controls:
+            raise ValueError("hosted materialized M5 controls are substituted")
+        for control_index, (materialized_control, process_control) in enumerate(
+            zip(materialized_controls, controls, strict=True)
+        ):
+            if not isinstance(process_control, Mapping) or not isinstance(
+                materialized_control, Mapping
+            ):
+                raise ValueError("hosted materialized M5 control is invalid")
+            expected_result = process_control.get("result")
+            if not isinstance(expected_result, Mapping):
+                raise ValueError("hosted process M5 control is invalid")
+            process_steps = expected_result.get("steps")
+            if not isinstance(process_steps, list) or not process_steps:
+                raise ValueError("hosted process M5 control result is invalid")
+            process_terminal = process_steps[-1]
+            observations = (
+                process_terminal.get("observations")
+                if isinstance(process_terminal, Mapping)
+                else None
+            )
+            status = None
+            if isinstance(observations, list) and observations:
+                payload = (
+                    observations[-1].get("payload")
+                    if isinstance(observations[-1], Mapping)
+                    else None
+                )
+                status = payload.get("response_status") if isinstance(payload, Mapping) else None
+            process_plan = process_control.get("plan")
+            if (
+                not isinstance(process_plan, Mapping)
+                or materialized_control.get("plan") != process_plan
+            ):
+                raise ValueError("hosted materialized M5 control plan is not exact")
+            _validate_materialized_m5_run(
+                materialized_control,
+                expected_plan=process_plan,
+                expected_root=process_control["root"],
+                expected_run_id=f"run.m5.control-{materialized_control_names[control_index]}",
+                expected_status="succeeded",
+                expected_outcome=str(process_control.get("expected_outcome")),
+                expected_response_status=status if type(status) is int else -1,
+            )
+        if (
+            m5_byte_digest != self.m5_receipt_sha256
+            or materialized_byte_digest != self.m5_materialized_receipt_sha256
+            or raw_m5.get("schema_version") != "stateweaver-m5-observed-chain-qualification-v2"
+            or raw_m5.get("status") != "VULNERABLE_PATCHED_CONTROLS_QUALIFIED"
+            or raw_m5.get("repository_marker") != self.repository_marker
+            or raw_m5.get("m4_receipt_json") != self.m4_receipt_json
+            or raw_m5.get("m4_receipt_sha256") != m5.m4_receipt_sha256
+            or raw_m5.get("m4_receipt_digest") != m5.m4_receipt_digest
+            or raw_m5.get("observed_chain_digest") != m5.observed_chain_digest
+            or compiler.get("chain_fingerprint") != m5.compiler_chain_fingerprint
+            or tuple(compiled_chain.get("fragment_ids", ())) != m5.fragment_ids
+            or raw_m5.get("replay_plan_digest") != m5.replay_plan_digest
+            or process_run_ids != m5.clean_root_run_ids
+            or patched.get("failed_step_id") != m5.patched_failed_step_id
+            or patched_failure != m5.patched_failure_code
+            or control_names != m5.negative_control_names
+            or raw_m5.get("negative_controls_digest") != m5.negative_controls_digest
+            or raw_m5.get("cleanup_count") != m5.cleanup_count
+            or raw_m5.get("network_denied_attempts") != 0
+            or raw_m5.get("release_eligible") is not False
+            or raw_m5.get("receipt_digest") != m5.receipt_digest
+            or raw_materialized.get("schema_version")
+            != "stateweaver-m5-materialized-provider-qualification-v1"
+            or raw_materialized.get("status") != "M5_MATERIALIZED_PROVIDER_WITNESS_RETAINED"
+            or raw_materialized.get("repository_marker") != self.repository_marker
+            or raw_materialized.get("provider_runtime") != m5.provider_runtime
+            or tuple(raw_materialized.get("provider_names", ())) != _PROVIDERS
+            or raw_materialized.get("m4_receipt_json") != self.m4_receipt_json
+            or raw_materialized.get("m4_receipt_sha256") != m5.m4_receipt_sha256
+            or raw_materialized.get("m4_receipt_digest") != m5.m4_receipt_digest
+            or raw_materialized.get("m4_winner_provider_state_digest")
+            != next(
+                (
+                    item.get("provider_state_digest")
+                    for item in provider_receipts
+                    if isinstance(item, Mapping)
+                    and isinstance(item.get("request"), Mapping)
+                    and item["request"].get("candidate_id") == projection.winner_candidate_id
+                    and item["request"].get("target_tier") == "materialized"
+                ),
+                None,
+            )
+            or raw_materialized.get("process_receipt_json") != self.m5_receipt_json
+            or raw_materialized.get("process_receipt_sha256") != m5.process_receipt_sha256
+            or raw_materialized.get("process_receipt_digest") != m5.process_receipt_digest
+            or raw_materialized.get("plan_digest") != m5.replay_plan_digest
+            or materialized_run_ids != m5.clean_root_run_ids
+            or materialized_result_digests != m5.clean_root_result_digests
+            or materialized_patched.get("result_digest") != m5.patched_result_digest
+            or not isinstance(materialized_patched.get("result"), Mapping)
+            or materialized_patched["result"].get("failed_step_id") != m5.patched_failed_step_id
+            or not isinstance(materialized_patched["result"].get("steps"), list)
+            or not materialized_patched["result"]["steps"]
+            or materialized_patched["result"]["steps"][-1].get("failure_code")
+            != m5.patched_failure_code
+            or materialized_control_names != m5.negative_control_names
+            or raw_materialized.get("cleanup_count") != m5.cleanup_count
+            or cleanup.get("status") != "PASS"
+            or cleanup.get("destroyed") is not True
+            or cleanup.get("residual_containers") != 0
+            or cleanup.get("residual_networks") != 0
+            or cleanup.get("residual_volumes") != 0
+            or raw_materialized.get("receipt_digest") != m5.materialized_receipt_digest
+        ):
+            raise ValueError("hosted M5 receipt does not match its projection")
+        unsigned_m5 = {key: value for key, value in raw_m5.items() if key != "receipt_digest"}
+        if m5.receipt_digest != sha256_digest(unsigned_m5):
+            raise ValueError("hosted M5 receipt semantic digest is invalid")
+        unsigned_materialized = {
+            key: value for key, value in raw_materialized.items() if key != "receipt_digest"
+        }
+        if m5.materialized_receipt_digest != sha256_digest(unsigned_materialized):
+            raise ValueError("hosted materialized M5 receipt semantic digest is invalid")
         expected = sha256_digest(self.model_dump(mode="python", exclude={"receipt_digest"}))
         if self.receipt_digest != expected:
             raise ValueError("hosted Docker qualification receipt digest is invalid")
@@ -361,10 +713,10 @@ class HostedAttestationVerification(_HostedModel):
 class HostedQualificationAdmissionReceipt(_HostedModel):
     """Consumer-side admission retained in the acceptance proof."""
 
-    schema_version: Literal["stateweaver-hosted-qualification-admission-v1"]
+    schema_version: Literal["stateweaver-hosted-qualification-admission-v2"]
     status: Literal["HOSTED_QUALIFICATION_ADMITTED"]
     qualification_receipt_json: Annotated[
-        str, StringConstraints(min_length=2, max_length=4 * 1_048_576)
+        str, StringConstraints(min_length=2, max_length=_MAX_HOSTED_PRODUCER_BYTES)
     ]
     qualification_receipt_sha256: Sha256Digest
     attestation: HostedAttestationVerification
@@ -435,7 +787,7 @@ def load_hosted_qualification_admission(
         content = path.read_bytes()
     except OSError:
         raise HostedQualificationError("hosted qualification admission is invalid") from None
-    if size != len(content) or not 1 <= size <= 4 * 1_048_576:
+    if size != len(content) or not 1 <= size <= _MAX_HOSTED_ADMISSION_BYTES:
         raise HostedQualificationError("hosted qualification admission is invalid")
     try:
         parsed: object = json.loads(content.decode("utf-8"))
@@ -467,7 +819,7 @@ def load_hosted_docker_qualification(
         content = path.read_bytes()
     except OSError:
         raise HostedQualificationError("hosted Docker qualification receipt is invalid") from None
-    if size != len(content) or not 1 <= size <= 4 * 1_048_576:
+    if size != len(content) or not 1 <= size <= _MAX_HOSTED_PRODUCER_BYTES:
         raise HostedQualificationError("hosted Docker qualification receipt is invalid")
     try:
         parsed: object = json.loads(content.decode("utf-8"))
@@ -508,7 +860,7 @@ def hosted_qualification_test_identities(
 def hosted_qualification_admissions(
     admission: HostedQualificationAdmissionReceipt,
 ) -> dict[str, str]:
-    """Return the exact M2-M4 registry rows proven by this hosted run."""
+    """Return only the exact M2-M4 registry rows proven by this hosted run."""
 
     digest = admission.admission_digest
     admitted = dict.fromkeys(
@@ -548,6 +900,8 @@ def hosted_qualification_payloads(
     }
     runtime = qualification.m4.m3_qualification
     raw_m4 = json.loads(qualification.m4_receipt_json)
+    raw_m5 = json.loads(qualification.m5_receipt_json)
+    raw_materialized_m5 = json.loads(qualification.m5_materialized_receipt_json)
     return {
         M2_LIVE_PROVIDER_QUALIFICATION_PATH: {
             "schema_version": "stateweaver-m2-live-provider-qualification-v1",
@@ -598,6 +952,8 @@ def hosted_qualification_payloads(
         RUNTIME_OBSERVATION_QUALIFICATION_PATH: runtime.model_dump(mode="json"),
         OBSERVED_FRAGMENT_QUALIFICATION_PATH: observed_fragment_qualification_payload(runtime),
         M4_MATERIALIZED_QUALIFICATION_PATH: raw_m4,
+        M5_OBSERVED_CHAIN_QUALIFICATION_PATH: raw_m5,
+        M5_MATERIALIZED_PROVIDER_QUALIFICATION_PATH: raw_materialized_m5,
         HOSTED_QUALIFICATION_ADMISSION_PATH: admission.model_dump(mode="json"),
     }
 
@@ -617,6 +973,7 @@ __all__ = [
     "M2ProviderWorld",
     "M2RealProviderObservation",
     "M4HostedProjection",
+    "M5HostedProjection",
     "hosted_qualification_admissions",
     "hosted_qualification_payloads",
     "hosted_qualification_test_identities",

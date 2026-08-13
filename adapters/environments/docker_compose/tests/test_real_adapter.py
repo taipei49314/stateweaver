@@ -9,13 +9,25 @@ from pathlib import Path
 import pytest
 from stateweaver.adapters.docker_compose import (
     ComposeAdapterError,
+    M5MaterializedProviderRunRequest,
     MaterializedCandidateRequest,
     ProcessResult,
     RealDockerComposeEnvironmentAdapter,
 )
 from stateweaver.adapters.docker_compose import runner as runner_module
 from stateweaver.adapters.docker_compose.runner import require_exact_argv
-from stateweaver.contracts import WorldTier, sha256_digest
+from stateweaver.contracts import (
+    ActionEnvelope,
+    ActionTarget,
+    HttpMethod,
+    HttpRequestAction,
+    RequestedBy,
+    RequesterType,
+    RiskClass,
+    ScopeAction,
+    WorldTier,
+    sha256_digest,
+)
 from stateweaver.worlds import CapabilityLevel, EnvironmentHandle, TargetSpec
 
 _IMAGE_ID = f"sha256:{'4' * 64}"
@@ -139,6 +151,42 @@ class _RealRunner:
                 returncode=0,
                 stdout='{"accepted":true,"schema_version":"2.0"}',
             )
+        if operation == (*_BRIDGE, "m5-replay"):
+            assert stdin is not None
+            request = json.loads(stdin)
+            steps: list[dict[str, object]] = []
+            for sequence, item in enumerate(request["actions"], start=1):
+                before_archive = _archive(deepcopy(self.states[project]))
+                envelope = item["envelope"]
+                marker = f"m5-{sequence}-{item['action_digest'].removeprefix('sha256:')[:48]}"
+                self.states[project] = _components(marker, tick=sequence)
+                after_archive = _archive(deepcopy(self.states[project]))
+                boundary = request["scenario"]
+                terminal = sequence == len(request["actions"])
+                outcome = {
+                    "primary_vulnerable": "VIOLATED",
+                    "primary_patched": "SATISFIED",
+                    "masked_response": "SATISFIED",
+                    "mock_only_response": "INCONCLUSIVE",
+                    "fresh_session": "SATISFIED",
+                    "same_tenant_document": "SATISFIED",
+                }[boundary]
+                status = 403 if boundary in {"primary_patched", "fresh_session"} else 200
+                steps.append(
+                    {
+                        "step_id": f"step.{sequence:02d}",
+                        "action_id": envelope["action_id"],
+                        "action_digest": item["action_digest"],
+                        "response_status": status if terminal else 200,
+                        "oracle_outcome": outcome if terminal else "INCONCLUSIVE",
+                        "before": json.loads(before_archive),
+                        "after": json.loads(after_archive),
+                    }
+                )
+            return ProcessResult(
+                returncode=0,
+                stdout=json.dumps({"accepted": True, "schema_version": "m5.1", "steps": steps}),
+            )
         raise AssertionError(f"unexpected operation: {operation!r}")
 
     @staticmethod
@@ -148,6 +196,52 @@ class _RealRunner:
 
 def _target() -> TargetSpec:
     return TargetSpec(target_id="real-provider-demo", target_version="1.0.0")
+
+
+def _m5_actions() -> tuple[ActionEnvelope, ...]:
+    routes = (
+        ("POST", "/v1/lab/session/retain", "identity:test_user_a"),
+        ("POST", "/v1/lab/authorization-cache/prime", "identity:test_user_a"),
+        ("POST", "/v1/lab/admin/role-downgrade", "identity:test_admin"),
+        ("POST", "/v1/lab/admin/queue/defer", "identity:test_admin"),
+        ("POST", "/v1/lab/references/publish", "identity:test_user_b"),
+        ("POST", "/v1/lab/references/claim", "identity:test_user_a"),
+        ("POST", "/v1/lab/admin/clock/advance", "identity:test_admin"),
+        ("GET", "/v1/lab/documents/doc-b-protected", "identity:test_user_a"),
+    )
+    artifacts = (
+        "artifact:lab-action/7eb1f0de12757921da8a4c72e6205da5c9eee1e91734f4366654944f63bbdb1c",
+        "artifact:lab-action/b0ce666d62a32abda4c7d728015ad28c3ab8921076d6e809de07430b379f3529",
+        "artifact:lab-action/eb306cd87f03c6effeefe57f28108524403b1a5b29879c2f6dcd2bdb1031f4ac",
+        "artifact:lab-action/717cf353f0d600b8219233ff9d8c3b550d7d7732be451ba927ea69980377a23d",
+        "artifact:lab-action/4239662eb56eacaf0f99ad44fbd07114e7a11dd7a8a22b0a2807187c96bddb6a",
+        "artifact:lab-action/5561a3981cf6bd0787214e8df26bcdc920f94682a0cbf368f6551f6ba2caa1b9",
+        "artifact:lab-action/c695724e7257cda434bc3af760f2c95c6076a62f19f0427bb1dbac412b828882",
+        "artifact:lab-action/bfa39df7d04dfdb24507fff3bbe7a9737f9704aecbe91a0c0d7103dffc0db8a9",
+    )
+    return tuple(
+        ActionEnvelope(
+            action_id=f"action.m5.test-{index:02d}",
+            experiment_id="experiment.m5.test",
+            world_id="world.m5.test",
+            scope_action=ScopeAction.HTTP_REQUEST,
+            action=HttpRequestAction(
+                method=HttpMethod(method),
+                target=ActionTarget(scheme="http", host="localhost", port=80, path=path),
+                body_artifact=artifacts[index - 1],
+                identity_handle=identity,
+                expected_statuses=(200, 403) if index == 8 else (200,),
+            ),
+            risk_class=(
+                RiskClass.PASSIVE if method == "GET" else RiskClass.REVERSIBLE_STATE_CHANGE
+            ),
+            idempotency_key=sha256_digest({"m5": index}),
+            requested_by=RequestedBy(type=RequesterType.WORKFLOW, role="m5_test"),
+            policy_decision_ref=f"policy.m5.test-{index:02d}",
+            sequence=index,
+        )
+        for index, (method, path, identity) in enumerate(routes, start=1)
+    )
 
 
 def _real_compose_argv(*operation: str) -> tuple[str, ...]:
@@ -305,6 +399,60 @@ async def test_real_profile_materializes_one_closed_observed_candidate() -> None
 
     await adapter.destroy(child)
     await adapter.destroy(root)
+
+
+@pytest.mark.asyncio
+async def test_m5_provider_replay_rebuilds_winner_and_restores_providers() -> None:
+    runner = _RealRunner()
+    adapter = RealDockerComposeEnvironmentAdapter(runner=runner)
+    root = await adapter.prepare(_target())
+    snapshot = await adapter.snapshot(root)
+    winner = await adapter.fork(snapshot)
+    m4 = await adapter.materialize_observed_candidate(
+        winner,
+        MaterializedCandidateRequest(
+            allocation_id="allocation.m4.replay.aaaaaaaaaaaaaaaa.07",
+            candidate_id="candidate.m4.aaaaaaaaaaaaaaaa.07",
+            source_tier=WorldTier.GHOST,
+            target_tier=WorldTier.REPLAY,
+            candidate_fingerprint=sha256_digest({"candidate": 7}),
+            observed_transition_digest=sha256_digest({"transition": "observed"}),
+            evidence_ref="evidence.m3.observed",
+            oracle_ref="oracle.m4.provider-delta.aaaaaaaaaaaaaaaa.07",
+            ordinal=7,
+        ),
+    )
+    request = M5MaterializedProviderRunRequest(
+        repository_marker="4" * 40,
+        m4_provider_receipt=m4,
+        m4_receipt_sha256=sha256_digest({"m4": "bytes"}),
+        m4_receipt_digest=sha256_digest({"m4": "receipt"}),
+        process_receipt_sha256=sha256_digest({"m5": "process-bytes"}),
+        process_receipt_digest=sha256_digest({"m5": "process-receipt"}),
+        plan_id="plan.m5.clean-root",
+        root_seed_id="root.m5.clean-root",
+        root_digest=sha256_digest({"root": 1}),
+        plan_digest=sha256_digest({"plan": 1}),
+        run_id="run.m5.provider-clean-root-01",
+        scenario="primary_vulnerable",
+        mode="vulnerable",
+        actions=_m5_actions(),
+        expected_oracle_outcome="VIOLATED",
+        expected_response_status=200,
+    )
+
+    receipt = await adapter.run_m5_materialized_provider(request)
+
+    assert len(receipt.steps) == 8
+    assert receipt.steps[-1].oracle_outcome == "VIOLATED"
+    assert receipt.steps[-1].response_status == 200
+    assert {item.provider: item.sha256 for item in receipt.restored_provider_state} == {
+        item.provider: item.after_sha256 for item in m4.providers
+    }
+    await adapter.destroy(winner)
+    await adapter.destroy(root)
+    assert runner.states == {}
+    assert runner.running == {}
 
 
 @pytest.mark.asyncio

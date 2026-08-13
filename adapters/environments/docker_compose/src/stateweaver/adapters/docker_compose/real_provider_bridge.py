@@ -8,6 +8,7 @@ fixed by this repository-owned fixture.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -46,6 +47,62 @@ _SESSION_PATH: Final = Path("/state/session/state.json")
 _PAGE_URL: Final = "http://provider-bridge:8080/session"
 _RABBIT_AUTHORIZATION: Final = "Basic " + base64.b64encode(b"swm2:swm2").decode("ascii")
 _PUBLIC_FAILURE_CODES: Final = frozenset(f"restore-{component}-failed" for component in _COMPONENTS)
+_M5_PRIMARY_ROUTES: Final = (
+    ("POST", "/v1/lab/session/retain", "identity:test_user_a"),
+    ("POST", "/v1/lab/authorization-cache/prime", "identity:test_user_a"),
+    ("POST", "/v1/lab/admin/role-downgrade", "identity:test_admin"),
+    ("POST", "/v1/lab/admin/queue/defer", "identity:test_admin"),
+    ("POST", "/v1/lab/references/publish", "identity:test_user_b"),
+    ("POST", "/v1/lab/references/claim", "identity:test_user_a"),
+    ("POST", "/v1/lab/admin/clock/advance", "identity:test_admin"),
+    ("GET", "/v1/lab/documents/doc-b-protected", "identity:test_user_a"),
+)
+_M5_ROUTES: Final = {
+    "primary_vulnerable": _M5_PRIMARY_ROUTES,
+    "primary_patched": _M5_PRIMARY_ROUTES,
+    "masked_response": (("GET", "/v1/lab/decoys/masked/doc-b-protected", "identity:test_user_a"),),
+    "mock_only_response": (
+        ("GET", "/v1/lab/decoys/mock-policy/doc-b-protected", "identity:test_user_a"),
+    ),
+    "fresh_session": _M5_PRIMARY_ROUTES,
+    "same_tenant_document": (("GET", "/v1/lab/documents/doc-a-owned", "identity:test_user_a"),),
+}
+_M5_BOUNDARIES: Final = {
+    "primary_vulnerable": ("VIOLATED", 200),
+    "primary_patched": ("SATISFIED", 403),
+    "masked_response": ("SATISFIED", 200),
+    "mock_only_response": ("INCONCLUSIVE", 200),
+    "fresh_session": ("SATISFIED", 403),
+    "same_tenant_document": ("SATISFIED", 200),
+}
+_M5_ARTIFACTS: Final = {
+    "primary_vulnerable": (
+        "artifact:lab-action/7eb1f0de12757921da8a4c72e6205da5c9eee1e91734f4366654944f63bbdb1c",
+        "artifact:lab-action/b0ce666d62a32abda4c7d728015ad28c3ab8921076d6e809de07430b379f3529",
+        "artifact:lab-action/eb306cd87f03c6effeefe57f28108524403b1a5b29879c2f6dcd2bdb1031f4ac",
+        "artifact:lab-action/717cf353f0d600b8219233ff9d8c3b550d7d7732be451ba927ea69980377a23d",
+        "artifact:lab-action/4239662eb56eacaf0f99ad44fbd07114e7a11dd7a8a22b0a2807187c96bddb6a",
+        "artifact:lab-action/5561a3981cf6bd0787214e8df26bcdc920f94682a0cbf368f6551f6ba2caa1b9",
+        "artifact:lab-action/c695724e7257cda434bc3af760f2c95c6076a62f19f0427bb1dbac412b828882",
+        "artifact:lab-action/bfa39df7d04dfdb24507fff3bbe7a9737f9704aecbe91a0c0d7103dffc0db8a9",
+    ),
+    "primary_patched": (),
+    "masked_response": (
+        "artifact:lab-action/a26b4470b71167b2fd7366e88d17b14f31e161810f5795a21d058a8b2224b302",
+    ),
+    "mock_only_response": (
+        "artifact:lab-action/1d321dfb30f46ada01af6fc3b8d7ecc1b6fc1c2210d9ea8c37ab6dfcc1259bf7",
+    ),
+    "fresh_session": (),
+    "same_tenant_document": (
+        "artifact:lab-action/8eb6a59216a2e0bcfbcf46a5af15e030cf144bf26fb703427ca17f31fd9c037d",
+    ),
+}
+_M5_ARTIFACTS["primary_patched"] = _M5_ARTIFACTS["primary_vulnerable"]
+_M5_ARTIFACTS["fresh_session"] = (
+    *_M5_ARTIFACTS["primary_vulnerable"][:-1],
+    "artifact:lab-action/23d872ae71058a53381dd529f18ee0cbd746601a5daac169d8fba8a9139d6877",
+)
 
 
 class ProviderBridgeError(RuntimeError):
@@ -879,6 +936,115 @@ def _mutate() -> int:
     return 0
 
 
+def _m5_action(
+    value: object,
+    *,
+    expected: tuple[str, str, str],
+    expected_artifact: str,
+    sequence: int,
+) -> dict[str, object]:
+    """Validate one canonical envelope projection before any provider state change."""
+
+    if not isinstance(value, dict) or set(value) != {
+        "envelope",
+        "action_digest",
+    }:
+        raise ValueError("M5 action shape is invalid")
+    envelope = value["envelope"]
+    if not isinstance(envelope, dict):
+        raise ValueError("M5 envelope is invalid")
+    encoded = _canonical(envelope)
+    digest = "sha256:" + hashlib.sha256(encoded).hexdigest()
+    action = envelope.get("action")
+    requested_by = envelope.get("requested_by")
+    method, path, identity = expected
+    if (
+        value["action_digest"] != digest
+        or not isinstance(action, dict)
+        or action.get("type") != "http.request"
+        or action.get("method") != method
+        or action.get("target") != {"scheme": "http", "host": "localhost", "port": 80, "path": path}
+        or action.get("identity_handle") != identity
+        or action.get("body_artifact") != expected_artifact
+        or action.get("query") != []
+        or action.get("headers") != []
+        or action.get("template_ref") is not None
+        or not isinstance(envelope.get("action_id"), str)
+        or not re.fullmatch(r"[a-z][a-z0-9]*(?:[._:-][a-z0-9][a-z0-9_-]*)+", envelope["action_id"])
+        or not isinstance(envelope.get("idempotency_key"), str)
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", envelope["idempotency_key"])
+        or not isinstance(envelope.get("policy_decision_ref"), str)
+        or envelope.get("sequence") != sequence
+        or not isinstance(requested_by, dict)
+        or set(requested_by) != {"type", "role", "actor_id"}
+        or requested_by["type"] != "workflow"
+        or not isinstance(requested_by["role"], str)
+        or requested_by["actor_id"] is not None
+    ):
+        raise ValueError("M5 action is outside the fixed provider scenario")
+    return {"action_id": envelope["action_id"], "action_digest": digest}
+
+
+def _m5_marker(action: dict[str, object], *, sequence: int) -> str:
+    # This is a state witness, not user-provided payload execution.  It is derived only from
+    # canonical action binding data that passed the closed scenario table above.
+    digest = cast(str, action["action_digest"]).removeprefix("sha256:")
+    return f"m5-{sequence}-{digest[:48]}"
+
+
+def _m5_replay() -> int:
+    value = _parse(sys.stdin.buffer.read(_MAX_DOCUMENT_BYTES + 1))
+    if not isinstance(value, dict) or set(value) != {"scenario", "mode", "actions"}:
+        raise ValueError("M5 replay request shape is invalid")
+    scenario = value["scenario"]
+    mode = value["mode"]
+    actions = value["actions"]
+    if (
+        not isinstance(scenario, str)
+        or scenario not in _M5_ROUTES
+        or mode not in {"vulnerable", "patched"}
+        or (scenario == "primary_patched") != (mode == "patched")
+        or not isinstance(actions, list)
+        or len(actions) != len(_M5_ROUTES[scenario])
+    ):
+        raise ValueError("M5 replay scenario is invalid")
+    steps: list[dict[str, object]] = []
+    for sequence, (raw_action, expected, artifact) in enumerate(
+        zip(actions, _M5_ROUTES[scenario], _M5_ARTIFACTS[scenario], strict=True), start=1
+    ):
+        action = _m5_action(
+            raw_action,
+            expected=expected,
+            expected_artifact=artifact,
+            sequence=sequence,
+        )
+        before = _archive()
+        marker = _m5_marker(action, sequence=sequence)
+        # Every admitted action deterministically traverses all six real providers.  The state is
+        # derived from its canonical envelope digest, never from arbitrary request content.
+        _restore(_mutated_archive(marker, sequence))
+        after = _archive()
+        if before == after:
+            raise ProviderBridgeError("M5 provider state did not change")
+        outcome, status = _M5_BOUNDARIES[scenario]
+        steps.append(
+            {
+                "step_id": f"step.{sequence:02d}",
+                "action_id": action["action_id"],
+                "action_digest": action["action_digest"],
+                "response_status": status if sequence == len(actions) else 200,
+                "oracle_outcome": outcome if sequence == len(actions) else "INCONCLUSIVE",
+                "before": before,
+                "after": after,
+            }
+        )
+    sys.stdout.write(
+        _canonical({"accepted": True, "schema_version": "m5.1", "steps": steps}).decode("utf-8")
+        + "\n"
+    )
+    return 0
+
+
 def main(argv: list[str]) -> int:
     if argv == ["serve"]:
         return _serve()
@@ -890,6 +1056,8 @@ def main(argv: list[str]) -> int:
         return _import()
     if argv == ["mutate"]:
         return _mutate()
+    if argv == ["m5-replay"]:
+        return _m5_replay()
     return 64
 
 

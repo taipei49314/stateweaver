@@ -10,6 +10,7 @@ from stateweaver.adapters.in_process_lab import (
     CANONICAL_RANDOM_SEED,
     FixedLabActionRegistry,
     InProcessLabEnvironment,
+    LabAction,
     PolicyAuthorization,
     lab_action_artifact,
     lab_http_action_spec,
@@ -62,12 +63,25 @@ from stateweaver.policy import BudgetSnapshot, PolicyRequest, evaluate_policy
 from stateweaver.replay import canonical_sha256
 from stateweaver.twin import SecuritySemanticTwinBuilder, TelemetryFlow, TwinBuildInput
 from stateweaver_lab import LabMode
+from stateweaver_lab.fixtures import FixtureBearer
 from stateweaver_lab.models import (
+    AdvanceClockLabAction,
+    AdvanceClockRequest,
+    ClaimReferenceLabAction,
+    ClaimReferenceRequest,
+    DeferQueueLabAction,
+    DelayQueueRequest,
     DocumentId,
     DowngradeRoleLabAction,
     PrimeAuthorizationCacheLabAction,
     PrimeAuthorizationCacheRequest,
     PrincipalId,
+    PublishReferenceLabAction,
+    PublishReferenceRequest,
+    QueueJobId,
+    ReadDocumentLabAction,
+    ReadDocumentRequest,
+    ReferenceId,
     RetainSessionLabAction,
     Role,
     RoleDowngradeRequest,
@@ -76,7 +90,7 @@ from stateweaver_lab.models import (
 from .network_guard import deny_network_egress
 
 _EVALUATED_AT = datetime(2026, 7, 29, tzinfo=UTC)
-_LAB_ACTIONS = (
+OBSERVED_LAB_ACTIONS: tuple[LabAction, ...] = (
     RetainSessionLabAction(),
     PrimeAuthorizationCacheLabAction(
         payload=PrimeAuthorizationCacheRequest(document_id=DocumentId.TENANT_A_OWNED)
@@ -88,12 +102,34 @@ _LAB_ACTIONS = (
             propagation="queued",
         )
     ),
+    DeferQueueLabAction(
+        payload=DelayQueueRequest(job_id=QueueJobId.ROLE_SYNC_A, delay_seconds=240)
+    ),
+    PublishReferenceLabAction(
+        payload=PublishReferenceRequest(
+            document_id=DocumentId.TENANT_B_PROTECTED,
+            recipient_id=PrincipalId.A_EDITOR,
+        )
+    ),
+    ClaimReferenceLabAction(payload=ClaimReferenceRequest(reference_id=ReferenceId.B_TO_A)),
+    AdvanceClockLabAction(payload=AdvanceClockRequest(seconds=90)),
+    ReadDocumentLabAction(
+        actor=FixtureBearer.TENANT_A_OLD_EDITOR,
+        payload=ReadDocumentRequest(document_id=DocumentId.TENANT_B_PROTECTED),
+    ),
 )
-_OBSERVED_CHAIN_LENGTH = 3
+OBSERVED_CHAIN_LENGTH = 8
+
+
+def _write_count_before(ordinal: int) -> int:
+    return sum(
+        lab_http_action_spec(item).method.value not in {"GET", "HEAD", "OPTIONS"}
+        for item in OBSERVED_LAB_ACTIONS[: ordinal - 1]
+    )
 
 
 def _action_envelope(ordinal: int = 1) -> ActionEnvelope:
-    lab_action = _LAB_ACTIONS[ordinal - 1]
+    lab_action = OBSERVED_LAB_ACTIONS[ordinal - 1]
     spec = lab_http_action_spec(lab_action)
     action_id = f"action.runtime.qualification.observed-{ordinal:02d}"
     return ActionEnvelope(
@@ -113,7 +149,11 @@ def _action_envelope(ordinal: int = 1) -> ActionEnvelope:
             identity_handle=spec.identity_handle,
             expected_statuses=spec.expected_statuses,
         ),
-        risk_class=RiskClass.REVERSIBLE_STATE_CHANGE,
+        risk_class=(
+            RiskClass.PASSIVE
+            if spec.method.value in {"GET", "HEAD", "OPTIONS"}
+            else RiskClass.REVERSIBLE_STATE_CHANGE
+        ),
         idempotency_key=canonical_sha256(
             {"action_id": action_id, "purpose": "runtime-qualification"}
         ),
@@ -140,12 +180,12 @@ def _policy_request(envelope: ActionEnvelope, ordinal: int = 1) -> PolicyRequest
                     ),
                 )
             ),
-            identities=ScopeIdentities(allowed=("test_user_a", "test_admin")),
+            identities=ScopeIdentities(allowed=("test_user_a", "test_user_b", "test_admin")),
             actions=ScopeActions(allow=(ScopeAction.HTTP_REQUEST,)),
             limits=ScopeLimits(
                 requestsPerSecond=10.0,
                 concurrentMaterializedWorlds=1,
-                maxWriteRequests=4,
+                maxWriteRequests=8,
             ),
             validity=ScopeValidity(
                 notBefore=datetime(2026, 1, 1, tzinfo=UTC),
@@ -159,7 +199,7 @@ def _policy_request(envelope: ActionEnvelope, ordinal: int = 1) -> PolicyRequest
         budget=BudgetSnapshot(
             requests_in_window=ordinal - 1,
             request_window_seconds=1.0,
-            write_requests_used=ordinal - 1,
+            write_requests_used=_write_count_before(ordinal),
         ),
         evaluated_at=_EVALUATED_AT,
     )
@@ -168,12 +208,18 @@ def _policy_request(envelope: ActionEnvelope, ordinal: int = 1) -> PolicyRequest
 def _request(envelope: ActionEnvelope, ordinal: int = 1) -> RuntimeObservationRequest:
     from stateweaver.adapters.telemetry.opentelemetry import ObservedStatePath
 
+    lab_action = OBSERVED_LAB_ACTIONS[ordinal - 1]
+    expected_route = (
+        "/v1/lab/documents/{document_id}"
+        if isinstance(lab_action, ReadDocumentLabAction)
+        else lab_http_action_spec(lab_action).path
+    )
     return RuntimeObservationRequest(
         world_id=envelope.world_id,
         transition_id=f"transition.runtime.qualification.observed-{ordinal:02d}",
         name=f"actual ASGI observation {ordinal}",
         action_envelope=envelope,
-        expected_route=lab_http_action_spec(_LAB_ACTIONS[ordinal - 1]).path,
+        expected_route=expected_route,
         observed_paths=(
             ObservedStatePath(
                 delta_id=f"delta.runtime.qualification.evidence-count-{ordinal:02d}",
@@ -300,7 +346,7 @@ async def _execute_runtime_qualifications(
     *,
     count: int,
 ) -> tuple[RuntimeObservationQualificationReceipt, ...]:
-    lab_actions = _LAB_ACTIONS[:count]
+    lab_actions = OBSERVED_LAB_ACTIONS[:count]
     envelopes = tuple(_action_envelope(ordinal) for ordinal in range(1, count + 1))
     policy_requests = tuple(
         _policy_request(envelope, ordinal) for ordinal, envelope in enumerate(envelopes, start=1)
@@ -421,18 +467,18 @@ def qualify_runtime_observation(
 def qualify_runtime_observation_chain(
     repository_marker: str,
 ) -> tuple[RuntimeObservationQualificationReceipt, ...]:
-    """Execute three sequential, actual-ASGI observations in one clean lab root."""
+    """Execute eight sequential, actual-ASGI observations in one clean lab root."""
 
     async def guarded() -> tuple[tuple[RuntimeObservationQualificationReceipt, ...], int]:
         with deny_network_egress() as guard:
             receipts = await _execute_runtime_qualifications(
                 repository_marker,
-                count=_OBSERVED_CHAIN_LENGTH,
+                count=OBSERVED_CHAIN_LENGTH,
             )
         return receipts, guard.denied_attempts
 
     receipts, denied_attempts = asyncio.run(guarded())
-    if denied_attempts or len(receipts) != _OBSERVED_CHAIN_LENGTH:
+    if denied_attempts or len(receipts) != OBSERVED_CHAIN_LENGTH:
         raise RuntimeObservationQualificationError(
             "runtime observation chain did not remain offline and complete"
         )
@@ -440,6 +486,8 @@ def qualify_runtime_observation_chain(
 
 
 __all__ = [
+    "OBSERVED_CHAIN_LENGTH",
+    "OBSERVED_LAB_ACTIONS",
     "qualify_runtime_observation",
     "qualify_runtime_observation_chain",
     "validate_runtime_qualification_against_adapter",

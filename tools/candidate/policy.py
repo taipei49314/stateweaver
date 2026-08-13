@@ -34,8 +34,8 @@ CONTROLLED_GATES: Final = (
     {
         "gate_id": "SW-M3-RUNTIME-EVIDENCE",
         "reason": (
-            "Three application-emitted runtime observations were independently validated and "
-            "retained by the exact-SHA hosted admission."
+            "Eight sequential application-emitted runtime observations were independently "
+            "validated and retained by the exact-SHA hosted admission."
         ),
         "status": "PASS",
     },
@@ -61,8 +61,10 @@ QUALIFICATION_AND_IMPLEMENTATION_GAPS: Final = (
     {
         "gate_id": "SW-M5-MATERIALIZED-REPLAY",
         "reason": (
-            "Exact retained M4 bytes compile and replay over five actual-ASGI clean roots, but "
-            "the Docker-materialized exit and terminal vulnerable/patched controls remain pending."
+            "Exact retained M4 bytes compile into an eight-step plan, replay over five clean "
+            "roots, and retain the boundary-mode and four control results. A distinct bounded "
+            "bridge retains the six-provider transitions, but one Docker-backed application "
+            "execution and trace boundary remains pending."
         ),
         "status": "PENDING_QUALIFICATION",
     },
@@ -158,7 +160,7 @@ LIMITATIONS: Final = (
         "steps remain workflow dependencies and are not receipt-captured command gates."
     ),
     (
-        "The M2 clean-host exit, Docker-materialized M5 exit, and M6-M8 implementation or "
+        "The M2 clean-host exit, materialized-provider M5 exit, and M6-M8 implementation or "
         "external qualification remain pending."
     ),
 )

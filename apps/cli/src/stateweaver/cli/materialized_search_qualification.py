@@ -55,7 +55,7 @@ from stateweaver.workflows.world import (
 )
 from stateweaver.worlds import EnvironmentHandle, SnapshotManifest, TargetSpec
 
-from .runtime_qualification import qualify_runtime_observation_chain
+from .runtime_qualification import OBSERVED_CHAIN_LENGTH, qualify_runtime_observation_chain
 
 _GHOST_COUNT = 24
 _PROMOTION_COUNTS = (4, 2, 1)
@@ -232,7 +232,7 @@ def _retier(item: SearchCandidate, tier: WorldTier) -> SearchCandidate:
 class MaterializedSearchQualificationReceipt(_QualificationModel):
     """Self-validating M3→M4 receipt for 24→4→2→1 real-world search."""
 
-    schema_version: Literal["stateweaver-m4-materialized-search-qualification-v2"]
+    schema_version: Literal["stateweaver-m4-materialized-search-qualification-v3"]
     status: Literal["MATERIALIZED_SEARCH_QUALIFIED"]
     repository_marker: RepositoryMarker
     m3_qualification: RuntimeObservationQualificationReceipt
@@ -265,11 +265,11 @@ class MaterializedSearchQualificationReceipt(_QualificationModel):
         if (
             self.repository_marker != m3.projection.repository_marker
             or self.m3_semantic_digest != m3.semantic_digest
-            or len(chain) != 3
+            or len(chain) != OBSERVED_CHAIN_LENGTH
             or chain[0] != m3
             or any(item.projection.repository_marker != self.repository_marker for item in chain)
-            or len({item.projection.action_digest for item in chain}) != 3
-            or len({item.projection.transition_id for item in chain}) != 3
+            or len({item.projection.action_digest for item in chain}) != OBSERVED_CHAIN_LENGTH
+            or len({item.projection.transition_id for item in chain}) != OBSERVED_CHAIN_LENGTH
             or any(
                 previous.projection.after_capture.payload_digest
                 != following.projection.before_capture.payload_digest
@@ -591,7 +591,7 @@ async def _execute_materialized_search(
     if port.residual_allocation_ids:
         raise MaterializedSearchQualificationError("materialized allocations remain after close")
     values: dict[str, object] = {
-        "schema_version": "stateweaver-m4-materialized-search-qualification-v2",
+        "schema_version": "stateweaver-m4-materialized-search-qualification-v3",
         "status": "MATERIALIZED_SEARCH_QUALIFIED",
         "repository_marker": observation.projection.repository_marker,
         "m3_qualification": observation,
