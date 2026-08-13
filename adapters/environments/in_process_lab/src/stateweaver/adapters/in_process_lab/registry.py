@@ -20,9 +20,13 @@ from stateweaver.policy import (
     PolicyAuthorizationDeniedError,
     verify_policy_authorization,
 )
-from stateweaver.replay import canonical_sha256
-from stateweaver_lab import TypedLabAction
-from stateweaver_lab.fixtures import FixtureBearer
+from stateweaver_lab import (
+    TypedLabAction,
+    resolve_lab_http_action,
+)
+from stateweaver_lab import (
+    lab_action_artifact as _lab_action_artifact,
+)
 from stateweaver_lab.models import (
     AdvanceClockLabAction,
     ClaimReferenceLabAction,
@@ -37,7 +41,6 @@ from stateweaver_lab.models import (
 )
 
 from .errors import (
-    AdapterConfigurationError,
     LabIdentityRejectedError,
     LabPolicyDeniedError,
     LabTargetRejectedError,
@@ -68,8 +71,7 @@ _LOCAL_ORIGINS: frozenset[tuple[str, str, int]] = frozenset(
 def lab_action_artifact(action: LabAction) -> ArtifactHandle:
     """Return the content handle that binds a plan to exact typed lab parameters."""
 
-    digest = canonical_sha256(action).removeprefix("sha256:")
-    return f"artifact:lab-action/{digest}"
+    return _lab_action_artifact(action)
 
 
 class _RegistryModel(BaseModel):
@@ -97,72 +99,15 @@ class LabHttpActionSpec(_RegistryModel):
         return value
 
 
-_ACTION_SPECS: tuple[tuple[type[object], HttpMethod, str, tuple[int, ...]], ...] = (
-    (RetainSessionLabAction, HttpMethod.POST, "/v1/lab/session/retain", (200,)),
-    (
-        PrimeAuthorizationCacheLabAction,
-        HttpMethod.POST,
-        "/v1/lab/authorization-cache/prime",
-        (200,),
-    ),
-    (
-        DowngradeRoleLabAction,
-        HttpMethod.POST,
-        "/v1/lab/admin/role-downgrade",
-        (200,),
-    ),
-    (DeferQueueLabAction, HttpMethod.POST, "/v1/lab/admin/queue/defer", (200,)),
-    (PublishReferenceLabAction, HttpMethod.POST, "/v1/lab/references/publish", (200,)),
-    (ClaimReferenceLabAction, HttpMethod.POST, "/v1/lab/references/claim", (200,)),
-    (AdvanceClockLabAction, HttpMethod.POST, "/v1/lab/admin/clock/advance", (200,)),
-)
-
-
-def _identity_for_actor(actor: FixtureBearer) -> str:
-    if actor in {
-        FixtureBearer.TENANT_A_OLD_EDITOR,
-        FixtureBearer.TENANT_A_FRESH_VIEWER,
-    }:
-        return "identity:test_user_a"
-    if actor is FixtureBearer.TENANT_B_VIEWER:
-        return "identity:test_user_b"
-    if actor is FixtureBearer.LAB_ADMIN:
-        return "identity:test_admin"
-    raise AdapterConfigurationError("registered lab actor is unsupported")
-
-
 def lab_http_action_spec(action: LabAction) -> LabHttpActionSpec:
     """Derive a fixed route from a concrete closed-union lab action."""
 
-    identity_handle = _identity_for_actor(action.actor)
-    for action_type, method, path, statuses in _ACTION_SPECS:
-        if isinstance(action, action_type):
-            return LabHttpActionSpec(
-                method=method,
-                path=path,
-                identity_handle=identity_handle,
-                expected_statuses=statuses,
-            )
-
-    if isinstance(action, ReadDocumentLabAction):
-        document_id = action.payload.document_id.value
-        path = f"/v1/lab/documents/{document_id}"
-        statuses = (200, 403)
-    elif isinstance(action, MaskedReadLabAction):
-        document_id = action.payload.document_id.value
-        path = f"/v1/lab/decoys/masked/{document_id}"
-        statuses = (200,)
-    elif isinstance(action, MockPolicyLabAction):
-        document_id = action.payload.document_id.value
-        path = f"/v1/lab/decoys/mock-policy/{document_id}"
-        statuses = (200,)
-    else:
-        raise AdapterConfigurationError("registered lab action is unsupported")
+    spec = resolve_lab_http_action(action)
     return LabHttpActionSpec(
-        method=HttpMethod.GET,
-        path=path,
-        identity_handle=identity_handle,
-        expected_statuses=statuses,
+        method=HttpMethod(spec.method.value),
+        path=spec.path,
+        identity_handle=spec.identity_handle,
+        expected_statuses=spec.expected_statuses,
     )
 
 

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Annotated, Final, Literal, cast
 
 from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
-from starlette.types import ASGIApp, Message, Scope
+from starlette.types import ASGIApp
 from stateweaver.contracts import ActionEnvelope, HttpMethod, HttpRequestAction, Sha256Digest
 from stateweaver.contracts.base import ContractId
 from stateweaver.replay import (
@@ -29,8 +29,13 @@ from stateweaver.replay import (
 from stateweaver_lab import (
     DeterministicLabService,
     LabActionResult,
+    LabAsgiExecution,
+    LabAsgiExecutionError,
     LabMode,
     LayeredStateCapture,
+    execute_lab_action_asgi,
+    resolve_lab_http_action,
+    seal_lab_asgi_app,
 )
 from stateweaver_lab.app import create_app as _TRUSTED_CREATE_APP
 from stateweaver_lab.fixtures import CANONICAL_SEED, FixtureBearer
@@ -108,7 +113,6 @@ _FORBIDDEN_CAPTURE_KEYS: Final = frozenset(
     }
 )
 _FIXTURE_BEARERS: Final = frozenset(item.value for item in FixtureBearer)
-_MAX_ASGI_RESPONSE_BYTES: Final = 65_536
 
 
 class InProcessLabRuntimeExecution(BaseModel):
@@ -151,13 +155,6 @@ class InProcessLabRuntimeExecution(BaseModel):
         if self.execution_digest != expected_digest:
             raise ValueError("runtime execution digest does not match its contents")
         return self
-
-
-@dataclass(frozen=True, slots=True)
-class _AsgiResponse:
-    route: str
-    status: int
-    body: bytes
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,8 +238,8 @@ class InProcessLabEnvironment:
         self._source_digest = canonical_sha256(self._app.openapi())
         self._route_signature = _app_route_signature(self._app)
         self._middleware_signature = _app_middleware_signature(self._app)
-        self._middleware_stack: ASGIApp = self._app.build_middleware_stack()
-        self._app.middleware_stack = self._middleware_stack
+        seal_lab_asgi_app(self._app)
+        self._middleware_stack = cast(ASGIApp, self._app.middleware_stack)
         self._lock = asyncio.Lock()
         self._active = False
         self._inflight_task: asyncio.Task[_AuthorizedAsgiExecution] | None = None
@@ -587,25 +584,14 @@ class InProcessLabEnvironment:
             raise LabExecutionRejectedError("repository ASGI app binding changed")
 
     def _resolve_app_route(self, envelope: ActionEnvelope) -> str:
-        action = _http_action(envelope)
-        if action.target is None or action.method is None:
+        http_action = _http_action(envelope)
+        if http_action.target is None or http_action.method is None:
             raise LabExecutionRejectedError("runtime route requires a concrete HTTP target")
-        matches: list[str] = []
-        for route in self._app.routes:
-            pattern = getattr(route, "path_regex", None)
-            methods = getattr(route, "methods", None)
-            template = getattr(route, "path", None)
-            if (
-                pattern is not None
-                and isinstance(methods, set)
-                and isinstance(template, str)
-                and action.method.value in methods
-                and pattern.fullmatch(action.target.path) is not None
-            ):
-                matches.append(template)
-        if len(matches) != 1:
-            raise LabExecutionRejectedError("runtime route is not uniquely declared by the app")
-        return matches[0]
+        lab_action = self._registry.resolve(envelope)
+        spec = resolve_lab_http_action(lab_action)
+        if http_action.method.value != spec.method.value or http_action.target.path != spec.path:
+            raise LabExecutionRejectedError("runtime route does not match the typed action")
+        return spec.route_template
 
     def _activate_clean_run(self) -> None:
         self._active = True
@@ -734,89 +720,17 @@ class InProcessLabEnvironment:
         self,
         envelope: ActionEnvelope,
         lab_action: LabAction,
-    ) -> _AsgiResponse:
+    ) -> LabAsgiExecution:
         action = _http_action(envelope)
         if action.target is None or action.method is None:
             raise LabExecutionRejectedError("ASGI execution requires a concrete HTTP action")
-        payload = lab_action.payload.model_dump(mode="json", by_alias=True, exclude_none=False)
-        body = (
-            b""
-            if action.method in {HttpMethod.GET, HttpMethod.HEAD, HttpMethod.OPTIONS}
-            else json.dumps(
-                payload,
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=True,
-            ).encode("utf-8")
-        )
-        headers = {
-            "host": action.target.host,
-            "authorization": f"Bearer {lab_action.actor.value}",
-        }
-        if body:
-            headers["content-type"] = "application/json"
-            headers["content-length"] = str(len(body))
-        scope: Scope = {
-            "type": "http",
-            "asgi": {"version": "3.0", "spec_version": "2.5"},
-            "http_version": "1.1",
-            "method": action.method.value,
-            "scheme": action.target.scheme,
-            "path": action.target.path,
-            "raw_path": action.target.path.encode("ascii"),
-            "query_string": b"",
-            "root_path": "",
-            "headers": [
-                (name.encode("ascii"), value.encode("latin-1")) for name, value in headers.items()
-            ],
-            "client": ("127.0.0.1", 1),
-            "server": (action.target.host, action.target.port),
-            "state": {},
-            "extensions": {},
-        }
-        request_sent = False
-        status: int | None = None
-        response_body = bytearray()
-        response_complete = False
-
-        async def receive() -> Message:
-            nonlocal request_sent
-            if not request_sent:
-                request_sent = True
-                return {"type": "http.request", "body": body, "more_body": False}
-            return {"type": "http.disconnect"}
-
-        async def send(message: Message) -> None:
-            nonlocal response_complete, status
-            message_type = message.get("type")
-            if message_type == "http.response.start":
-                candidate = message.get("status")
-                if (
-                    status is not None
-                    or isinstance(candidate, bool)
-                    or not isinstance(candidate, int)
-                ):
-                    raise LabExecutionRejectedError("ASGI response status is invalid")
-                status = candidate
-                return
-            if message_type == "http.response.body":
-                if status is None or response_complete:
-                    raise LabExecutionRejectedError("ASGI response body order is invalid")
-                chunk = message.get("body", b"")
-                if not isinstance(chunk, bytes):
-                    raise LabExecutionRejectedError("ASGI response body is invalid")
-                response_body.extend(chunk)
-                if len(response_body) > _MAX_ASGI_RESPONSE_BYTES:
-                    raise LabExecutionRejectedError("ASGI response exceeded the byte limit")
-                response_complete = not bool(message.get("more_body", False))
-
-        await FastAPI.__call__(self._app, scope, receive, send)
-        if self._app.middleware_stack is not self._middleware_stack:
-            raise LabExecutionRejectedError("repository ASGI middleware binding changed")
-        route = getattr(scope.get("route"), "path", None)
-        if status is None or not response_complete or not isinstance(route, str):
-            raise LabExecutionRejectedError("ASGI response lifecycle was incomplete")
-        return _AsgiResponse(route=route, status=status, body=bytes(response_body))
+        try:
+            response = await execute_lab_action_asgi(self._app, lab_action)
+        except LabAsgiExecutionError:
+            raise LabExecutionRejectedError("repository ASGI execution was rejected") from None
+        if action.method.value != response.method.value or action.target.path != response.path:
+            raise LabExecutionRejectedError("executed ASGI request does not match the envelope")
+        return response
 
     @staticmethod
     def _parse_asgi_result(

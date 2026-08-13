@@ -321,4 +321,7 @@ def create_app(mode: str | LabMode) -> FastAPI:
         request.app.state.lab = LabState.canonical(current_mode)
         return _state(request).state_digest()
 
+    from .asgi import _register_trusted_lab_app
+
+    _register_trusted_lab_app(app)
     return app
