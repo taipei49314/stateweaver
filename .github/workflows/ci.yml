@@ -223,6 +223,18 @@ jobs:
         run: npm audit --audit-level=high
         working-directory: apps/web
 
+      - name: Install locked Playwright dependencies
+        run: npm ci
+        working-directory: tests/e2e/public_release
+
+      - name: Install the pinned Chromium browser
+        run: npm run install:chromium
+        working-directory: tests/e2e/public_release
+
+      - name: Run the local M8 browser implementation gate
+        run: npm run verify
+        working-directory: tests/e2e/public_release
+
       - name: Retain web distribution
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -47,6 +47,15 @@ CONTROLLED_GATES: Final = (
         ),
         "status": "PASS",
     },
+    {
+        "gate_id": "SW-M5-MATERIALIZED-REPLAY",
+        "reason": (
+            "The exact-SHA hosted admission retains five vulnerable roots, one patched boundary, "
+            "and four controls through the sealed actual-ASGI application over six immutable "
+            "provider checkpoint shards, with all ten projects destroyed."
+        ),
+        "status": "PASS",
+    },
 )
 
 QUALIFICATION_AND_IMPLEMENTATION_GAPS: Final = (
@@ -59,36 +68,28 @@ QUALIFICATION_AND_IMPLEMENTATION_GAPS: Final = (
         "status": "PENDING_QUALIFICATION",
     },
     {
-        "gate_id": "SW-M5-MATERIALIZED-REPLAY",
-        "reason": (
-            "Exact retained M4 bytes compile into an eight-step plan, replay over five clean "
-            "roots, and retain the boundary-mode and four control results. A distinct bounded "
-            "bridge retains the six-provider transitions, but one Docker-backed application "
-            "execution and trace boundary remains pending."
-        ),
-        "status": "PENDING_QUALIFICATION",
-    },
-    {
         "gate_id": "SW-M6-PRODUCTION-PRODUCER",
         "reason": (
-            "Production producer integration with an authenticated immutable broker remains "
-            "unimplemented."
+            "Typed external trust-policy, complete immutable-object closure, retained source "
+            "resolution, and non-promotable broker-input verification are implemented. A real "
+            "producer-external store and issuer remain pending."
         ),
         "status": "PENDING_IMPLEMENTATION",
     },
     {
         "gate_id": "SW-M7-EQUAL-WORK-PROTOCOL",
         "reason": (
-            "The local deterministic tariff is not an implemented equal-work public evaluation "
-            "protocol."
+            "A fixed subprocess worker and host-measured equal-budget diagnostic retain all runs "
+            "and failures, but protected evaluator-owned final accounting remains pending."
         ),
         "status": "PENDING_IMPLEMENTATION",
     },
     {
         "gate_id": "SW-M8-PUBLIC-JOURNEY",
         "reason": (
-            "A deployed API/web journey with retained browser and hosting receipts remains "
-            "unimplemented."
+            "A retry-free Chromium desktop/mobile, keyboard, WCAG, error, empty, integrity, and "
+            "console gate is implemented for fixed loopback source QA. Artifact-only serving "
+            "and external new-user receipts remain pending."
         ),
         "status": "PENDING_IMPLEMENTATION",
     },
@@ -159,8 +160,5 @@ LIMITATIONS: Final = (
         "Only execution.commands entries are typed command evidence; earlier source and build "
         "steps remain workflow dependencies and are not receipt-captured command gates."
     ),
-    (
-        "The M2 clean-host exit, materialized-provider M5 exit, and M6-M8 implementation or "
-        "external qualification remain pending."
-    ),
+    ("The M2 clean-host exit and M6-M8 implementation or external qualification remain pending."),
 )

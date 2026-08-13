@@ -1,0 +1,21 @@
+{
+  "name": "stateweaver-public-release-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "format:check": "prettier --check package.json playwright.config.ts m8_public_ux.spec.ts tsconfig.json README.md",
+    "pretest": "npm --prefix ../../../apps/web run build",
+    "test": "playwright test --config playwright.config.ts",
+    "install:chromium": "playwright install chromium",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run format:check && npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.62.1",
+    "@types/node": "22.18.10",
+    "prettier": "3.9.6",
+    "typescript": "6.0.3"
+  }
+}

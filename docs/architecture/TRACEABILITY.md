@@ -18,9 +18,9 @@ acceptance commands are intentionally local and do not require network access.
 | M3 — Security Semantic Twin | Clean-wheel observed-flow receipt implemented and independently reproduced; M4/M5 materialized chain remains separate | `packages/twin/`, source/OTel adapters, `packages/evidence/src/stateweaver/evidence/runtime_observation.py`, `apps/cli/src/stateweaver/cli/runtime_qualification.py` |
 | M4 — Tiered Search Controller | Eight observed ASGI transitions feed the 24-to-4-to-2-to-1 materializer; exact-SHA producer/attestation/proof admission implemented | `packages/search/`, `workflows/world/`, `apps/cli/src/stateweaver/cli/materialized_search_qualification.py`, `packages/evidence/src/stateweaver/evidence/hosted_qualification.py` |
 | M5 — Chain Compiler | Exact retained M4 bytes compile eight steps; the hosted qualifier executes five vulnerable roots, one patched boundary, and four controls through the sealed ASGI app over six immutable provider checkpoint shards | `packages/compiler/`, `apps/cli/src/stateweaver/cli/observed_chain_qualification.py`, `apps/cli/src/stateweaver/cli/materialized_chain_qualification.py` |
-| M6 — Reality Anchor + Proof Bundle | V2 event reconstruction + immutable-byte candidate resolver implemented; trusted broker pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
-| M7 — StateChainBench | Trusted built-in synthetic runner hardened; equal-work/public audit pending | `benchmarks/statechainbench/` |
-| M8 — Web UI + Public Release | Fixed synthetic API/client have local simulated-DOM test coverage; browser/new-user/public release pending | `apps/api/`, `apps/web/` |
+| M6 — Reality Anchor + Proof Bundle | V2 reconstruction + bounded complete immutable-object/source broker-input verifier implemented; external issuer/store/consumer pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
+| M7 — StateChainBench | Fixed subprocess measured diagnostic and internal preregistration implemented; protected evaluator/equal-work audit pending | `benchmarks/statechainbench/` |
+| M8 — Web UI + Public Release | Fixed synthetic API/client have simulated-DOM plus retry-free desktop/mobile Chromium coverage; artifact/new-user/public release pending | `apps/api/`, `apps/web/`, `tests/e2e/public_release/` |
 
 The acceptance collector derives seven local-deliverable receipts for 22 repo-controlled M3–M7
 rows from exact passing JUnit identities, canonical registry statements and evidence roles, and
@@ -393,13 +393,14 @@ bytes, so payload omission, substitution, report-only coherent reminting, source
 unsafe paths, and default omission fail closed. The publication result is permanently
 `authoritative=False`, `promotable=False`, and `attested=False`.
 
-This content hash and candidate resolver prove one supplied snapshot's internal coherence, not
-issuer identity, authenticated retention, target/adapter source provenance, or independent
-execution. The general Reality Replay Broker, trusted store acquisition, trusted
-issuance/attestation, and portable clean-machine M6 reproduction workflow remain absent. The Finding validator
+The M6 candidate resolver now verifies one bounded exact immutable-object snapshot, complete
+manifest coverage, and retained target/adapter source bytes under a strict externally supplied
+policy shape. It remains hard non-authoritative/non-promotable and does not authenticate that
+policy, issuer, store, or consumer. Trusted store acquisition, detached issuance/attestation, and
+portable clean-machine M6 reproduction remain absent. The Finding validator
 therefore rejects both reserved confirmed statuses. M6 is **partially implemented and not
-certified**. Kind-specific typed mutation witnesses, authenticated execution provenance, and
-retained source-byte resolution remain open. See `docs/architecture/M6_REALITY_RECEIPT.md` for the
+certified**. Kind-specific typed mutation witnesses and authenticated execution provenance remain
+open. See `docs/architecture/M6_REALITY_RECEIPT.md` for the
 exact boundary.
 
 ## M7 — StateChainBench
@@ -423,10 +424,12 @@ core now accepts only exact trusted built-in solver types; reconstructs datasets
 commitments from generator config; binds solver config, challenge, comparison, and ablation
 provenance; audits PLAN/ACTION/WORLD namespaces and tariffs; and retains the exact failed
 reservation for budget stops. PLAN charges considered work, while ACTION/WORLD totals include
-exploratory branches, not only the submitted path. This deterministic tariff is not proof of equal
-measured compute, and the runner is not a process-isolation boundary for third-party systems.
-Stronger baselines, independent reproduction, and retained public evidence remain pending, so M7
-is **a hardened local prototype, not a publishable benchmark or certification**.
+exploratory branches, not only the submitted path. A fixed subprocess worker now also applies equal
+host-observed CPU, RAM, wall, request, token, cost, and output ceilings and retains every primary,
+ablation, and failure record. This is producer-visible synthetic sampling, not evaluator-owned
+final process-tree accounting, network-isolated third-party execution, a protected holdout, or an
+external preregistration. Independent reproduction remains pending, so M7 is **a measurable local
+diagnostic, not a publishable benchmark or certification**.
 
 ## M8 — Web UI + Public Release
 
@@ -443,6 +446,7 @@ the World DAG, and replay a finding.
 
 ```powershell
 uv run pytest apps/api/tests tests/e2e/public_release -q
+npm --prefix apps/web run verify:public-release
 ```
 
 The web client has package-local format, lint, type-check, unit-test, and build commands. Its parser
@@ -451,10 +455,12 @@ manifest, and run signature before rendering.
 
 **Exit criterion:** a new user can follow only the README to complete the stated lab, benchmark,
 DAG, and replay journey. A localhost-only synthetic API and four-workspace client are implemented.
-API/model closure and simulated-DOM content-digest substitution/interaction tests exist and are exercised
-by the developer suite; no exact-SHA browser-qualification receipt is retained. The repo has
-no Playwright dependency or reproducible desktop/mobile, keyboard, accessibility, or zero-console
-browser gate. Public hosting, release-asset installation, the complete external new-user journey,
+API/model closure and simulated-DOM tests are joined by a retry-free real Chromium gate covering
+desktop/mobile four-page navigation, complete keyboard routing, Axe WCAG A/AA, loading/error/empty
+states, digest substitution, zero browser errors, and fixed loopback request admission. API
+responses also carry TrustedHost and fixed CSP/nosniff/frame/referrer/permissions headers. This is
+source-tree loopback QA; no artifact-only or external browser-qualification receipt is retained.
+Public hosting, release-asset installation, the complete external new-user journey,
 live-provider use, and retained release attestation remain pending, so M8 is **a local synthetic UI
 prototype, not browser-accepted or certified**.
 

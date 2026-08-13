@@ -114,12 +114,15 @@ payload digest. `EventHistory` verifies exact sequence, context, time monotonici
 history hash. This self-contained chain detects partial mutation and splicing; it cannot prove
 freshness against a producer that can fully remint history without a trusted checkpoint.
 
-## Trust boundary still open
+## Broker-input boundary implemented; external trust still open
 
 An actor can recompute an internally coherent receipt hash. Therefore the hash detects inconsistent
-substitution; it does not authenticate who executed a replay. The current in-memory resolver proves
-that the supplied candidate bytes exist and agree within one snapshot, but it does not prove where
-those bytes came from. A complete M6 broker must still:
+substitution; it does not authenticate who executed a replay. The strict M6 broker-input contracts
+and `verify_m6_broker_candidate` now require a frozen external-policy shape, exact OIDC
+issuer/subject, a separated consumer identity, complete pre-receipt manifest-object closure, all
+target-version and adapter source bytes, bounded counts/bytes, one-read snapshotting, trusted-time
+freshness, and revocation-epoch equality. The result is permanently `authoritative=False` and
+`promotable=False`; it cannot mint its own authority. A complete external M6 broker must still:
 
 - acquire the bytes from an immutable authenticated store without a mutable-path race;
 - resolve target/adapter source digests against retained source bytes rather than trust the values
@@ -135,8 +138,9 @@ primary/control projection, but not that an authenticated execution engine produ
 not wall-clock OTLP binding, and not the truth of a producer-selected control-kind label. A future
 typed mutation witness must close that semantic classification boundary.
 
-Until those checks exist and retained public evidence passes, the repository must describe this as
-a hardened promotion contract, not M6 certification.
+Until authenticated store acquisition, detached issuance, server-side budget/cleanup enforcement,
+and separated clean-machine replay pass, this remains hardened non-promotable broker plumbing, not
+M6 certification.
 
 ## Verification
 
@@ -149,7 +153,9 @@ reminting, the explicitly unattested kind boundary, and patch replay:
 
 ```powershell
 uv run pytest packages/contracts/tests/test_reality_receipts.py -q
+uv run pytest packages/contracts/tests/test_reality_broker.py -q
 uv run pytest packages/contracts/tests/test_event_history.py -q
 uv run pytest packages/evidence/tests/test_semantic_trace.py packages/evidence/tests/test_reality_bundle.py -q
+uv run pytest packages/evidence/tests/test_reality_broker_verification.py -q
 uv run pytest packages/reporting/tests -q
 ```

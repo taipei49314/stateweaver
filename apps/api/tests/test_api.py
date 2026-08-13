@@ -15,7 +15,7 @@ import pytest_asyncio
 from fastapi.routing import APIRoute
 from pydantic import ValidationError
 
-from stateweaver_api.app import LOCAL_DEV_ORIGINS, app
+from stateweaver_api.app import LOCAL_ALLOWED_HOSTS, LOCAL_DEV_ORIGINS, SECURITY_HEADERS, app
 from stateweaver_api.fixture import (
     DEMO_HASHES,
     DEMO_HEALTH,
@@ -63,6 +63,17 @@ async def test_public_get_responses_are_json_and_provenanced(
     assert provenance["model_calls"] == 0
     assert provenance["workspace"] == "local-lab"
     assert provenance["certification"] == "not release-certified"
+    assert {name: response.headers[name] for name in SECURITY_HEADERS} == SECURITY_HEADERS
+
+
+@pytest.mark.asyncio
+async def test_host_and_browser_security_policy_are_fixed_and_fail_closed() -> None:
+    assert LOCAL_ALLOWED_HOSTS == ("127.0.0.1", "localhost", "testserver")
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://public.example") as client:
+        response = await client.get("/healthz")
+    assert response.status_code == 400
+    assert b"Invalid host header" in response.content
 
 
 @pytest.mark.asyncio
