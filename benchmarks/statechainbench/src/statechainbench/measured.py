@@ -20,6 +20,7 @@ from enum import StrEnum
 from hashlib import sha256
 from importlib import import_module
 from pathlib import Path
+from sysconfig import get_path
 from typing import Annotated, Literal, Protocol, cast
 
 from pydantic import Field, model_validator
@@ -565,12 +566,14 @@ class MeasuredSubprocessRunner:
     def _fixed_worker_command(self) -> tuple[str, ...]:
         benchmark_src = Path(__file__).resolve().parents[1]
         repository = Path(__file__).resolve().parents[4]
-        import_roots = (
+        candidate_roots = (
             benchmark_src,
             repository / "packages" / "contracts" / "src",
             repository / "packages" / "search" / "src",
-            Path(sys.prefix) / "Lib" / "site-packages",
+            Path(get_path("purelib")),
+            Path(get_path("platlib")),
         )
+        import_roots = tuple(dict.fromkeys(path.resolve() for path in candidate_roots))
         bootstrap = (
             "import sys;"
             f"sys.path[:0]={[str(item) for item in import_roots]!r};"

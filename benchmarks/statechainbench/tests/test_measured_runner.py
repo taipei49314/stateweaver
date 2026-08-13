@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import sys
+import sysconfig
 from collections.abc import Sequence
 from io import BytesIO
+from pathlib import Path
 from typing import TextIO, cast
 
 import pytest
@@ -195,6 +197,15 @@ def test_fixed_worker_runs_in_a_separate_process_and_retains_host_measurements()
     assert record.usage.requests == record.usage.tokens == record.usage.cost_microusd == 0
     assert record.stdout_bytes > 0
     assert record.stderr_bytes == 0
+
+
+def test_fixed_worker_resolves_the_active_platform_runtime_libraries() -> None:
+    command = MeasuredSubprocessRunner()._fixed_worker_command()
+
+    assert command[:2] == (_python_executable(), "-I")
+    assert command[2] == "-c"
+    assert repr(str(Path(sysconfig.get_path("purelib")).resolve())) in command[3]
+    assert repr(str(Path(sysconfig.get_path("platlib")).resolve())) in command[3]
 
 
 def test_fixed_worker_protocol_emits_one_bound_envelope_and_suppresses_failures(
