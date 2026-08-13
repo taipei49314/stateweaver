@@ -825,6 +825,14 @@ def test_rejects_malformed_junit_as_a_safe_evidence_error(tmp_path: Path) -> Non
             "tests.test_event_history::test_event_history_round_trip_binds_exact_chain_and_head",
         ),
         (
+            "lab",
+            "tests.test_asgi::test_actual_socket_free_asgi_lifecycle_returns_route_status_and_exact_body",
+        ),
+        (
+            "lab",
+            "tests.test_provider_checkpoint::test_store_stages_and_cas_restores_exact_active_generation",
+        ),
+        (
             "replay",
             "packages.evidence.tests.test_acceptance_registry::test_registry_resource_is_canonical_and_exact",
         ),
@@ -835,6 +843,42 @@ def test_rejects_malformed_junit_as_a_safe_evidence_error(tmp_path: Path) -> Non
         (
             "replay",
             "packages.evidence.tests.test_semantic_trace::test_success_trace_projects_exact_action_semantics",
+        ),
+        (
+            "replay",
+            "apps.cli.tests.test_actual_materialized_chain_qualification::test_actual_composite_retains_all_ten_exact_scenarios_and_canonical_file",
+        ),
+        (
+            "replay",
+            "apps.cli.tests.test_hosted_actual_m5::test_actual_m5_hosted_parser_accepts_only_exact_cross_bound_bytes",
+        ),
+        (
+            "replay",
+            "apps.cli.tests.test_m4_lineage::test_rehashed_provider_state_substitution_is_rejected_by_its_lineage",
+        ),
+        (
+            "replay",
+            "apps.cli.tests.test_m5_cli::test_qualify_materialized_chain_wires_both_receipts_and_writes_witness",
+        ),
+        (
+            "replay",
+            "apps.cli.tests.test_m5_plan::test_compile_m5_plan_is_exact_and_covers_observed_and_control_paths",
+        ),
+        (
+            "replay",
+            "apps.cli.tests.test_observed_chain_qualification::test_m5_replay_count_is_fixed",
+        ),
+        (
+            "replay",
+            "packages.evidence.tests.test_hosted_actual_m5_raw_admission::test_independent_raw_actual_m5_validation_accepts_all_ten_runs",
+        ),
+        (
+            "replay",
+            "packages.evidence.tests.test_hosted_m5_materialized_admission::test_actual_admission_is_the_only_boundary_that_admits_m5",
+        ),
+        (
+            "replay",
+            "packages.evidence.tests.test_hosted_qualification::test_hosted_qualification_path_is_fixed",
         ),
     ],
 )
