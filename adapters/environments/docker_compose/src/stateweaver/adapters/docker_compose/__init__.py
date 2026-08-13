@@ -15,15 +15,19 @@ from .materialization import (
 from .materialized_lab_runtime import (
     ApplicationImageBinding,
     ApplicationRouteTrace,
+    CheckpointWitness,
     MaterializedLabDockerRuntime,
     MaterializedLabRunReceipt,
     MaterializedLabRunRequest,
+    MaterializedLabStepReceipt,
+    ProviderCheckpointWitness,
 )
 from .runner import ProcessResult, ProcessRunner
 
 __all__ = [
     "ApplicationImageBinding",
     "ApplicationRouteTrace",
+    "CheckpointWitness",
     "ComposeAdapterError",
     "ComposeUnavailableError",
     "DockerComposeEnvironmentAdapter",
@@ -36,9 +40,11 @@ __all__ = [
     "MaterializedLabDockerRuntime",
     "MaterializedLabRunReceipt",
     "MaterializedLabRunRequest",
+    "MaterializedLabStepReceipt",
     "MaterializedProviderReceipt",
     "ProcessResult",
     "ProcessRunner",
+    "ProviderCheckpointWitness",
     "ProviderStateChange",
     "RealDockerComposeEnvironmentAdapter",
 ]

@@ -39,7 +39,9 @@ def _checkpoint(*, marker: str = "clean") -> bytes:
 def _fake_providers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[dict[str, dict[str, bytes]], dict[str, str | None]]:
-    states = {provider: {} for provider in bridge._CHECKPOINT_PROVIDERS}
+    states: dict[str, dict[str, bytes]] = {
+        provider: {} for provider in bridge._CHECKPOINT_PROVIDERS
+    }
     active: dict[str, str | None] = {"generation": None}
 
     for provider in bridge._CHECKPOINT_PROVIDERS:

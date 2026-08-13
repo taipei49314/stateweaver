@@ -25,6 +25,7 @@ COPY packages/policy/src/stateweaver/policy /opt/stateweaver/policy/stateweaver/
 COPY labs/multitenant-saas/stateweaver_lab /opt/stateweaver/lab/stateweaver_lab
 COPY adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/errors.py /opt/stateweaver/adapter/stateweaver/adapters/docker_compose/errors.py
 COPY adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/runner.py /opt/stateweaver/adapter/stateweaver/adapters/docker_compose/runner.py
+COPY adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/real_provider_bridge.py /opt/stateweaver/adapter/stateweaver/adapters/docker_compose/real_provider_bridge.py
 COPY adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/materialized_lab_runtime.py /opt/stateweaver/adapter/stateweaver/adapters/docker_compose/materialized_lab_runtime.py
 
 RUN mkdir -p /state/filesystem /state/session /state/clock \

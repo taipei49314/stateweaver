@@ -838,9 +838,9 @@ class RealDockerComposeEnvironmentAdapter(_FixedDockerComposeEnvironmentAdapter)
     ) -> MaterializedLabRunReceipt:
         """Run the fixed FastAPI application witness in a separate Compose project.
 
-        The returned type is intentionally unqualified until the application has
-        atomically checkpointed the six real providers.  It cannot be used as a
-        substitute for the provider-side M5 receipt or an SW-M5 admission.
+        The receipt proves one executed scenario over six immutable checkpoint
+        shards with PostgreSQL CAS visibility.  Composite qualification and
+        hosted SW-M5 admission remain separate gates.
         """
 
         return await MaterializedLabDockerRuntime(runner=self._runner).run(request)

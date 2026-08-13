@@ -625,6 +625,25 @@ async def test_observed_execution_is_one_actual_asgi_lifecycle_with_server_metad
     assert len(environment.evidence_records) == 1
 
 
+def test_repository_app_factory_binding_is_pinned(monkeypatch: pytest.MonkeyPatch) -> None:
+    import stateweaver_lab.app as lab_app_module
+
+    lab_action = RetainSessionLabAction()
+    envelope = _envelope("action.factory-pin", 1, lab_action)
+
+    def replaced_factory(mode: object) -> object:
+        del mode
+        raise AssertionError("mutable module factory must not be consulted")
+
+    monkeypatch.setattr(lab_app_module, "create_app", replaced_factory)
+    environment = InProcessLabEnvironment(
+        mode=LabMode.VULNERABLE,
+        registry=_registry(((envelope, lab_action),)),
+    )
+
+    assert environment.runtime_source_digest.startswith("sha256:")
+
+
 @pytest.mark.asyncio
 async def test_normal_execution_hides_partial_state_until_receipt_commit(
     monkeypatch: pytest.MonkeyPatch,
