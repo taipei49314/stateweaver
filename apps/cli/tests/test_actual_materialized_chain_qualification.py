@@ -72,16 +72,22 @@ class _MemoryCheckpointStore:
 @dataclass
 class _ActualApplicationAdapter:
     monkeypatch: pytest.MonkeyPatch
+    run_count: int = 0
 
     async def run_m5_materialized_application(
         self, request: runtime.MaterializedLabRunRequest
     ) -> MaterializedLabRunReceipt:
+        self.run_count += 1
         store = _MemoryCheckpointStore()
         self.monkeypatch.setattr(runtime, "RealProviderLabStateStore", lambda: store)
         output = await runtime._execute_in_container(request)
         binding_values: dict[str, object] = {
+            "application_container_id": f"{self.run_count:064x}",
             "application_image_id": "sha256:" + "1" * 64,
+            "application_source_revision": request.repository_marker,
+            "bridge_container_id": f"{self.run_count + 100:064x}",
             "bridge_image_id": "sha256:" + "2" * 64,
+            "image_identity_provenance": "EXECUTED_COMPOSE_CONTAINERS",
             "provider_image_refs": runtime._PROVIDER_IMAGE_REFS,
             "provider_image_set_digest": sha256_digest(runtime._PROVIDER_IMAGE_REFS),
             "provider_image_provenance": "PINNED_MANIFEST_REFS_NOT_RUNTIME_IMAGE_IDS",
@@ -131,6 +137,16 @@ def _rehash(values: dict[str, object]) -> dict[str, object]:
     return values
 
 
+def _rehash_run_witness(witness: dict[str, object]) -> dict[str, object]:
+    receipt = dict(witness["materialized_run_receipt"])
+    receipt["receipt_digest"] = runtime._digest(
+        {key: value for key, value in receipt.items() if key != "receipt_digest"}
+    )
+    witness["materialized_run_receipt"] = receipt
+    witness["materialized_run_receipt_digest"] = receipt["receipt_digest"]
+    return witness
+
+
 def test_actual_composite_retains_all_ten_exact_scenarios_and_canonical_file(
     actual_receipt: ActualMaterializedChainQualificationReceipt,
     tmp_path: Path,
@@ -149,11 +165,18 @@ def test_actual_composite_retains_all_ten_exact_scenarios_and_canonical_file(
     assert len(set(actual_receipt.vulnerable_deterministic_signatures)) == 1
     assert actual_receipt.cleanup_count == 10
     assert actual_receipt.all_cleanups_passed and actual_receipt.all_projects_destroyed
-    for retained in (
+    retained_runs = (
         *(item.materialized_run_receipt for item in actual_receipt.clean_root_runs),
         actual_receipt.patched_run.materialized_run_receipt,
         *(item.materialized_run_receipt for item in actual_receipt.negative_controls),
-    ):
+    )
+    assert len({item.image_binding.application_container_id for item in retained_runs}) == 10
+    assert len({item.image_binding.bridge_container_id for item in retained_runs}) == 10
+    assert all(
+        item.image_binding.application_container_id != item.image_binding.bridge_container_id
+        for item in retained_runs
+    )
+    for retained in retained_runs:
         request = retained.request
         assert request.action_bytes == tuple(canonical_json_bytes(item) for item in request.actions)
         assert request.policy_request_bytes == tuple(
@@ -200,4 +223,51 @@ def test_actual_composite_rejects_substitution_even_when_rehashed(
         values["repository_marker"] = "f" * 40
 
     with pytest.raises((ValidationError, ValueError)):
+        ActualMaterializedChainQualificationReceipt.model_validate(_rehash(values))
+
+
+@pytest.mark.parametrize("container_field", ("application_container_id", "bridge_container_id"))
+def test_actual_composite_rejects_reused_container_id_even_when_every_digest_is_rehashed(
+    actual_receipt: ActualMaterializedChainQualificationReceipt,
+    container_field: str,
+) -> None:
+    values = actual_receipt.model_dump(mode="python")
+    runs = list(values["clean_root_runs"])
+    source_receipt = runs[0]["materialized_run_receipt"]
+    target = dict(runs[1])
+    target_receipt = dict(target["materialized_run_receipt"])
+    target_binding = dict(target_receipt["image_binding"])
+    target_binding[container_field] = source_receipt["image_binding"][container_field]
+    target_binding["binding_digest"] = runtime._digest(
+        {key: value for key, value in target_binding.items() if key != "binding_digest"}
+    )
+    target_receipt["image_binding"] = target_binding
+    target["materialized_run_receipt"] = target_receipt
+    runs[1] = _rehash_run_witness(target)
+    values["clean_root_runs"] = tuple(runs)
+
+    with pytest.raises((ValidationError, ValueError), match="incoherent"):
+        ActualMaterializedChainQualificationReceipt.model_validate(_rehash(values))
+
+
+def test_actual_composite_rejects_swapped_project_bindings_even_when_rehashed(
+    actual_receipt: ActualMaterializedChainQualificationReceipt,
+) -> None:
+    values = actual_receipt.model_dump(mode="python")
+    runs = list(values["clean_root_runs"])
+    first = dict(runs[0])
+    second = dict(runs[1])
+    first_receipt = dict(first["materialized_run_receipt"])
+    second_receipt = dict(second["materialized_run_receipt"])
+    first_receipt["image_binding"], second_receipt["image_binding"] = (
+        second_receipt["image_binding"],
+        first_receipt["image_binding"],
+    )
+    first["materialized_run_receipt"] = first_receipt
+    second["materialized_run_receipt"] = second_receipt
+    runs[0] = _rehash_run_witness(first)
+    runs[1] = _rehash_run_witness(second)
+    values["clean_root_runs"] = tuple(runs)
+
+    with pytest.raises((ValidationError, ValueError), match="incoherent"):
         ActualMaterializedChainQualificationReceipt.model_validate(_rehash(values))

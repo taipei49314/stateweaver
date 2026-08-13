@@ -415,6 +415,25 @@ class ActualMaterializedChainQualificationReceipt(_M5Model):
         primary_requests = tuple(item.materialized_run_receipt.request for item in runs)
         patched = self.patched_run.materialized_run_receipt
         controls = tuple(item.materialized_run_receipt for item in self.negative_controls)
+        all_runs = (
+            *(run.materialized_run_receipt for run in runs),
+            patched,
+            *controls,
+        )
+        representative_image = self.application_image_binding
+        shared_image_identity = (
+            representative_image.application_image_id,
+            representative_image.bridge_image_id,
+            representative_image.application_source_revision,
+            representative_image.image_identity_provenance,
+            representative_image.provider_image_refs,
+            representative_image.provider_image_set_digest,
+            representative_image.provider_image_provenance,
+        )
+        application_container_ids = tuple(
+            item.image_binding.application_container_id for item in all_runs
+        )
+        bridge_container_ids = tuple(item.image_binding.bridge_container_id for item in all_runs)
         expected_control_boundaries = {
             item.name: (item.expected_outcome, item.expected_status)
             for item in execution.negative_controls
@@ -439,12 +458,27 @@ class ActualMaterializedChainQualificationReceipt(_M5Model):
             or self.execution_plan_digest != sha256_digest(_execution_plan_bytes(execution))
             or self.primary_plan != execution.replay_plan
             or self.primary_plan_digest != sha256_digest(execution.replay_plan)
+            or representative_image != all_runs[0].image_binding
             or any(
-                item.image_binding != self.application_image_binding
-                for item in (
-                    *(run.materialized_run_receipt for run in runs),
-                    patched,
-                    *controls,
+                (
+                    item.image_binding.application_image_id,
+                    item.image_binding.bridge_image_id,
+                    item.image_binding.application_source_revision,
+                    item.image_binding.image_identity_provenance,
+                    item.image_binding.provider_image_refs,
+                    item.image_binding.provider_image_set_digest,
+                    item.image_binding.provider_image_provenance,
+                )
+                != shared_image_identity
+                for item in all_runs
+            )
+            or representative_image.application_source_revision != self.repository_marker
+            or len(set(application_container_ids)) != 10
+            or len(set(bridge_container_ids)) != 10
+            or any(
+                application_id == bridge_id
+                for application_id, bridge_id in zip(
+                    application_container_ids, bridge_container_ids, strict=True
                 )
             )
             or len(runs) != 5
