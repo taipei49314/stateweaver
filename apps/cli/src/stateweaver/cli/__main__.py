@@ -30,7 +30,7 @@ from .hosted_qualification import (
 )
 from .materialized_chain_qualification import (
     MaterializedChainQualificationError,
-    qualify_materialized_chain,
+    qualify_actual_materialized_chain,
     write_materialized_chain_qualification,
 )
 from .materialized_search_qualification import (
@@ -154,7 +154,7 @@ def _parser() -> argparse.ArgumentParser:
     observed_chain.add_argument("--output", type=Path, required=True)
     materialized_chain = foundation_commands.add_parser(
         "qualify-materialized-chain",
-        help="retain prerequisite-only Docker provider witnesses for exact M5 bytes",
+        help="qualify ten actual-ASGI Docker scenarios over retained provider state",
     )
     materialized_chain.add_argument("--m4-receipt", type=Path, required=True)
     materialized_chain.add_argument("--process-receipt", type=Path, required=True)
@@ -387,7 +387,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if arguments.foundation_command == "qualify-materialized-chain":
         try:
-            witness = qualify_materialized_chain(
+            witness = qualify_actual_materialized_chain(
                 m4_receipt_path=arguments.m4_receipt,
                 process_receipt_path=arguments.process_receipt,
                 repository_marker=arguments.repository_marker,
@@ -398,7 +398,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 json.dumps(
                     {
                         "qualified": False,
-                        "error": {"code": "materialized_chain_witness_not_retained"},
+                        "error": {"code": "materialized_chain_not_qualified"},
                     },
                     sort_keys=True,
                     separators=(",", ":"),
@@ -408,9 +408,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             json.dumps(
                 {
-                    "provider_witness_retained": True,
+                    "actual_asgi_qualified": True,
                     "receipt_digest": witness.receipt_digest,
-                    "sw_m5_chain_admitted": False,
+                    "sw_m5_chain_admitted": True,
                 },
                 sort_keys=True,
                 separators=(",", ":"),
