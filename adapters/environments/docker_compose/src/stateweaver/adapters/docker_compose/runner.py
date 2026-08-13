@@ -26,6 +26,7 @@ PROCESS_DEADLINE_SECONDS: Final = 60.0
 # transition than the single-container diagnostic fixture.  Keep the wider
 # boundary tied only to the exact, admitted real-provider `compose up` argv.
 REAL_PROVIDER_START_DEADLINE_SECONDS: Final = 180.0
+MATERIALIZED_APPLICATION_DEADLINE_SECONDS: Final = 180.0
 _PROCESS_TERMINATION_SECONDS: Final = 2.0
 _PROCESS_READ_CHUNK_BYTES: Final = 64 * 1024
 _STATE_BRIDGE_PREFIX = (
@@ -41,6 +42,15 @@ _REAL_STATE_BRIDGE_PREFIX = (
     "provider-bridge",
     "python",
     "/opt/stateweaver/real_provider_bridge.py",
+)
+_MATERIALIZED_LAB_RUNTIME_PREFIX = (
+    "exec",
+    "--no-TTY",
+    "materialized-lab",
+    "python",
+    "-m",
+    "stateweaver.adapters.docker_compose.materialized_lab_runtime",
+    "execute",
 )
 _COMPOSE_OPERATIONS = frozenset(
     {
@@ -60,6 +70,7 @@ _REAL_COMPOSE_OPERATIONS = frozenset(
         (*_REAL_STATE_BRIDGE_PREFIX, "import"),
         (*_REAL_STATE_BRIDGE_PREFIX, "mutate"),
         (*_REAL_STATE_BRIDGE_PREFIX, "m5-replay"),
+        _MATERIALIZED_LAB_RUNTIME_PREFIX,
     }
 )
 
@@ -203,6 +214,11 @@ def _deadline_seconds(exact_argv: tuple[str, ...]) -> float:
         "--no-build",
     ):
         return REAL_PROVIDER_START_DEADLINE_SECONDS
+    if (
+        exact_argv[4:6] == ("--file", str(_REAL_COMPOSE_FILE))
+        and exact_argv[6:] == _MATERIALIZED_LAB_RUNTIME_PREFIX
+    ):
+        return MATERIALIZED_APPLICATION_DEADLINE_SECONDS
     return PROCESS_DEADLINE_SECONDS
 
 
@@ -212,6 +228,7 @@ def _accepts_state_stdin(exact_argv: tuple[str, ...]) -> bool:
         (*_REAL_STATE_BRIDGE_PREFIX, "import"),
         (*_REAL_STATE_BRIDGE_PREFIX, "mutate"),
         (*_REAL_STATE_BRIDGE_PREFIX, "m5-replay"),
+        _MATERIALIZED_LAB_RUNTIME_PREFIX,
     )
     return any(exact_argv[-len(operation) :] == operation for operation in operations)
 
@@ -424,6 +441,15 @@ def require_exact_argv(argv: Sequence[str]) -> tuple[str, ...]:
         "--format",
         "{{.Id}}",
         "stateweaver-real-provider-bridge:local",
+    ):
+        return exact
+    if exact == (
+        "docker",
+        "image",
+        "inspect",
+        "--format",
+        "{{.Id}}",
+        "stateweaver-materialized-lab:local",
     ):
         return exact
     if (

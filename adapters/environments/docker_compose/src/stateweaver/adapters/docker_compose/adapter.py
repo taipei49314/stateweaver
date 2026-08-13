@@ -39,6 +39,11 @@ from .materialization import (
     MaterializedProviderReceipt,
     ProviderName,
 )
+from .materialized_lab_runtime import (
+    MaterializedLabDockerRuntime,
+    MaterializedLabRunReceipt,
+    MaterializedLabRunRequest,
+)
 from .runner import (
     MAX_PROCESS_STREAM_BYTES,
     MAX_STATE_ARCHIVE_BYTES,
@@ -826,6 +831,19 @@ class RealDockerComposeEnvironmentAdapter(_FixedDockerComposeEnvironmentAdapter)
                 if root is not None:
                     await self.destroy(root)
         return receipt
+
+    async def run_m5_materialized_application(
+        self,
+        request: MaterializedLabRunRequest,
+    ) -> MaterializedLabRunReceipt:
+        """Run the fixed FastAPI application witness in a separate Compose project.
+
+        The returned type is intentionally unqualified until the application has
+        atomically checkpointed the six real providers.  It cannot be used as a
+        substitute for the provider-side M5 receipt or an SW-M5 admission.
+        """
+
+        return await MaterializedLabDockerRuntime(runner=self._runner).run(request)
 
     async def _restore_m4_winner_state(
         self,

@@ -1,0 +1,33 @@
+FROM python:3.13-alpine3.22@sha256:e81548ac35b07a3bd4805f275107592ef458b1e893c0e04d45aedaa19416cca5
+
+WORKDIR /opt/stateweaver
+ENV PYTHONPATH=/opt/stateweaver/contracts:/opt/stateweaver/policy:/opt/stateweaver/lab:/opt/stateweaver/adapter \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+# This is the uv.lock-derived third-party closure for the four workspace source
+# packages copied below.  Wheels are mandatory so pip cannot fetch an unpinned
+# PEP 517 build environment if no CPython 3.13 musllinux wheel matches.
+COPY adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/materialized_lab_requirements.txt /opt/stateweaver/materialized_lab_requirements.txt
+RUN python -m pip install \
+      --require-hashes \
+      --no-deps \
+      --only-binary=:all: \
+      --no-compile \
+      --requirement /opt/stateweaver/materialized_lab_requirements.txt
+
+# The image contains the actual deterministic FastAPI lab and the shared
+# contracts/policy/runtime implementation, not installed workspace packages or
+# a canned HTTP response fixture.  The namespace layout avoids importing the
+# adapter's broad host-only __init__ (and its unrelated workspace dependencies).
+COPY packages/contracts/src/stateweaver/contracts /opt/stateweaver/contracts/stateweaver/contracts
+COPY packages/policy/src/stateweaver/policy /opt/stateweaver/policy/stateweaver/policy
+COPY labs/multitenant-saas/stateweaver_lab /opt/stateweaver/lab/stateweaver_lab
+COPY adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/errors.py /opt/stateweaver/adapter/stateweaver/adapters/docker_compose/errors.py
+COPY adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/runner.py /opt/stateweaver/adapter/stateweaver/adapters/docker_compose/runner.py
+COPY adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/materialized_lab_runtime.py /opt/stateweaver/adapter/stateweaver/adapters/docker_compose/materialized_lab_runtime.py
+
+RUN mkdir -p /state/filesystem /state/session /state/clock \
+    && chown -R 65532:65532 /opt/stateweaver /state
+
+USER 65532:65532

@@ -12,9 +12,18 @@ from .materialization import (
     MaterializedProviderReceipt,
     ProviderStateChange,
 )
+from .materialized_lab_runtime import (
+    ApplicationImageBinding,
+    ApplicationRouteTrace,
+    MaterializedLabDockerRuntime,
+    MaterializedLabRunReceipt,
+    MaterializedLabRunRequest,
+)
 from .runner import ProcessResult, ProcessRunner
 
 __all__ = [
+    "ApplicationImageBinding",
+    "ApplicationRouteTrace",
     "ComposeAdapterError",
     "ComposeUnavailableError",
     "DockerComposeEnvironmentAdapter",
@@ -24,6 +33,9 @@ __all__ = [
     "M5MaterializedProviderStep",
     "M5ProviderDigest",
     "MaterializedCandidateRequest",
+    "MaterializedLabDockerRuntime",
+    "MaterializedLabRunReceipt",
+    "MaterializedLabRunRequest",
     "MaterializedProviderReceipt",
     "ProcessResult",
     "ProcessRunner",

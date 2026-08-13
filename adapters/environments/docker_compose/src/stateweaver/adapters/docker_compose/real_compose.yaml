@@ -117,6 +117,42 @@ services:
       retries: 6
       start_period: 5s
 
+  materialized-lab:
+    image: stateweaver-materialized-lab:local
+    build:
+      context: ../../../../../../../
+      dockerfile: adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/MaterializedLabDockerfile
+    pull_policy: never
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      selenium: {condition: service_healthy}
+      provider-bridge: {condition: service_healthy}
+    read_only: true
+    init: true
+    user: "65532:65532"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 384m
+    cpus: 1.0
+    networks: [internal]
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - storage:/state/filesystem:ro
+      - session:/state/session:ro
+      - clock:/state/clock:ro
+    entrypoint: ["python", "-m", "stateweaver.adapters.docker_compose.materialized_lab_runtime"]
+    command: ["serve"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "stateweaver.adapters.docker_compose.materialized_lab_runtime", "health"]
+      interval: 10s
+      timeout: 30s
+      retries: 6
+      start_period: 5s
+
 networks:
   internal:
     internal: true
