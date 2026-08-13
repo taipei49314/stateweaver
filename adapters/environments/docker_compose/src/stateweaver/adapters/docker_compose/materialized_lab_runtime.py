@@ -94,7 +94,7 @@ class MaterializedLabRunRequest(_RuntimeModel):
         "same_tenant_document",
     ]
     plan_id: str = Field(pattern=r"^plan\.m5\.[a-z0-9.-]+$")
-    root_seed_id: str = Field(pattern=r"^root\.m5\.[a-z0-9.-]+$")
+    root_seed_id: str = Field(pattern=r"^root\.(?:m4|m5)\.[a-z0-9.-]+$")
     root_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     plan_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     m4_state_binding_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")

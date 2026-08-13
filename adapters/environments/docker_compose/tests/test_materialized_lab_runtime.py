@@ -457,6 +457,16 @@ def test_request_rejects_policy_or_typed_action_substitution() -> None:
         MaterializedLabRunRequest.model_validate(
             request.model_dump(mode="python") | {"policy_request_bytes": (b"{}",)}
         )
+
+
+def test_request_accepts_compiled_m4_primary_root_seed() -> None:
+    request = _request()
+    rebound = request.model_copy(update={"root_seed_id": "root.m4.real-provider.a1b2c3"})
+
+    assert (
+        MaterializedLabRunRequest.model_validate(rebound.model_dump(mode="python")).root_seed_id
+        == "root.m4.real-provider.a1b2c3"
+    )
     with pytest.raises(ValueError, match="closed lab registry"):
         MaterializedLabRunRequest.model_validate(
             request.model_dump(mode="python")
