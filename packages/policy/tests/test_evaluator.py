@@ -31,10 +31,13 @@ from stateweaver.policy import (
     BudgetSnapshot,
     DeterministicPolicyEvaluator,
     EvaluationConstraints,
+    PolicyAuthorization,
+    PolicyAuthorizationDeniedError,
     PolicyOutcome,
     PolicyReasonCode,
     PolicyRequest,
     evaluate_policy,
+    verify_policy_authorization,
 )
 
 NOW = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
@@ -145,6 +148,82 @@ def make_request(
         evaluated_at=NOW,
         constraints=constraints or EvaluationConstraints(),
     )
+
+
+def test_policy_authorization_rejects_request_scope_budget_and_idempotency_substitution() -> None:
+    envelope = make_envelope()
+    request = make_request(envelope=envelope)
+    authorization = PolicyAuthorization.bind(envelope, request, evaluate_policy(request))
+
+    assert (
+        verify_policy_authorization(
+            authorization,
+            envelope,
+            at=NOW,
+            requests_used=0,
+            write_requests_used=0,
+            request=request,
+        )
+        == authorization
+    )
+
+    substitutions = (
+        envelope.model_copy(update={"idempotency_key": "sha256:" + "b" * 64}),
+        envelope.model_copy(update={"timeout_ms": 29_999}),
+    )
+    for substituted in substitutions:
+        with pytest.raises(PolicyAuthorizationDeniedError):
+            verify_policy_authorization(
+                authorization,
+                substituted,
+                at=NOW,
+                requests_used=0,
+                write_requests_used=0,
+            )
+    with pytest.raises(PolicyAuthorizationDeniedError):
+        verify_policy_authorization(
+            authorization,
+            envelope,
+            at=NOW,
+            requests_used=1,
+            write_requests_used=0,
+        )
+    with pytest.raises(PolicyAuthorizationDeniedError):
+        verify_policy_authorization(
+            authorization,
+            envelope,
+            at=NOW,
+            requests_used=0,
+            write_requests_used=0,
+            request=make_request(
+                manifest=make_manifest(expires_at=NOW + timedelta(minutes=4)),
+                envelope=envelope,
+            ),
+        )
+
+
+def test_policy_authorization_rejects_expiry_and_policy_request_substitution() -> None:
+    envelope = make_envelope()
+    request = make_request(envelope=envelope)
+    authorization = PolicyAuthorization.bind(envelope, request, evaluate_policy(request))
+
+    with pytest.raises(PolicyAuthorizationDeniedError):
+        verify_policy_authorization(
+            authorization,
+            envelope,
+            at=NOW + timedelta(minutes=6),
+            requests_used=0,
+            write_requests_used=0,
+        )
+    with pytest.raises(ValueError, match="deterministic evaluation"):
+        PolicyAuthorization.bind(
+            envelope,
+            make_request(
+                manifest=make_manifest(requirement=AuthorizationRequirement.DENIED),
+                envelope=envelope,
+            ),
+            authorization.decision,
+        )
 
 
 def test_localhost_target_is_allowed() -> None:

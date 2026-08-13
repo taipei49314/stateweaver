@@ -1,5 +1,7 @@
 """Public API for the fail-closed synthetic in-process lab adapter."""
 
+from stateweaver.policy import PolicyAuthorization
+
 from .environment import (
     ADAPTER_NAME,
     ADAPTER_VERSION,
@@ -25,7 +27,6 @@ from .registry import (
     FixedLabActionRegistry,
     LabAction,
     LabHttpActionSpec,
-    PolicyAuthorization,
     lab_action_artifact,
     lab_http_action_spec,
 )

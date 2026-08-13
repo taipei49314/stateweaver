@@ -11,6 +11,7 @@ from typing import Annotated, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from stateweaver.adapters.docker_compose import (
+    M4MaterializedStateBinding,
     MaterializedCandidateRequest,
     MaterializedProviderReceipt,
     RealDockerComposeEnvironmentAdapter,
@@ -250,6 +251,7 @@ class MaterializedSearchQualificationReceipt(_QualificationModel):
     winner: SearchCandidate
     winner_priority: Annotated[float, Field(ge=0.0)]
     winner_state_fingerprint: Sha256Digest
+    winner_materialized_state: M4MaterializedStateBinding
     winner_transition: TransitionFragment
     released_allocation_ids: tuple[ContractId, ...]
     residual_allocation_ids: tuple[ContractId, ...]
@@ -353,6 +355,7 @@ class MaterializedSearchQualificationReceipt(_QualificationModel):
         if (
             self.winner != expected_winner
             or self.winner_state_fingerprint != expected_winner.state_fingerprint
+            or self.winner_materialized_state != self.provider_receipts[-1].state_binding
             or self.winner_transition != transitions[-1]
             or expected_winner.transition_fragments != transitions
             or self.winner_priority
@@ -609,6 +612,7 @@ async def _execute_materialized_search(
         "winner": winner,
         "winner_priority": winner.scores.priority(winner.uncertainty.value, 0.25),
         "winner_state_fingerprint": winner.state_fingerprint,
+        "winner_materialized_state": port.provider_receipts[-1].state_binding,
         "winner_transition": chain[-1].projection.transition_fragment,
         "released_allocation_ids": port.released_allocation_ids,
         "residual_allocation_ids": port.residual_allocation_ids,

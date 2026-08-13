@@ -30,6 +30,7 @@ from stateweaver.worlds import (
 
 from .errors import ComposeAdapterError, ComposeUnavailableError
 from .materialization import (
+    M4MaterializedStateBinding,
     M5MaterializedProviderRunReceipt,
     M5MaterializedProviderRunRequest,
     M5MaterializedProviderStep,
@@ -226,6 +227,7 @@ class _FixedDockerComposeEnvironmentAdapter:
             target=stored.manifest.target,
             root_snapshot_id=stored.manifest.root_snapshot_id,
             image_identity=image_identity,
+            source_snapshot=stored.manifest,
         )
         live = self._require_live(env)
         try:
@@ -336,12 +338,36 @@ class _FixedDockerComposeEnvironmentAdapter:
                 tick=closed_request.tick,
             )
             try:
+                if live.source_snapshot is None:
+                    raise ComposeAdapterError("M4 materialization has no retained source snapshot")
+                provider_state_digest = sha256_digest(
+                    {
+                        provider: after[provider]
+                        for provider in (
+                            "cache",
+                            "clock",
+                            "database",
+                            "filesystem",
+                            "queue",
+                            "session",
+                        )
+                    }
+                )
+                state_binding = M4MaterializedStateBinding.create(
+                    adapter_pin=live.handle.adapter,
+                    bridge_image_id=live.image_identity.bridge,
+                    provider_image_refs=tuple(sorted(self._profile.provider_image_refs)),
+                    source_snapshot=live.source_snapshot,
+                    after_archive_digest=_archive_digest(after_archive),
+                    provider_state_digest=provider_state_digest,
+                )
                 return MaterializedProviderReceipt.create(
                     request=closed_request,
                     environment_id=live.handle.environment_id,
                     before=before,
                     after=after,
                     elapsed_ns=elapsed_ns,
+                    state_binding=state_binding,
                 )
             except ValueError:
                 raise ComposeAdapterError("materialized provider oracle failed") from None
@@ -352,6 +378,7 @@ class _FixedDockerComposeEnvironmentAdapter:
         target: TargetSpec,
         root_snapshot_id: str | None,
         image_identity: _ImageIdentity,
+        source_snapshot: SnapshotManifest | None = None,
     ) -> EnvironmentHandle:
         project, environment_id = self._allocate_environment_identity()
         namespace = WorldNamespace(
@@ -375,6 +402,7 @@ class _FixedDockerComposeEnvironmentAdapter:
             root_snapshot_id=root_snapshot_id or f"root:{environment_id}",
             handle=handle,
             image_identity=image_identity,
+            source_snapshot=source_snapshot,
         )
         try:
             await self._compose(project, "up", "--detach", "--wait", "--no-build")
@@ -841,6 +869,7 @@ class _LiveWorld:
     root_snapshot_id: str
     handle: EnvironmentHandle
     image_identity: _ImageIdentity
+    source_snapshot: SnapshotManifest | None
     operation_lock: asyncio.Lock = field(default_factory=asyncio.Lock, compare=False, repr=False)
 
 
@@ -925,6 +954,12 @@ def _hash(value: object) -> str:
         "utf-8"
     )
     return f"sha256:{sha256(encoded).hexdigest()}"
+
+
+def _archive_digest(archive: bytes) -> str:
+    """Hash the exact canonical provider archive retained by the bridge."""
+
+    return f"sha256:{sha256(archive).hexdigest()}"
 
 
 def _require_materialized_archive(archive: bytes, *, marker: str, tick: int) -> None:

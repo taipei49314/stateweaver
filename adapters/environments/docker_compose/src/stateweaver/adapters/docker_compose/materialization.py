@@ -13,6 +13,7 @@ from stateweaver.contracts import (
     WorldTier,
     sha256_digest,
 )
+from stateweaver.worlds import AdapterPin, SnapshotManifest
 
 ProviderName = Literal["cache", "clock", "database", "filesystem", "queue", "session"]
 _PROVIDERS: tuple[ProviderName, ...] = (
@@ -110,6 +111,79 @@ class ProviderStateChange(_MaterializationModel):
         return self
 
 
+class M4MaterializedStateBinding(_MaterializationModel):
+    """Content-derived provenance for one M4 six-provider materialization.
+
+    The current M4 world has no application container.  ``application_image_binding``
+    therefore records that bounded fact explicitly instead of assigning the bridge
+    image to an application that was not run.
+    """
+
+    schema_version: Literal["stateweaver-m4-materialized-state-binding-v1"]
+    adapter_pin: AdapterPin
+    bridge_image_id: Sha256Digest
+    provider_image_refs: tuple[str, ...]
+    provider_image_set_digest: Sha256Digest
+    source_snapshot: SnapshotManifest
+    source_snapshot_id: str
+    source_snapshot_manifest_digest: Sha256Digest
+    source_snapshot_state_fingerprint: Sha256Digest
+    after_archive_digest: Sha256Digest
+    provider_state_digest: Sha256Digest
+    application_image_binding: Literal["UNOBSERVED"]
+    application_image_lineage_status: Literal["PENDING_APPLICATION_EXECUTION"]
+    binding_digest: Sha256Digest
+
+    @model_validator(mode="after")
+    def binding_is_content_derived(self) -> M4MaterializedStateBinding:
+        if (
+            not self.source_snapshot_id
+            or len(set(self.provider_image_refs)) != len(self.provider_image_refs)
+            or tuple(sorted(self.provider_image_refs)) != self.provider_image_refs
+            or self.provider_image_set_digest != sha256_digest(self.provider_image_refs)
+            or self.source_snapshot.adapter != self.adapter_pin
+            or self.source_snapshot_id != self.source_snapshot.snapshot_id
+            or self.source_snapshot_manifest_digest != sha256_digest(self.source_snapshot)
+            or self.source_snapshot_state_fingerprint != self.source_snapshot.state_fingerprint
+        ):
+            raise ValueError("M4 materialized image binding is invalid")
+        expected = sha256_digest(self.model_dump(mode="python", exclude={"binding_digest"}))
+        if self.binding_digest != expected:
+            raise ValueError("M4 materialized state binding digest is invalid")
+        return self
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        adapter_pin: AdapterPin,
+        bridge_image_id: str,
+        provider_image_refs: tuple[str, ...],
+        source_snapshot: SnapshotManifest,
+        after_archive_digest: str,
+        provider_state_digest: str,
+    ) -> M4MaterializedStateBinding:
+        if source_snapshot.adapter != adapter_pin:
+            raise ValueError("M4 source snapshot adapter does not match materialization")
+        refs = tuple(sorted(provider_image_refs))
+        values: dict[str, object] = {
+            "schema_version": "stateweaver-m4-materialized-state-binding-v1",
+            "adapter_pin": adapter_pin,
+            "bridge_image_id": bridge_image_id,
+            "provider_image_refs": refs,
+            "provider_image_set_digest": sha256_digest(refs),
+            "source_snapshot": source_snapshot,
+            "source_snapshot_id": source_snapshot.snapshot_id,
+            "source_snapshot_manifest_digest": sha256_digest(source_snapshot),
+            "source_snapshot_state_fingerprint": source_snapshot.state_fingerprint,
+            "after_archive_digest": after_archive_digest,
+            "provider_state_digest": provider_state_digest,
+            "application_image_binding": "UNOBSERVED",
+            "application_image_lineage_status": "PENDING_APPLICATION_EXECUTION",
+        }
+        return cls.model_validate({**values, "binding_digest": sha256_digest(values)})
+
+
 class MaterializedProviderReceipt(_MaterializationModel):
     """Atomic before/mutate/after observation from one real-provider sibling."""
 
@@ -123,6 +197,7 @@ class MaterializedProviderReceipt(_MaterializationModel):
     changed_provider_count: Literal[6]
     elapsed_ns: Annotated[int, Field(ge=0)]
     provider_state_digest: Sha256Digest
+    state_binding: M4MaterializedStateBinding
     oracle_passed: Literal[True]
     receipt_digest: Sha256Digest
 
@@ -137,6 +212,8 @@ class MaterializedProviderReceipt(_MaterializationModel):
         after = {item.provider: item.after_sha256 for item in self.providers}
         if self.provider_state_digest != sha256_digest(after):
             raise ValueError("materialized provider state digest is invalid")
+        if self.state_binding.provider_state_digest != self.provider_state_digest:
+            raise ValueError("materialized provider state binding does not match receipt")
         expected = sha256_digest(self.model_dump(mode="python", exclude={"receipt_digest"}))
         if self.receipt_digest != expected:
             raise ValueError("materialization receipt digest is invalid")
@@ -151,6 +228,7 @@ class MaterializedProviderReceipt(_MaterializationModel):
         before: dict[str, str],
         after: dict[str, str],
         elapsed_ns: int,
+        state_binding: M4MaterializedStateBinding,
     ) -> MaterializedProviderReceipt:
         if tuple(sorted(before)) != _PROVIDERS or tuple(sorted(after)) != _PROVIDERS:
             raise ValueError("materialization capture does not cover the fixed providers")
@@ -162,6 +240,11 @@ class MaterializedProviderReceipt(_MaterializationModel):
             )
             for provider in _PROVIDERS
         )
+        provider_state_digest = sha256_digest(
+            {item.provider: item.after_sha256 for item in providers}
+        )
+        if state_binding.provider_state_digest != provider_state_digest:
+            raise ValueError("materialized state binding does not match provider state")
         values: dict[str, object] = {
             "schema_version": "stateweaver-m4-provider-materialization-v1",
             "request": request,
@@ -172,9 +255,8 @@ class MaterializedProviderReceipt(_MaterializationModel):
             "providers": providers,
             "changed_provider_count": 6,
             "elapsed_ns": elapsed_ns,
-            "provider_state_digest": sha256_digest(
-                {item.provider: item.after_sha256 for item in providers}
-            ),
+            "provider_state_digest": provider_state_digest,
+            "state_binding": state_binding,
             "oracle_passed": True,
         }
         return cls.model_validate({**values, "receipt_digest": sha256_digest(values)})
@@ -336,6 +418,7 @@ class M5MaterializedProviderRunReceipt(_MaterializationModel):
 
 
 __all__ = [
+    "M4MaterializedStateBinding",
     "M5MaterializedProviderRunReceipt",
     "M5MaterializedProviderRunRequest",
     "M5MaterializedProviderStep",

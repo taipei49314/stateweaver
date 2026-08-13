@@ -396,6 +396,14 @@ async def test_real_profile_materializes_one_closed_observed_candidate() -> None
     assert receipt.provider_state_digest == sha256_digest(
         {item.provider: item.after_sha256 for item in receipt.providers}
     )
+    assert receipt.state_binding.adapter_pin == adapter.capabilities().pin
+    assert receipt.state_binding.bridge_image_id == _IMAGE_ID
+    assert receipt.state_binding.source_snapshot_id == root_snapshot.snapshot_id
+    assert (
+        receipt.state_binding.source_snapshot_state_fingerprint == root_snapshot.state_fingerprint
+    )
+    assert receipt.state_binding.provider_state_digest == receipt.provider_state_digest
+    assert receipt.state_binding.application_image_binding == "UNOBSERVED"
 
     await adapter.destroy(child)
     await adapter.destroy(root)

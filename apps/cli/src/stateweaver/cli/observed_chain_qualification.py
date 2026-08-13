@@ -7,7 +7,6 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -23,59 +22,52 @@ from stateweaver.adapters.in_process_lab import (
     ORACLE_ID,
     FixedLabActionRegistry,
     InProcessLabEnvironment,
-    PolicyAuthorization,
-    lab_action_artifact,
 )
-from stateweaver.compiler import CompilerFragment, TerminalGoal
-from stateweaver.compiler.models import FragmentBinding
 from stateweaver.contracts import (
     ActionEnvelope,
-    ActionGuard,
     EffectOperation,
-    EnvironmentMode,
-    ExpectedEffect,
-    HttpRequestAction,
     OracleOutcome,
-    RequestedBy,
-    RequesterType,
-    ScopeAction,
-    ScopeActions,
-    ScopeIdentities,
-    ScopeLimits,
     ScopeManifest,
-    ScopeMetadata,
-    ScopeSpec,
-    ScopeTargets,
-    ScopeValidity,
     Sha256Digest,
-    TargetSelector,
     canonical_json_bytes,
     sha256_digest,
 )
-from stateweaver.policy import BudgetSnapshot, PolicyRequest, evaluate_policy
 from stateweaver.replay import (
     DeterminismClassification,
     DeterminismReport,
-    OracleExpectation,
     ReplayKernel,
     ReplayObservation,
     ReplayPlan,
     ReplayRunResult,
     ReplayRunStatus,
-    ReplayStep,
     RootSeed,
     StateCapture,
 )
-from stateweaver.workflows.world import ObservedChainAdmission, compile_observed_promotion
+from stateweaver.workflows.world import ObservedChainAdmission
 from stateweaver_lab import LabMode
 
+from .m5_plan import (
+    M5ControlName,
+    M5ControlPlan,
+    M5ExecutionPlan,
+    compile_m5_plan,
+    m5_scope,
+)
+from .m5_plan import (
+    _compiler_admission as _compile_m5_admission,
+)
+from .m5_plan import (
+    _fresh_plan as _compile_m5_fresh_plan,
+)
+from .m5_plan import (
+    _fresh_plan_matches_admission as _m5_fresh_plan_matches_admission,
+)
 from .materialized_search_qualification import MaterializedSearchQualificationReceipt
 from .network_guard import deny_network_egress
-from .runtime_qualification import OBSERVED_CHAIN_LENGTH, OBSERVED_LAB_ACTIONS
+from .runtime_qualification import OBSERVED_CHAIN_LENGTH
 
 M5_REPLAY_COUNT = 5
 _MARKER_RE = re.compile(r"^[0-9a-f]{40}$")
-_EVALUATED_AT = datetime(2026, 7, 29, tzinfo=UTC)
 _LIMITATIONS = (
     "This qualifies exact-byte hosted M4 materialization input, five vulnerable actual-ASGI "
     "clean-root replays, four negative controls, and the identical patched plan boundary.",
@@ -90,14 +82,6 @@ class ObservedChainQualificationError(ValueError):
 
 class _M5Model(BaseModel):
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-
-type M5ControlName = Literal[
-    "masked_response",
-    "mock_only_response",
-    "fresh_session",
-    "same_tenant_document",
-]
 
 
 class M5NegativeControlReceipt(_M5Model):
@@ -254,33 +238,9 @@ def _fresh_plan_matches_admission(
     plan: ReplayPlan,
     admission: ObservedChainAdmission,
 ) -> bool:
-    compiled = admission.compiled_chain
-    if len(plan.steps) != OBSERVED_CHAIN_LENGTH or len(plan.steps) != len(
-        compiled.action_envelopes
-    ):
-        return False
-    for step, source in zip(plan.steps, compiled.action_envelopes, strict=True):
-        action = step.action
-        if (
-            action.action_id != source.action_id
-            or action.experiment_id != source.experiment_id
-            or action.world_id != source.world_id
-            or action.scope_action is not source.scope_action
-            or action.action != source.action
-            or action.risk_class is not source.risk_class
-            or action.idempotency_key != source.idempotency_key
-            or action.preconditions != source.preconditions
-            or action.expected_effects != source.expected_effects
-            or action.timeout_ms != source.timeout_ms
-        ):
-            return False
-    final_expectations = plan.steps[-1].oracle_expectations
-    return (
-        len(final_expectations) == 1
-        and final_expectations[0].oracle_id == ORACLE_ID
-        and final_expectations[0].allowed_results == frozenset({OracleOutcome.VIOLATED.value})
-        and all(not item.oracle_expectations for item in plan.steps[:-1])
-    )
+    """Compatibility projection of the shared M5 plan validation."""
+
+    return _m5_fresh_plan_matches_admission(plan, admission)
 
 
 def _read_m4(path: Path) -> tuple[bytes, MaterializedSearchQualificationReceipt]:
@@ -304,167 +264,24 @@ def _read_m4(path: Path) -> tuple[bytes, MaterializedSearchQualificationReceipt]
 
 
 def _compiler_admission(m4: MaterializedSearchQualificationReceipt) -> ObservedChainAdmission:
-    allocation_id = m4.stages[-1].promotions[0].allocation.allocation_id
-    fragments: list[CompilerFragment] = []
-    previous: str | None = None
-    for qualification in m4.observed_chain:
-        fragment = qualification.projection.transition_fragment
-        source_envelope = qualification.projection.action_envelope
-        action = source_envelope.model_copy(
-            update={
-                "world_id": allocation_id,
-                "policy_decision_ref": m4.winner.gates.policy_decision_ref,
-                "preconditions": tuple(
-                    ActionGuard(path=item.path, expected=item.value)
-                    for item in fragment.preconditions
-                ),
-                "expected_effects": tuple(
-                    ExpectedEffect(path=item.path, operation=item.operation, value=item.value)
-                    for item in fragment.effects
-                ),
-            }
-        )
-        typed = action.action
-        if not isinstance(typed, HttpRequestAction):
-            raise ObservedChainQualificationError("M5 observed action is not HTTP")
-        fragments.append(
-            CompilerFragment(
-                fragment=fragment,
-                envelope=action,
-                world_id=allocation_id,
-                binding=FragmentBinding(
-                    identity_handle=typed.identity_handle,
-                    artifact_handle=typed.body_artifact,
-                ),
-                after=() if previous is None else (previous,),
-            )
-        )
-        previous = fragment.transition_id
-    goal = TerminalGoal(
-        goal_id="goal.m5.observed-chain",
-        conditions=tuple(
-            condition
-            for qualification in m4.observed_chain
-            for condition in qualification.projection.transition_fragment.observables
-        ),
-    )
-    return compile_observed_promotion(
-        batch=m4.stages[-1].search_batch,
-        workflow=m4.stages[-1],
-        candidate_id=m4.winner.candidate_id,
-        chain_id="chain.m5.observed-clean-root",
-        fragments=fragments,
-        goal=goal,
-    )
+    """Compatibility entrypoint retained for focused legacy regression tests."""
+
+    return _compile_m5_admission(m4)
 
 
 def _scope() -> ScopeManifest:
-    return ScopeManifest(
-        metadata=ScopeMetadata(name="m5-clean-root"),
-        spec=ScopeSpec(
-            environmentMode=EnvironmentMode.SOURCE_BACKED,
-            targets=ScopeTargets(
-                include=(TargetSelector(host="localhost", ports=(80,), paths=("/v1/lab/**",)),)
-            ),
-            identities=ScopeIdentities(allowed=("test_user_a", "test_user_b", "test_admin")),
-            actions=ScopeActions(allow=(ScopeAction.HTTP_REQUEST,)),
-            limits=ScopeLimits(
-                requestsPerSecond=100.0,
-                concurrentMaterializedWorlds=1,
-                maxWriteRequests=8,
-            ),
-            validity=ScopeValidity(
-                notBefore=datetime(2020, 1, 1, tzinfo=UTC),
-                expiresAt=datetime(2100, 1, 1, tzinfo=UTC),
-            ),
-        ),
-    )
+    """Compatibility entrypoint for the sole shared M5 policy scope."""
+
+    return m5_scope()
 
 
 def _fresh_plan(
     admission: ObservedChainAdmission,
 ) -> tuple[ReplayPlan, FixedLabActionRegistry]:
-    compiled = admission.compiled_chain
-    candidate = ReplayPlan(
-        plan_id="plan.m5.clean-root",
-        root_seed_id=compiled.root_seed_id,
-        steps=tuple(
-            ReplayStep(
-                step_id=f"step.{index:02d}",
-                action=action,
-                oracle_expectations=(
-                    (
-                        OracleExpectation(
-                            oracle_id=ORACLE_ID,
-                            allowed_results=frozenset({OracleOutcome.VIOLATED.value}),
-                        ),
-                    )
-                    if index == len(compiled.action_envelopes)
-                    else ()
-                ),
-                timeout_seconds=action.timeout_ms / 1_000,
-            )
-            for index, action in enumerate(compiled.action_envelopes, start=1)
-        ),
-    )
-    actions: list[ActionEnvelope] = []
-    authorizations: dict[str, PolicyAuthorization] = {}
-    write_requests_used = 0
-    for index, step in enumerate(candidate.steps, start=1):
-        decision_ref = f"policy.m5.clean-root-{index:02d}"
-        action = step.action.model_copy(
-            update={
-                "policy_decision_ref": decision_ref,
-                "requested_by": RequestedBy(
-                    type=RequesterType.WORKFLOW,
-                    role="m5_clean_root",
-                ),
-                "sequence": index,
-            }
-        )
-        request = PolicyRequest(
-            scope_manifest=_scope(),
-            action_envelope=action,
-            budget=BudgetSnapshot(
-                requests_in_window=index - 1,
-                request_window_seconds=1.0,
-                write_requests_used=write_requests_used,
-            ),
-            evaluated_at=_EVALUATED_AT,
-        )
-        decision = evaluate_policy(request)
-        if not decision.allowed:
-            raise ObservedChainQualificationError("fresh M5 policy did not allow the plan")
-        actions.append(action)
-        authorizations[decision_ref] = PolicyAuthorization.bind(action, request, decision)
-        typed_action = action.action
-        if not isinstance(typed_action, HttpRequestAction) or typed_action.method is None:
-            raise ObservedChainQualificationError("fresh M5 action is not concrete HTTP")
-        if typed_action.method.value not in {"GET", "HEAD", "OPTIONS"}:
-            write_requests_used += 1
-    return (
-        ReplayPlan(
-            plan_id=candidate.plan_id,
-            root_seed_id=candidate.root_seed_id,
-            steps=tuple(
-                ReplayStep(
-                    step_id=step.step_id,
-                    action=action,
-                    oracle_expectations=step.oracle_expectations,
-                    timeout_seconds=action.timeout_ms / 1_000,
-                )
-                for step, action in zip(candidate.steps, actions, strict=True)
-            ),
-        ),
-        FixedLabActionRegistry(
-            by_action_id={
-                action.action_id: lab
-                for action, lab in zip(actions, OBSERVED_LAB_ACTIONS, strict=True)
-            },
-            by_body_artifact={lab_action_artifact(item): item for item in OBSERVED_LAB_ACTIONS},
-            policy_authorizations=authorizations,
-        ),
-    )
+    """Compatibility projection of the shared fresh-plan compiler."""
+
+    plan, _, registry = _compile_m5_fresh_plan(admission)
+    return plan, registry
 
 
 class _ExactObservedEnvironment:
@@ -549,51 +366,26 @@ async def _run_exact_plan(
     return roots[0], tuple(runs), cleanup_count
 
 
-async def _run_negative_controls() -> tuple[tuple[M5NegativeControlReceipt, ...], int]:
-    from .foundation import _negative_control_actions, _plan_and_registry
-
-    selected = {
-        name: (actions, expected_outcome, expected_status)
-        for name, actions, expected_outcome, expected_status in _negative_control_actions()
-        if name
-        in {
-            "masked_response",
-            "mock_only_response",
-            "fresh_session",
-            "same_tenant_document",
-        }
-    }
-    ordered_names: tuple[M5ControlName, ...] = (
-        "masked_response",
-        "mock_only_response",
-        "fresh_session",
-        "same_tenant_document",
-    )
-    if tuple(name for name in ordered_names if name in selected) != ordered_names:
-        raise ObservedChainQualificationError("M5 negative-control set is incomplete")
+async def _run_negative_controls(
+    controls: tuple[M5ControlPlan, ...],
+) -> tuple[tuple[M5NegativeControlReceipt, ...], int]:
     receipts: list[M5NegativeControlReceipt] = []
     cleanup_count = 0
-    for name in ordered_names:
-        actions, expected_outcome, expected_status = selected[name]
-        plan, registry = _plan_and_registry(
-            plan_id=f"plan.m5.control-{name}",
-            actions=actions,
-            allowed_final_outcomes=frozenset({expected_outcome.value}),
-        )
+    for control in controls:
         root, results, cleaned = await _run_exact_plan(
             mode=LabMode.VULNERABLE,
-            plan=plan,
-            registry=registry,
-            run_ids=(f"run.m5.control-{name}",),
+            plan=control.replay_plan,
+            registry=control.registry,
+            run_ids=(f"run.m5.control-{control.name}",),
         )
         cleanup_count += cleaned
         receipts.append(
             M5NegativeControlReceipt(
-                name=name,
-                expected_outcome=expected_outcome,
-                expected_status=expected_status,
-                plan=plan,
-                plan_digest=sha256_digest(plan),
+                name=control.name,
+                expected_outcome=control.expected_outcome,
+                expected_status=control.expected_status,
+                plan=control.replay_plan,
+                plan_digest=sha256_digest(control.replay_plan),
                 root=root,
                 root_digest=sha256_digest(root),
                 result=results[0],
@@ -614,8 +406,9 @@ class _M5Execution:
     cleanup_count: int
 
 
-async def _execute(admission: ObservedChainAdmission) -> _M5Execution:
-    plan, registry = _fresh_plan(admission)
+async def _execute(execution_plan: M5ExecutionPlan) -> _M5Execution:
+    plan = execution_plan.replay_plan
+    registry = execution_plan.registry
     root, runs, vulnerable_cleanup_count = await _run_exact_plan(
         mode=LabMode.VULNERABLE,
         plan=plan,
@@ -634,7 +427,9 @@ async def _execute(admission: ObservedChainAdmission) -> _M5Execution:
         or patched_root.clock_epoch != root.clock_epoch
     ):
         raise ObservedChainQualificationError("M5 patched root identity changed")
-    negative_controls, control_cleanup_count = await _run_negative_controls()
+    negative_controls, control_cleanup_count = await _run_negative_controls(
+        execution_plan.negative_controls
+    )
     signatures = tuple(item.deterministic_signature() for item in runs)
     report = DeterminismReport(
         plan_id=plan.plan_id,
@@ -672,11 +467,12 @@ def qualify_observed_chain(
     m4_bytes, m4 = _read_m4(m4_receipt_path)
     if m4.repository_marker != repository_marker:
         raise ObservedChainQualificationError("M4 receipt source does not match")
-    admission = _compiler_admission(m4)
+    execution_plan = compile_m5_plan(m4)
+    admission = execution_plan.compiler_admission
 
     async def guarded() -> tuple[_M5Execution, int]:
         with deny_network_egress() as guard:
-            execution = await _execute(admission)
+            execution = await _execute(execution_plan)
         return execution, guard.denied_attempts
 
     execution, denied = asyncio.run(guarded())

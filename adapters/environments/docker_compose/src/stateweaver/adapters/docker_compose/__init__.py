@@ -3,6 +3,7 @@
 from .adapter import DockerComposeEnvironmentAdapter, RealDockerComposeEnvironmentAdapter
 from .errors import ComposeAdapterError, ComposeUnavailableError
 from .materialization import (
+    M4MaterializedStateBinding,
     M5MaterializedProviderRunReceipt,
     M5MaterializedProviderRunRequest,
     M5MaterializedProviderStep,
@@ -17,6 +18,7 @@ __all__ = [
     "ComposeAdapterError",
     "ComposeUnavailableError",
     "DockerComposeEnvironmentAdapter",
+    "M4MaterializedStateBinding",
     "M5MaterializedProviderRunReceipt",
     "M5MaterializedProviderRunRequest",
     "M5MaterializedProviderStep",

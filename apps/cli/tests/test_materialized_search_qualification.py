@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from stateweaver.adapters.docker_compose import (
+    M4MaterializedStateBinding,
     M5MaterializedProviderRunReceipt,
     M5MaterializedProviderRunRequest,
     M5MaterializedProviderStep,
@@ -218,6 +219,7 @@ class _MemoryRealProviderAdapter:
         self._live: set[str] = set()
         self.allocated = 0
         self.max_live = 0
+        self._fork_snapshot: SnapshotManifest | None = None
 
     def _handle(self) -> EnvironmentHandle:
         self._counter += 1
@@ -272,6 +274,7 @@ class _MemoryRealProviderAdapter:
 
     async def fork(self, snapshot: SnapshotManifest) -> EnvironmentHandle:
         assert snapshot.root_snapshot_id == "root:m4-memory"
+        self._fork_snapshot = snapshot
         return self._handle()
 
     async def materialize_observed_candidate(
@@ -279,12 +282,24 @@ class _MemoryRealProviderAdapter:
         env: EnvironmentHandle,
         request: MaterializedCandidateRequest,
     ) -> MaterializedProviderReceipt:
+        if self._fork_snapshot is None:
+            raise AssertionError("memory M4 provider was not forked from a snapshot")
+        after = self._hashes(request.marker)
+        binding = M4MaterializedStateBinding.create(
+            adapter_pin=self._pin,
+            bridge_image_id=sha256_digest({"memory": "bridge-image"}),
+            provider_image_refs=("memory-provider@sha256:" + "0" * 64,),
+            source_snapshot=self._fork_snapshot,
+            after_archive_digest=sha256_digest({"memory_provider_state": after}),
+            provider_state_digest=sha256_digest(after),
+        )
         return MaterializedProviderReceipt.create(
             request=request,
             environment_id=env.environment_id,
             before=self._hashes("baseline"),
-            after=self._hashes(request.marker),
+            after=after,
             elapsed_ns=1,
+            state_binding=binding,
         )
 
     async def destroy(self, env: EnvironmentHandle) -> None:
@@ -432,6 +447,34 @@ def test_rehashed_stage_substitution_is_rejected() -> None:
     )
     substituted = deepcopy(receipt.model_dump(mode="json"))
     substituted["winner_priority"] = 0.0
+    substituted["receipt_digest"] = sha256_digest(
+        {key: value for key, value in substituted.items() if key != "receipt_digest"}
+    )
+
+    with pytest.raises(ValueError, match="winner"):
+        MaterializedSearchQualificationReceipt.model_validate_json(
+            canonical_json_bytes(substituted)
+        )
+
+
+def test_rehashed_winner_provider_image_or_state_substitution_is_rejected() -> None:
+    chain = qualify_runtime_observation_chain(MARKER)
+    receipt = asyncio.run(
+        _execute_materialized_search(
+            chain[0], observed_chain=chain, adapter=_MemoryRealProviderAdapter()
+        )
+    )
+    substituted = deepcopy(receipt.model_dump(mode="json"))
+    binding = substituted["provider_receipts"][-1]["state_binding"]
+    binding["bridge_image_id"] = sha256_digest({"forged": "bridge-image"})
+    binding["after_archive_digest"] = sha256_digest({"forged": "provider-state"})
+    binding["binding_digest"] = sha256_digest(
+        {key: value for key, value in binding.items() if key != "binding_digest"}
+    )
+    provider = substituted["provider_receipts"][-1]
+    provider["receipt_digest"] = sha256_digest(
+        {key: value for key, value in provider.items() if key != "receipt_digest"}
+    )
     substituted["receipt_digest"] = sha256_digest(
         {key: value for key, value in substituted.items() if key != "receipt_digest"}
     )

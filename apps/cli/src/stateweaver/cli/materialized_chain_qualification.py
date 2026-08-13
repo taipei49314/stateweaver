@@ -26,10 +26,8 @@ from stateweaver.contracts import (
 from stateweaver.replay import ReplayActionLogEntry, ReplayPlan, ReplayRunResult, RootSeed
 
 from .materialized_search_qualification import MaterializedSearchQualificationReceipt
-from .observed_chain_qualification import (
-    M5ControlName,
-    ObservedChainQualificationReceipt,
-)
+from .m5_plan import M5ControlName
+from .observed_chain_qualification import ObservedChainQualificationReceipt
 
 _MARKER_RE = re.compile(r"^[0-9a-f]{40}$")
 _PROVIDERS = ("cache", "clock", "database", "filesystem", "queue", "session")
