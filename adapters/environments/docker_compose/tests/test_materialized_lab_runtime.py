@@ -122,6 +122,7 @@ def _request() -> MaterializedLabRunRequest:
         repository_marker="0" * 40,
         mode="vulnerable",
         scenario="same_tenant_document",
+        run_id="run.m5.runtime",
         plan_id="plan.m5.runtime",
         root_seed_id="root.m5.runtime",
         root_digest=sha256_digest("root"),
@@ -162,6 +163,7 @@ def _primary_request(mode: Literal["vulnerable", "patched"]) -> MaterializedLabR
         repository_marker="0" * 40,
         mode=mode,
         scenario="primary_patched" if mode == "patched" else "primary_vulnerable",
+        run_id=f"run.m5.runtime-primary-{mode}",
         plan_id="plan.m5.runtime-primary",
         root_seed_id="root.m5.runtime-primary",
         root_digest=sha256_digest("primary-root"),
@@ -343,6 +345,61 @@ async def test_forged_oracle_or_evidence_is_rejected_even_when_outer_digests_are
 
 
 @pytest.mark.asyncio
+async def test_forged_trace_is_rejected_even_when_every_outer_digest_is_rehashed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _ProviderStore()
+    monkeypatch.setattr(runtime, "RealProviderLabStateStore", lambda: store)
+    request = _request()
+    output = await runtime._execute_in_container(request)
+    binding_values: dict[str, object] = {
+        "application_image_id": _APP_IMAGE,
+        "bridge_image_id": _BRIDGE_IMAGE,
+        "provider_image_refs": runtime._PROVIDER_IMAGE_REFS,
+        "provider_image_set_digest": sha256_digest(runtime._PROVIDER_IMAGE_REFS),
+        "provider_image_provenance": "PINNED_MANIFEST_REFS_NOT_RUNTIME_IMAGE_IDS",
+    }
+    binding = runtime.ApplicationImageBinding.model_validate(
+        {**binding_values, "binding_digest": runtime._digest(binding_values)}
+    )
+    substitutions: tuple[tuple[str, object], ...] = (
+        ("method", "POST"),
+        ("path", "/v1/lab/forged"),
+        ("route", "/v1/lab/forged"),
+        ("response_status", 599),
+        ("lab_action_digest", sha256_digest("forged-lab-action")),
+        ("policy_authorization_digest", sha256_digest("forged-authorization")),
+        ("policy_request_digest", sha256_digest("forged-request")),
+        ("response_body", b'{"evidence_id":"ev-999"}'),
+        ("response_evidence_id", None),
+    )
+    for trace_field, value in substitutions:
+        forged = json.loads(json.dumps(runtime._json_compatible(output)))
+        trace = forged["steps"][0]["trace"]
+        trace[trace_field] = runtime._json_compatible(value)
+        if trace_field == "response_body":
+            assert isinstance(value, bytes)
+            trace["response_body_digest"] = runtime._raw_digest(value)
+        trace_values = {key: item for key, item in trace.items() if key != "observation_digest"}
+        trace["observation_digest"] = runtime._digest(trace_values)
+        step = forged["steps"][0]
+        step_values = {key: item for key, item in step.items() if key != "step_digest"}
+        step["step_digest"] = runtime._digest(step_values)
+        with pytest.raises(ValueError):
+            runtime._parse_runtime_result(
+                ProcessResult(returncode=0, stdout=json.dumps(forged)), request, binding
+            )
+
+
+def test_control_plan_and_root_identifiers_accept_compiler_grammar() -> None:
+    request = _request().model_dump(mode="python")
+    request["plan_id"] = "plan.m5.control-masked_response"
+    request["root_seed_id"] = "root.m5.control-masked_response"
+    closed = MaterializedLabRunRequest.model_validate(request)
+    assert closed.plan_id.endswith("masked_response")
+
+
+@pytest.mark.asyncio
 async def test_timeout_occurs_before_checkpoint_visibility_cas(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -403,7 +460,14 @@ async def test_runtime_uses_only_fixed_compose_argv_and_always_cleans_up(
     assert receipt.status == "M5_MATERIALIZED_APPLICATION_SCENARIO_EXECUTED"
     assert receipt.execution_backend == "fastapi-asgi"
     assert receipt.destroyed is True
-    assert runner.calls[-1][0][-3:] == ("down", "--volumes", "--remove-orphans")
+    assert any(
+        argv[-3:] == ("down", "--volumes", "--remove-orphans") for argv, _stdin in runner.calls
+    )
+    assert tuple(argv[1:3] for argv, _stdin in runner.calls[-3:]) == (
+        ("ps", "--all"),
+        ("network", "ls"),
+        ("volume", "ls"),
+    )
     execute_argv, execute_stdin = next(item for item in runner.calls if item[0][-1] == "execute")
     assert execute_argv[-7:] == (
         "exec",
@@ -423,7 +487,9 @@ async def test_static_or_provider_only_output_is_rejected_and_cleaned_up() -> No
     runner = _Runner({"execution_backend": "provider-bridge", "steps": []})
     with pytest.raises(ComposeAdapterError, match="failed closed"):
         await MaterializedLabDockerRuntime(runner=runner).run(_request())
-    assert runner.calls[-1][0][-3:] == ("down", "--volumes", "--remove-orphans")
+    assert any(
+        argv[-3:] == ("down", "--volumes", "--remove-orphans") for argv, _stdin in runner.calls
+    )
 
 
 @pytest.mark.asyncio
@@ -448,7 +514,47 @@ async def test_timeout_forces_compose_cleanup() -> None:
     runner = _TimeoutRunner({})
     with pytest.raises(ComposeAdapterError, match="failed closed"):
         await MaterializedLabDockerRuntime(runner=runner).run(_request())
-    assert runner.calls[-1][0][-3:] == ("down", "--volumes", "--remove-orphans")
+    assert any(
+        argv[-3:] == ("down", "--volumes", "--remove-orphans") for argv, _stdin in runner.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_receipt_is_not_minted_when_cleanup_inventory_has_residue() -> None:
+    @dataclass
+    class _ResidualRunner(_Runner):
+        async def run(self, argv: tuple[str, ...], *, stdin: bytes | None = None) -> ProcessResult:
+            result = await super().run(argv, stdin=stdin)
+            if argv[1:3] == ("volume", "ls"):
+                return ProcessResult(returncode=0, stdout="retained-volume")
+            return result
+
+    runner = _ResidualRunner({"execution_backend": "provider-bridge", "steps": []})
+    with pytest.raises(ComposeAdapterError, match="cleanup failed"):
+        await MaterializedLabDockerRuntime(runner=runner).run(_request())
+
+
+@pytest.mark.asyncio
+async def test_cleanup_failure_takes_precedence_over_execution_failure() -> None:
+    @dataclass
+    class _DoubleFailureRunner(_Runner):
+        async def run(self, argv: tuple[str, ...], *, stdin: bytes | None = None) -> ProcessResult:
+            self.calls.append((argv, stdin))
+            if argv[:4] == ("docker", "image", "inspect", "--format"):
+                return ProcessResult(
+                    returncode=0,
+                    stdout=_APP_IMAGE
+                    if argv[-1].startswith("stateweaver-materialized")
+                    else _BRIDGE_IMAGE,
+                )
+            if argv[-1] == "execute":
+                raise ProcessBoundaryError("process-deadline-exceeded")
+            if argv[-3:] == ("down", "--volumes", "--remove-orphans"):
+                return ProcessResult(returncode=1)
+            return ProcessResult(returncode=0)
+
+    with pytest.raises(ComposeAdapterError, match="cleanup failed"):
+        await MaterializedLabDockerRuntime(runner=_DoubleFailureRunner({})).run(_request())
 
 
 def test_request_rejects_policy_or_typed_action_substitution() -> None:

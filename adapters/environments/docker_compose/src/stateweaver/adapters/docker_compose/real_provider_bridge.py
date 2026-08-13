@@ -128,6 +128,10 @@ class ProviderCheckpointPoisonedError(ProviderCheckpointError):
     """A partial or inconsistent store is unavailable until reconstructed."""
 
 
+class _ProviderCheckpointUnownedStageError(ProviderCheckpointError):
+    """A competing writer owns a shard that this store must never delete."""
+
+
 @dataclass(frozen=True)
 class ProviderCheckpointObservation:
     provider: str
@@ -396,14 +400,14 @@ def _cache_import(component: dict[str, object]) -> None:
         raise ProviderBridgeError("Redis restore read-back differed")
 
 
-def _http_json(
+def _http_json_response(
     method: str,
     url: str,
     payload: object | None = None,
     *,
     authorization: str | None = None,
     accepted_statuses: tuple[int, ...] = (200,),
-) -> object:
+) -> tuple[int, object]:
     content = None if payload is None else _canonical(payload)
     headers = {"Accept": "application/json"}
     if content is not None:
@@ -415,9 +419,11 @@ def _http_json(
         with urlopen(request, timeout=_SOCKET_TIMEOUT_SECONDS) as response:
             if response.status not in accepted_statuses:
                 raise ProviderBridgeError("provider HTTP status was rejected")
+            status = response.status
             raw = response.read(_MAX_PROVIDER_REPLY_BYTES + 1)
     except HTTPError as error:
         if error.code in accepted_statuses:
+            status = error.code
             raw = error.read(_MAX_PROVIDER_REPLY_BYTES + 1)
         else:
             raise ProviderBridgeError("provider HTTP request failed") from None
@@ -426,11 +432,28 @@ def _http_json(
     if len(raw) > _MAX_PROVIDER_REPLY_BYTES:
         raise ProviderBridgeError("provider HTTP reply exceeded its fixed boundary")
     if not raw:
-        return None
+        return status, None
     try:
-        return _parse(raw)
+        return status, _parse(raw)
     except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
         raise ProviderBridgeError("provider HTTP reply was invalid") from None
+
+
+def _http_json(
+    method: str,
+    url: str,
+    payload: object | None = None,
+    *,
+    authorization: str | None = None,
+    accepted_statuses: tuple[int, ...] = (200,),
+) -> object:
+    return _http_json_response(
+        method,
+        url,
+        payload,
+        authorization=authorization,
+        accepted_statuses=accepted_statuses,
+    )[1]
 
 
 def _rabbit_path() -> str:
@@ -875,7 +898,7 @@ _CHECKPOINT_PROVIDERS: Final = (
     "postgres",
     "redis",
     "rabbitmq",
-    "selenium",
+    "browser_session",
     "filesystem",
     "clock",
 )
@@ -1056,9 +1079,13 @@ def _checkpoint_rabbit_path(generation: str) -> str:
 
 def _checkpoint_rabbit_read(generation: str) -> bytes | None:
     path = _checkpoint_rabbit_path(generation)
-    try:
-        metadata = _http_json("GET", path, authorization=_RABBIT_AUTHORIZATION)
-    except ProviderBridgeError:
+    status, metadata = _http_json_response(
+        "GET",
+        path,
+        authorization=_RABBIT_AUTHORIZATION,
+        accepted_statuses=(200, 404),
+    )
+    if status == 404:
         return None
     if not isinstance(metadata, dict):
         raise ProviderCheckpointError("checkpoint-rabbitmq-invalid")
@@ -1080,17 +1107,20 @@ def _checkpoint_rabbit_read(generation: str) -> bytes | None:
 
 def _checkpoint_rabbit_stage(raw: bytes, generation: str, _digest: str) -> bool:
     existing = _checkpoint_rabbit_read(generation)
-    created = existing is None
-    if created:
-        response = _http_json(
-            "PUT",
-            _checkpoint_rabbit_path(generation),
-            {"auto_delete": False, "durable": True, "arguments": {}},
-            authorization=_RABBIT_AUTHORIZATION,
-            accepted_statuses=(201, 204),
-        )
-        if response is not None:
-            raise ProviderCheckpointError("checkpoint-rabbitmq-invalid")
+    if existing is not None:
+        if existing != raw:
+            raise ProviderCheckpointError("checkpoint-rabbitmq-readback-failed")
+        return False
+    status, response = _http_json_response(
+        "PUT",
+        _checkpoint_rabbit_path(generation),
+        {"auto_delete": False, "durable": True, "arguments": {}},
+        authorization=_RABBIT_AUTHORIZATION,
+        accepted_statuses=(201, 204),
+    )
+    if response is not None:
+        raise ProviderCheckpointError("checkpoint-rabbitmq-invalid")
+    if status == 201:
         response = _http_json(
             "POST",
             "http://rabbitmq:15672/api/exchanges/%2F/amq.default/publish",
@@ -1104,19 +1134,30 @@ def _checkpoint_rabbit_stage(raw: bytes, generation: str, _digest: str) -> bool:
         )
         if response != {"routed": True}:
             raise ProviderCheckpointError("checkpoint-rabbitmq-invalid")
-    if _checkpoint_rabbit_read(generation) != raw:
+    try:
+        observed = _checkpoint_rabbit_read(generation)
+    except ProviderBridgeError:
+        if status == 204:
+            raise _ProviderCheckpointUnownedStageError("checkpoint-rabbitmq-unowned") from None
+        raise
+    if observed != raw:
+        if status == 204:
+            raise _ProviderCheckpointUnownedStageError("checkpoint-rabbitmq-unowned")
         raise ProviderCheckpointError("checkpoint-rabbitmq-readback-failed")
-    return created
+    return status == 201
 
 
 def _checkpoint_rabbit_delete(generation: str) -> None:
-    response = _http_json(
-        "DELETE",
-        _checkpoint_rabbit_path(generation),
-        authorization=_RABBIT_AUTHORIZATION,
-        accepted_statuses=(204, 404),
-    )
-    if response is not None:
+    try:
+        status, response = _http_json_response(
+            "DELETE",
+            _checkpoint_rabbit_path(generation),
+            authorization=_RABBIT_AUTHORIZATION,
+            accepted_statuses=(204, 404),
+        )
+    except ProviderBridgeError:
+        raise ProviderCheckpointError("checkpoint-rabbitmq-cleanup-failed") from None
+    if status == 204 and response is not None:
         raise ProviderCheckpointError("checkpoint-rabbitmq-cleanup-failed")
 
 
@@ -1253,7 +1294,7 @@ _CHECKPOINT_READERS: Final = {
     "postgres": _checkpoint_pg_read,
     "redis": _checkpoint_redis_read,
     "rabbitmq": _checkpoint_rabbit_read,
-    "selenium": _checkpoint_selenium_read,
+    "browser_session": _checkpoint_selenium_read,
     "filesystem": _checkpoint_filesystem_read,
     "clock": _checkpoint_clock_read,
 }
@@ -1261,7 +1302,7 @@ _CHECKPOINT_STAGERS: Final = {
     "postgres": _checkpoint_pg_stage,
     "redis": _checkpoint_redis_stage,
     "rabbitmq": _checkpoint_rabbit_stage,
-    "selenium": _checkpoint_selenium_stage,
+    "browser_session": _checkpoint_selenium_stage,
     "filesystem": _checkpoint_filesystem_stage,
     "clock": _checkpoint_clock_stage,
 }
@@ -1269,7 +1310,7 @@ _CHECKPOINT_DELETERS: Final = {
     "postgres": _checkpoint_pg_delete,
     "redis": _checkpoint_redis_delete,
     "rabbitmq": _checkpoint_rabbit_delete,
-    "selenium": _checkpoint_selenium_delete,
+    "browser_session": _checkpoint_selenium_delete,
     "filesystem": _checkpoint_filesystem_delete,
     "clock": _checkpoint_clock_delete,
 }
@@ -1306,6 +1347,8 @@ class RealProviderLabStateStore:
                 existed = _CHECKPOINT_READERS[provider](generation) is not None
                 try:
                     was_created = _CHECKPOINT_STAGERS[provider](raw, generation, digest)
+                except _ProviderCheckpointUnownedStageError:
+                    raise
                 except Exception:
                     # A stager can fail after its immutable shard was created
                     # (for example during exact read-back).  Since the

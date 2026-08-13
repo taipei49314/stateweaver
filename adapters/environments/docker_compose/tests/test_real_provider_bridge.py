@@ -318,6 +318,13 @@ def test_http_json_binds_method_headers_status_and_canonical_body(
         return _HttpResponse(status=201, payload=b'{"accepted":true}')
 
     monkeypatch.setattr(bridge, "urlopen", open_url)
+    assert bridge._http_json_response(
+        "POST",
+        "http://provider.invalid/fixed",
+        {"value": "fixed"},
+        authorization="Basic fixed",
+        accepted_statuses=(201,),
+    ) == (201, {"accepted": True})
     assert bridge._http_json(
         "POST",
         "http://provider.invalid/fixed",

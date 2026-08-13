@@ -129,7 +129,7 @@ def test_post_cas_capture_failure_poison_fails_closed(
 
     def cas_then_remove(expected: str | None, next_generation: str) -> None:
         original_cas(expected, next_generation)
-        states["selenium"].pop(next_generation)
+        states["browser_session"].pop(next_generation)
 
     monkeypatch.setattr(bridge, "_checkpoint_pg_cas", cas_then_remove)
     with pytest.raises(bridge.ProviderCheckpointPoisonedError, match="store-poisoned"):
@@ -237,7 +237,7 @@ def test_filesystem_and_clock_shards_are_immutable_and_exact(
         bridge._checkpoint_clock_stage(_checkpoint(marker="other"), generation, "ignored")
 
 
-def test_selenium_checkpoint_persists_between_browser_sessions(
+def test_browser_session_checkpoint_uses_durable_backing_and_live_roundtrips(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(bridge, "_CHECKPOINT_SESSION_PATH", tmp_path / "session")
@@ -273,3 +273,77 @@ def test_selenium_checkpoint_persists_between_browser_sessions(
     assert bridge._checkpoint_selenium_read(generation) == raw
     assert len(sessions) >= 3
     assert all(session[bridge._checkpoint_selenium_key(generation)] for session in sessions)
+
+
+def test_rabbit_read_treats_only_not_found_as_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        bridge,
+        "_http_json_response",
+        lambda *_args, **_kwargs: (404, {"error": "not-found"}),
+    )
+    assert bridge._checkpoint_rabbit_read("a" * 64) is None
+
+    def fail(*_args: object, **_kwargs: object) -> tuple[int, object]:
+        raise bridge.ProviderBridgeError("provider HTTP request failed")
+
+    monkeypatch.setattr(bridge, "_http_json_response", fail)
+    with pytest.raises(bridge.ProviderBridgeError, match="HTTP request failed"):
+        bridge._checkpoint_rabbit_read("a" * 64)
+
+
+@pytest.mark.parametrize("put_status", [201, 204])
+def test_rabbit_stage_owns_only_created_queue_and_never_double_publishes(
+    monkeypatch: pytest.MonkeyPatch, put_status: int
+) -> None:
+    raw = _checkpoint()
+    _, generation, _ = bridge._validate_checkpoint_bytes(raw)
+    retained: dict[str, bytes | None] = {"raw": None}
+    publishes: list[object] = []
+
+    def response(
+        method: str, _url: str, _payload: object = None, **_kwargs: object
+    ) -> tuple[int, object]:
+        if method == "PUT":
+            if put_status == 204:
+                retained["raw"] = raw
+            return put_status, None
+        return (404, None) if retained["raw"] is None else (200, {})
+
+    def json_response(method: str, url: str, payload: object = None, **_kwargs: object) -> object:
+        if url.endswith("/get"):
+            current = retained["raw"]
+            return [] if current is None else [{"payload": bridge._checkpoint_encoded(current)}]
+        assert method == "POST" and url.endswith("/publish")
+        publishes.append(payload)
+        retained["raw"] = raw
+        return {"routed": True}
+
+    monkeypatch.setattr(bridge, "_http_json_response", response)
+    monkeypatch.setattr(bridge, "_http_json", json_response)
+    assert bridge._checkpoint_rabbit_stage(raw, generation, "ignored") is (put_status == 201)
+    assert len(publishes) == (1 if put_status == 201 else 0)
+
+
+def test_rabbit_unowned_race_never_deletes_competing_queue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _checkpoint()
+    _, generation, _ = bridge._validate_checkpoint_bytes(raw)
+    competitor = _checkpoint(marker="competitor")
+    states, _active = _fake_providers(monkeypatch)
+    deleted: list[str] = []
+
+    monkeypatch.setitem(bridge._CHECKPOINT_READERS, "rabbitmq", lambda _generation: None)
+
+    def unowned(_raw: bytes, _generation: str, _digest: str) -> bool:
+        states["rabbitmq"][generation] = competitor
+        raise bridge._ProviderCheckpointUnownedStageError("checkpoint-rabbitmq-unowned")
+
+    monkeypatch.setitem(bridge._CHECKPOINT_STAGERS, "rabbitmq", unowned)
+    monkeypatch.setitem(bridge._CHECKPOINT_DELETERS, "rabbitmq", lambda item: deleted.append(item))
+    with pytest.raises(bridge.ProviderCheckpointPoisonedError, match="store-poisoned"):
+        bridge.RealProviderLabStateStore().stage(raw)
+    assert deleted == []
+    assert states["rabbitmq"][generation] == competitor

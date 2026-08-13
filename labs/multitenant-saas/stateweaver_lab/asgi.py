@@ -193,6 +193,24 @@ def resolve_lab_http_action(action: TypedLabAction) -> LabHttpActionSpec:
     )
 
 
+def validate_lab_asgi_execution(
+    action: TypedLabAction, execution: LabAsgiExecution
+) -> LabAsgiExecution:
+    """Revalidate retained ASGI result bytes against the exact typed action."""
+
+    concrete = _require_concrete_action(action)
+    spec = resolve_lab_http_action(concrete)
+    if (
+        execution.method is not spec.method
+        or execution.path != spec.path
+        or execution.route != spec.route_template
+        or execution.status not in spec.expected_statuses
+    ):
+        raise LabAsgiExecutionError("retained ASGI result is outside the typed action contract")
+    _validate_response(concrete, execution)
+    return execution
+
+
 def seal_lab_asgi_app(app: FastAPI) -> None:
     """Seal a freshly created repository app outside attacker-controlled app state."""
 
@@ -482,4 +500,5 @@ __all__ = [
     "lab_action_artifact",
     "resolve_lab_http_action",
     "seal_lab_asgi_app",
+    "validate_lab_asgi_execution",
 ]

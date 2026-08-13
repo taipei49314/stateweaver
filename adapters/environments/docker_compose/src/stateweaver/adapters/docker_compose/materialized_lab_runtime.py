@@ -35,11 +35,15 @@ from stateweaver.policy import (
 )
 from stateweaver_lab import LabStateCheckpoint, TypedLabAction, create_app
 from stateweaver_lab.asgi import (
+    MAX_ASGI_RESPONSE_BYTES,
+    LabAsgiExecution,
     LabAsgiExecutionError,
+    LabHttpMethod,
     execute_lab_action_asgi,
     lab_action_artifact,
     resolve_lab_http_action,
     seal_lab_asgi_app,
+    validate_lab_asgi_execution,
 )
 from stateweaver_lab.models import EvidenceRecordResponse, OracleResultResponse
 from stateweaver_lab.state import LabState
@@ -73,7 +77,19 @@ _RUNTIME_PREFIX: Final = (
     "stateweaver.adapters.docker_compose.materialized_lab_runtime",
     "execute",
 )
-_PROVIDERS: Final = ("postgres", "redis", "rabbitmq", "selenium", "filesystem", "clock")
+_PROVIDERS: Final = (
+    "postgres",
+    "redis",
+    "rabbitmq",
+    "browser_session",
+    "filesystem",
+    "clock",
+)
+_PROJECT_INVENTORY_OPERATIONS: Final = (
+    ("ps", "--all", "{{.ID}}"),
+    ("network", "ls", "{{.ID}}"),
+    ("volume", "ls", "{{.Name}}"),
+)
 
 
 class _RuntimeModel(BaseModel):
@@ -93,8 +109,9 @@ class MaterializedLabRunRequest(_RuntimeModel):
         "fresh_session",
         "same_tenant_document",
     ]
-    plan_id: str = Field(pattern=r"^plan\.m5\.[a-z0-9.-]+$")
-    root_seed_id: str = Field(pattern=r"^root\.(?:m4|m5)\.[a-z0-9.-]+$")
+    run_id: str = Field(pattern=r"^run\.m5\.[a-z0-9._-]+$")
+    plan_id: str = Field(pattern=r"^plan\.m5\.[a-z0-9._-]+$")
+    root_seed_id: str = Field(pattern=r"^root\.(?:m4|m5)\.[a-z0-9._-]+$")
     root_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     plan_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     m4_state_binding_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
@@ -209,7 +226,14 @@ class ApplicationImageBinding(_RuntimeModel):
 
 
 class ProviderCheckpointWitness(_RuntimeModel):
-    provider: Literal["postgres", "redis", "rabbitmq", "selenium", "filesystem", "clock"]
+    provider: Literal[
+        "postgres",
+        "redis",
+        "rabbitmq",
+        "browser_session",
+        "filesystem",
+        "clock",
+    ]
     generation: str = Field(pattern=r"^[0-9a-f]{64}$")
     checkpoint_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     storage_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
@@ -253,6 +277,7 @@ class ApplicationRouteTrace(_RuntimeModel):
     path: str = Field(pattern=r"^/v1/lab/(?:[A-Za-z0-9_.{}-]+/?)+$")
     route: str = Field(pattern=r"^/v1/lab/(?:[A-Za-z0-9_.{}-]+/?)+$")
     response_status: int = Field(ge=100, le=599)
+    response_body: bytes = Field(max_length=MAX_ASGI_RESPONSE_BYTES)
     response_body_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     response_evidence_id: str | None = Field(default=None, pattern=r"^ev-[0-9]{3}$")
     response_action_id: str | None = Field(default=None, pattern=r"^act-[0-9]{3}$")
@@ -262,7 +287,9 @@ class ApplicationRouteTrace(_RuntimeModel):
 
     @model_validator(mode="after")
     def _timing(self) -> ApplicationRouteTrace:
-        if self.ended_ns < self.started_ns:
+        if self.ended_ns < self.started_ns or self.response_body_digest != _raw_digest(
+            self.response_body
+        ):
             raise ValueError("application route timing is invalid")
         expected = _digest(self.model_dump(mode="json", exclude={"observation_digest"}))
         if self.observation_digest != expected:
@@ -335,6 +362,49 @@ class MaterializedLabRunReceipt(_RuntimeModel):
 
     @model_validator(mode="after")
     def _closed(self) -> MaterializedLabRunReceipt:
+        retained_responses_are_exact = True
+        for step, lab_action in zip(self.steps, self.request.lab_actions, strict=True):
+            try:
+                retained = validate_lab_asgi_execution(
+                    lab_action,
+                    LabAsgiExecution(
+                        method=LabHttpMethod(step.trace.method),
+                        path=step.trace.path,
+                        route=step.trace.route,
+                        status=step.trace.response_status,
+                        body=step.trace.response_body,
+                    ),
+                )
+                response = json.loads(retained.body, object_pairs_hook=_unique_object)
+            except (LabAsgiExecutionError, TypeError, ValueError, json.JSONDecodeError):
+                retained_responses_are_exact = False
+                break
+            if (
+                not isinstance(response, dict)
+                or step.trace.response_evidence_id != response.get("evidence_id")
+                or step.trace.response_action_id != response.get("action_id")
+            ):
+                retained_responses_are_exact = False
+                break
+        trace_bindings_are_exact = all(
+            step.trace.action_id == envelope.action_id
+            and step.trace.action_digest == sha256_digest(envelope)
+            and step.trace.lab_action_digest == sha256_digest(lab_action)
+            and step.trace.policy_authorization_digest == sha256_digest(authorization)
+            and step.trace.policy_request_digest == sha256_digest(policy_request)
+            and step.trace.method == resolve_lab_http_action(lab_action).method.value
+            and step.trace.path == resolve_lab_http_action(lab_action).path
+            and step.trace.route == resolve_lab_http_action(lab_action).route_template
+            and step.trace.response_status in resolve_lab_http_action(lab_action).expected_statuses
+            for step, envelope, lab_action, authorization, policy_request in zip(
+                self.steps,
+                self.request.actions,
+                self.request.lab_actions,
+                self.request.policy_authorizations,
+                self.request.policy_requests,
+                strict=True,
+            )
+        )
         if (
             self.request_digest != _digest(self.request)
             or self.application_schema_digest
@@ -352,6 +422,8 @@ class MaterializedLabRunReceipt(_RuntimeModel):
             != tuple(item.action_id for item in self.request.actions)
             or tuple(item.trace.action_digest for item in self.steps)
             != tuple(sha256_digest(item) for item in self.request.actions)
+            or not trace_bindings_are_exact
+            or not retained_responses_are_exact
         ):
             raise ValueError("M5 application receipt is not content bound")
         expected = _digest(self.model_dump(mode="json", exclude={"receipt_digest"}))
@@ -372,7 +444,9 @@ class MaterializedLabDockerRuntime:
         except (AttributeError, TypeError, ValueError):
             raise ComposeAdapterError("M5 application runtime request is invalid") from None
         project = "swm2" + uuid.uuid4().hex
-        result: MaterializedLabRunReceipt | None = None
+        process: ProcessResult | None = None
+        binding: ApplicationImageBinding | None = None
+        execution_error: BaseException | None = None
         cleanup_error: BaseException | None = None
         try:
             binding = await self._image_binding()
@@ -380,19 +454,24 @@ class MaterializedLabDockerRuntime:
             process = await self._run(
                 _compose(project, *_RUNTIME_PREFIX), stdin=_runtime_payload(closed, binding)
             )
-            result = _parse_runtime_result(process, closed, binding)
-        except (ProcessBoundaryError, ValueError, json.JSONDecodeError, TypeError):
-            raise ComposeAdapterError("M5 application runtime failed closed") from None
+        except (ProcessBoundaryError, ValueError, json.JSONDecodeError, TypeError) as error:
+            execution_error = error
         finally:
             try:
                 await self._run(_compose(project, "down", "--volumes", "--remove-orphans"))
+                await self._assert_project_clean(project)
             except BaseException as error:
                 cleanup_error = error
         if cleanup_error is not None:
-            raise ComposeAdapterError("M5 application runtime cleanup failed") from cleanup_error
-        if result is None:
+            raise ComposeAdapterError("M5 application runtime cleanup failed") from None
+        if execution_error is not None:
+            raise ComposeAdapterError("M5 application runtime failed closed") from None
+        if process is None or binding is None:
             raise ComposeAdapterError("M5 application runtime produced no receipt")
-        return result
+        try:
+            return _parse_runtime_result(process, closed, binding)
+        except (ValueError, json.JSONDecodeError, TypeError):
+            raise ComposeAdapterError("M5 application runtime failed closed") from None
 
     async def _image_binding(self) -> ApplicationImageBinding:
         application = (
@@ -419,6 +498,23 @@ class MaterializedLabDockerRuntime:
         if result.returncode != 0:
             raise ComposeAdapterError("fixed M5 application Docker command failed")
         return result
+
+    async def _assert_project_clean(self, project: str) -> None:
+        label = f"label=com.docker.compose.project={project}"
+        for resource, operation, output_format in _PROJECT_INVENTORY_OPERATIONS:
+            result = await self._run(
+                (
+                    "docker",
+                    resource,
+                    operation,
+                    "--filter",
+                    label,
+                    "--format",
+                    output_format,
+                )
+            )
+            if result.stdout.strip():
+                raise ComposeAdapterError("M5 application cleanup inventory is not empty")
 
 
 def _compose(project: str, *operation: str) -> tuple[str, ...]:
@@ -606,6 +702,7 @@ async def _execute_in_container(request: MaterializedLabRunRequest) -> dict[str,
             "path": execution.path,
             "route": execution.route,
             "response_status": execution.status,
+            "response_body": execution.body,
             "response_body_digest": _raw_digest(execution.body),
             "response_evidence_id": response.get("evidence_id"),
             "response_action_id": response.get("action_id"),
