@@ -261,15 +261,43 @@ def _real_compose_argv(*operation: str) -> tuple[str, ...]:
 
 def test_real_runner_has_bounded_start_deadline_and_typed_import() -> None:
     start = _real_compose_argv("up", "--detach", "--wait", "--no-build")
+    application_start = _real_compose_argv(
+        "up", "--detach", "--wait", "--no-build", "materialized-lab"
+    )
     export = _real_compose_argv(*_BRIDGE, "export")
     state_import = _real_compose_argv(*_BRIDGE, "import")
     mutate = _real_compose_argv(*_BRIDGE, "mutate")
 
     assert runner_module.PROCESS_DEADLINE_SECONDS < runner_module._deadline_seconds(start) <= 180
+    assert runner_module._deadline_seconds(application_start) == runner_module._deadline_seconds(
+        start
+    )
     assert runner_module._deadline_seconds(export) == runner_module.PROCESS_DEADLINE_SECONDS
     assert runner_module._accepts_state_stdin(state_import) is True
     assert runner_module._accepts_state_stdin(mutate) is True
     assert runner_module._accepts_state_stdin(export) is False
+
+
+def test_real_runner_accepts_only_the_fixed_materialized_application_target() -> None:
+    expected = _real_compose_argv("up", "--detach", "--wait", "--no-build", "materialized-lab")
+
+    assert expected[-5:] == (
+        "up",
+        "--detach",
+        "--wait",
+        "--no-build",
+        "materialized-lab",
+    )
+    for rejected in ("provider-bridge", "materialized-lab", "--renew-anon-volumes"):
+        with pytest.raises(ValueError, match="fixed synthetic Compose argv"):
+            _real_compose_argv(
+                "up",
+                "--detach",
+                "--wait",
+                "--no-build",
+                "materialized-lab",
+                rejected,
+            )
 
 
 def test_real_compose_fixture_is_digest_pinned_internal_and_unpublished() -> None:
@@ -279,6 +307,7 @@ def test_real_compose_fixture_is_digest_pinned_internal_and_unpublished() -> Non
     postgres_init = (package / "real_postgres_init.sql").read_text(encoding="utf-8")
 
     assert compose.count("@sha256:") == 4
+    assert "profiles: [m5-application]" in compose
     assert "internal: true" in compose
     assert "ports:" not in compose
     assert "docker.sock" not in compose

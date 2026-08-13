@@ -781,7 +781,7 @@ async def test_runtime_uses_only_fixed_compose_argv_and_always_cleans_up(
     up_index = next(
         index
         for index, (argv, _stdin) in enumerate(runner.calls)
-        if argv[-4:] == ("up", "--detach", "--wait", "--no-build")
+        if argv[-5:] == ("up", "--detach", "--wait", "--no-build", "materialized-lab")
     )
     identity_index = next(
         index
