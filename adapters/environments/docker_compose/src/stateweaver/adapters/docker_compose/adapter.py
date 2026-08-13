@@ -103,6 +103,17 @@ _MAX_ISSUED_SNAPSHOTS: Final = 256
 # Give compensating cleanup enough time to reach that boundary so a failed
 # create/restore cannot silently strand provider volumes or networks.
 _COMPENSATING_DOWN_SECONDS: Final = 70.0
+_REAL_START_SERVICES: Final = (
+    "postgres",
+    "redis",
+    "rabbitmq",
+    "selenium",
+    "provider-bridge",
+)
+_REAL_START_STATES: Final = frozenset(
+    {"created", "dead", "exited", "paused", "removing", "restarting", "running"}
+)
+_REAL_START_HEALTH: Final = frozenset({"", "healthy", "starting", "unhealthy"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,7 +272,7 @@ class _FixedDockerComposeEnvironmentAdapter:
                 raise ComposeAdapterError("fixed Compose image identity changed after snapshot")
             try:
                 await self._compose(live.project, "down", "--volumes", "--remove-orphans")
-                await self._compose(live.project, "up", "--detach", "--wait", "--no-build")
+                await self._start_world(live.project)
                 await self._health(
                     live.project,
                     expected_image_identity=live.image_identity,
@@ -410,13 +421,67 @@ class _FixedDockerComposeEnvironmentAdapter:
             source_snapshot=source_snapshot,
         )
         try:
-            await self._compose(project, "up", "--detach", "--wait", "--no-build")
+            await self._start_world(project)
             await self._health(project, expected_image_identity=image_identity)
             self._register_live(live)
         except BaseException:
             await self._compensating_down(project)
             raise
         return handle
+
+    async def _start_world(self, project: str) -> None:
+        try:
+            await self._compose(project, "up", "--detach", "--wait", "--no-build")
+        except ComposeUnavailableError:
+            if self._profile is _REAL_PROFILE:
+                code = await self._diagnose_real_start_failure(project)
+                if code is not None:
+                    raise ComposeUnavailableError(code) from None
+            raise
+
+    async def _diagnose_real_start_failure(self, project: str) -> str | None:
+        try:
+            result = await self._compose(project, "ps", "--format", "json")
+            payload = json.loads(
+                result.stdout,
+                object_pairs_hook=_unique_object,
+                parse_constant=_reject_json_constant,
+            )
+            rows = [payload] if isinstance(payload, dict) else payload
+            if not isinstance(rows, list):
+                raise ValueError
+            observed: dict[str, tuple[str, str]] = {}
+            for row in rows:
+                if not isinstance(row, dict):
+                    raise ValueError
+                service = row.get("Service")
+                state = row.get("State")
+                health = row.get("Health", "")
+                if (
+                    not isinstance(service, str)
+                    or service not in _REAL_START_SERVICES
+                    or service in observed
+                    or not isinstance(state, str)
+                    or state.lower() not in _REAL_START_STATES
+                    or not isinstance(health, str)
+                    or health.lower() not in _REAL_START_HEALTH
+                ):
+                    raise ValueError
+                observed[service] = (state.lower(), health.lower())
+        except (ComposeAdapterError, json.JSONDecodeError, RecursionError, ValueError):
+            return "real-provider-start-diagnostic-unavailable"
+        for service in _REAL_START_SERVICES:
+            state_health = observed.get(service)
+            if state_health is None:
+                continue
+            state, health = state_health
+            if state != "running" or health != "healthy":
+                safe_health = health or "none"
+                return f"real-provider-start-{service}-{state}-{safe_health}"
+        for service in _REAL_START_SERVICES:
+            if service not in observed:
+                return f"real-provider-start-{service}-missing"
+        return None
 
     async def _require_docker(self) -> None:
         await self._run(("docker", "version", "--format", "{{.Server.Version}}"))

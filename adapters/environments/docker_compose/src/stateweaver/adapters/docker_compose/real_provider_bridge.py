@@ -562,7 +562,6 @@ def _browser_session() -> Iterator[tuple[str, str]]:
                             "--no-sandbox",
                             "--disable-dev-shm-usage",
                             "--disable-gpu",
-                            "--user-data-dir=/tmp/stateweaver-checkpoint-profile",
                         ]
                     },
                 }
