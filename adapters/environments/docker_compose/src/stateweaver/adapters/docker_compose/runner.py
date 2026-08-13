@@ -67,6 +67,7 @@ _REAL_COMPOSE_OPERATIONS = frozenset(
         ("up", "--detach", "--wait", "--no-build"),
         ("up", "--detach", "--wait", "--no-build", "materialized-lab"),
         ("down", "--volumes", "--remove-orphans"),
+        ("ps", "--format", "json"),
         ("ps", "--format", "json", "provider-bridge"),
         ("ps", "--quiet", "materialized-lab"),
         ("ps", "--quiet", "provider-bridge"),

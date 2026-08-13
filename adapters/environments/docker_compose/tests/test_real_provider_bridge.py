@@ -763,10 +763,10 @@ def test_webdriver_and_browser_session_validate_identity_and_always_delete(
     monkeypatch.setattr(bridge, "_http_json", lambda *_args, **_kwargs: {"value": "ok"})
     assert bridge._webdriver("GET", "/status") == "ok"
 
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, object | None]] = []
 
-    def webdriver(method: str, path: str, _payload: object | None = None) -> object:
-        calls.append((method, path))
+    def webdriver(method: str, path: str, payload: object | None = None) -> object:
+        calls.append((method, path, payload))
         if path == "/session":
             return {
                 "sessionId": "a" * 32,
@@ -775,9 +775,21 @@ def test_webdriver_and_browser_session_validate_identity_and_always_delete(
         return None
 
     monkeypatch.setattr(bridge, "_webdriver", webdriver)
-    with bridge._browser_session() as session:
-        assert session == ("a" * 32, "140.0")
-    assert calls[-1] == ("DELETE", "/session/" + ("a" * 32))
+    for _ in range(2):
+        with bridge._browser_session() as session:
+            assert session == ("a" * 32, "140.0")
+    assert [call[:2] for call in calls if call[0] == "DELETE"] == [
+        ("DELETE", "/session/" + ("a" * 32)),
+        ("DELETE", "/session/" + ("a" * 32)),
+    ]
+    session_payloads = [
+        payload for method, path, payload in calls if (method, path) == ("POST", "/session")
+    ]
+    assert len(session_payloads) == 2
+    for payload in session_payloads:
+        assert isinstance(payload, dict)
+        args = payload["capabilities"]["alwaysMatch"]["goog:chromeOptions"]["args"]
+        assert all(not str(arg).startswith("--user-data-dir=") for arg in args)
 
 
 def test_queue_export_bootstraps_only_the_fixed_queue(monkeypatch: pytest.MonkeyPatch) -> None:

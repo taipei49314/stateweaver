@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from stateweaver.adapters.docker_compose import (
     ComposeAdapterError,
+    ComposeUnavailableError,
     M5MaterializedProviderRunRequest,
     MaterializedCandidateRequest,
     ProcessResult,
@@ -72,6 +73,23 @@ def _archive(components: dict[str, object]) -> str:
     )
 
 
+def _startup_rows(
+    *, failing_service: str | None = None, state: str = "running", health: str = "healthy"
+) -> str:
+    rows = []
+    for service in ("postgres", "redis", "rabbitmq", "selenium", "provider-bridge"):
+        rows.append(
+            {
+                "Service": service,
+                "State": state if service == failing_service else "running",
+                "Health": health if service == failing_service else "healthy",
+                "Project": "secret-project",
+                "Labels": "secret-label-value",
+            }
+        )
+    return json.dumps(rows)
+
+
 @dataclass
 class _RealRunner:
     states: dict[str, dict[str, object]] = field(default_factory=dict)
@@ -80,6 +98,9 @@ class _RealRunner:
     image_id: str = _IMAGE_ID
     cleanup_residue: bool = False
     unchanged_provider: str | None = None
+    up_failure: bool = False
+    startup_diagnostic_stdout: str = "[]"
+    startup_diagnostic_failure: bool = False
 
     async def run(
         self,
@@ -106,6 +127,8 @@ class _RealRunner:
         project = argv[3]
         operation = argv[6:]
         if operation == ("up", "--detach", "--wait", "--no-build"):
+            if self.up_failure:
+                return ProcessResult(returncode=1, stderr="secret-child-output")
             self.states.setdefault(project, _components())
             self.running[project] = self.image_id
             return ProcessResult(returncode=0)
@@ -113,6 +136,12 @@ class _RealRunner:
             self.states.pop(project, None)
             self.running.pop(project, None)
             return ProcessResult(returncode=0)
+        if operation == ("ps", "--format", "json"):
+            return ProcessResult(
+                returncode=1 if self.startup_diagnostic_failure else 0,
+                stdout=self.startup_diagnostic_stdout,
+                stderr="secret-diagnostic-output",
+            )
         if operation == ("ps", "--format", "json", "provider-bridge"):
             return ProcessResult(
                 returncode=0,
@@ -300,6 +329,17 @@ def test_real_runner_accepts_only_the_fixed_materialized_application_target() ->
             )
 
 
+def test_real_runner_accepts_only_the_fixed_start_diagnostic() -> None:
+    assert _real_compose_argv("ps", "--format", "json")[-3:] == (
+        "ps",
+        "--format",
+        "json",
+    )
+    for rejected in ("selenium", "--all", "--orphans"):
+        with pytest.raises(ValueError, match="fixed synthetic Compose argv"):
+            _real_compose_argv("ps", "--format", "json", rejected)
+
+
 def test_real_compose_fixture_is_digest_pinned_internal_and_unpublished() -> None:
     package = Path(runner_module.__file__).parent
     compose = (package / "real_compose.yaml").read_text(encoding="utf-8")
@@ -320,6 +360,105 @@ def test_real_compose_fixture_is_digest_pinned_internal_and_unpublished() -> Non
     assert "USER 65532:65532" in dockerfile
     assert "CREATE TABLE IF NOT EXISTS sw_state" in postgres_init
     assert "CHECK (tenant ~" in postgres_init
+
+
+@pytest.mark.asyncio
+async def test_real_start_failure_retains_only_allowlisted_service_diagnostic() -> None:
+    runner = _RealRunner(
+        up_failure=True,
+        startup_diagnostic_stdout=_startup_rows(failing_service="selenium", health="unhealthy"),
+    )
+    adapter = RealDockerComposeEnvironmentAdapter(runner=runner)
+
+    with pytest.raises(
+        ComposeUnavailableError,
+        match=r"^real-provider-start-selenium-running-unhealthy$",
+    ) as captured:
+        await adapter.prepare(_target())
+
+    rendered = f"{captured.value!s} {captured.value!r}"
+    assert "secret" not in rendered
+    assert captured.value.__cause__ is None
+    assert captured.value.__suppress_context__ is True
+    operations = [call[0][6:] for call in runner.calls if len(call[0]) > 6]
+    assert (
+        operations.index(("up", "--detach", "--wait", "--no-build"))
+        < operations.index(("ps", "--format", "json"))
+        < operations.index(("down", "--volumes", "--remove-orphans"))
+    )
+    assert runner.states == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("diagnostic", "diagnostic_failure"),
+    [
+        ("not-json", False),
+        (json.dumps([{"Service": "unknown", "State": "running", "Health": "healthy"}]), False),
+        (
+            json.dumps(
+                [
+                    {"Service": "selenium", "State": "running", "Health": "healthy"},
+                    {"Service": "selenium", "State": "running", "Health": "healthy"},
+                ]
+            ),
+            False,
+        ),
+        (_startup_rows(), True),
+    ],
+)
+async def test_real_start_diagnostic_fails_closed_without_child_output(
+    diagnostic: str, diagnostic_failure: bool
+) -> None:
+    runner = _RealRunner(
+        up_failure=True,
+        startup_diagnostic_stdout=diagnostic,
+        startup_diagnostic_failure=diagnostic_failure,
+    )
+
+    with pytest.raises(
+        ComposeUnavailableError,
+        match=r"^real-provider-start-diagnostic-unavailable$",
+    ) as captured:
+        await RealDockerComposeEnvironmentAdapter(runner=runner).prepare(_target())
+
+    rendered = f"{captured.value!s} {captured.value!r}"
+    assert "secret" not in rendered
+    assert captured.value.__cause__ is None
+    assert captured.value.__suppress_context__ is True
+    assert runner.states == {}
+
+
+@pytest.mark.asyncio
+async def test_real_restore_uses_the_same_start_diagnostic_before_cleanup() -> None:
+    runner = _RealRunner()
+    adapter = RealDockerComposeEnvironmentAdapter(runner=runner)
+    environment = await adapter.prepare(_target())
+    snapshot = await adapter.snapshot(environment)
+    runner.up_failure = True
+    runner.startup_diagnostic_stdout = _startup_rows(
+        failing_service="redis", state="exited", health=""
+    )
+    restore_call_index = len(runner.calls)
+
+    with pytest.raises(
+        ComposeUnavailableError,
+        match=r"^real-provider-start-redis-exited-none$",
+    ):
+        await adapter.restore(environment, snapshot)
+
+    operations = [
+        call[0][6:]
+        for call in runner.calls[restore_call_index:]
+        if call[0][:2] == ("docker", "compose")
+    ]
+    assert operations == [
+        ("down", "--volumes", "--remove-orphans"),
+        ("up", "--detach", "--wait", "--no-build"),
+        ("ps", "--format", "json"),
+        ("down", "--volumes", "--remove-orphans"),
+    ]
+    assert runner.states == {}
 
 
 @pytest.mark.asyncio
