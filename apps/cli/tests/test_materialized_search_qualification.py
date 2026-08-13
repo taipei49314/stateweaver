@@ -51,7 +51,9 @@ from stateweaver.cli.hosted_qualification import (
 )
 from stateweaver.cli.materialized_chain_qualification import (
     ActualMaterializedChainQualificationReceipt,
+    MaterializedChainQualificationReceipt,
     qualify_actual_materialized_chain,
+    qualify_materialized_chain,
     write_materialized_chain_qualification,
 )
 from stateweaver.cli.materialized_search_qualification import (
@@ -568,6 +570,35 @@ def test_exact_m4_bytes_compile_and_replay_five_clean_actual_asgi_roots(
     retained.write_bytes(retained.read_bytes() + b" ")
     with pytest.raises(ObservedChainQualificationError, match="invalid"):
         qualify_observed_chain(m4_receipt_path=retained, repository_marker=MARKER)
+
+
+def test_legacy_provider_witness_remains_a_non_admitting_prerequisite(tmp_path: Path) -> None:
+    """Exercise the retained compatibility reader without promoting it to hosted admission."""
+
+    chain = qualify_runtime_observation_chain(MARKER)
+    m4 = asyncio.run(
+        _execute_materialized_search(
+            chain[0], observed_chain=chain, adapter=_MemoryRealProviderAdapter()
+        )
+    )
+    m4_path = tmp_path / "materialized-search-receipt.json"
+    process_path = tmp_path / "observed-chain-receipt.json"
+    m4_path.write_bytes(canonical_json_bytes(m4) + b"\n")
+    process = qualify_observed_chain(m4_receipt_path=m4_path, repository_marker=MARKER)
+    process_path.write_bytes(canonical_json_bytes(process) + b"\n")
+
+    receipt = qualify_materialized_chain(
+        m4_receipt_path=m4_path,
+        process_receipt_path=process_path,
+        repository_marker=MARKER,
+        adapter=_MemoryM5ProviderAdapter(),
+    )
+
+    assert isinstance(receipt, MaterializedChainQualificationReceipt)
+    assert receipt.status == "M5_MATERIALIZED_PROVIDER_WITNESS_RETAINED"
+    assert receipt.release_eligible is False
+    assert receipt.cleanup_count == 10
+    assert len(receipt.clean_root_runs) == 5
 
 
 def test_m5_rejects_action_and_root_substitution_before_state_change() -> None:

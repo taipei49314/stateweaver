@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 from stateweaver.adapters.docker_compose import (
@@ -18,6 +19,7 @@ from stateweaver.adapters.docker_compose import materialized_lab_runtime as runt
 from stateweaver.adapters.docker_compose import runner as runner_module
 from stateweaver.adapters.docker_compose.real_provider_bridge import (
     ProviderCheckpointCapture,
+    ProviderCheckpointError,
     ProviderCheckpointObservation,
 )
 from stateweaver.adapters.docker_compose.runner import ProcessBoundaryError
@@ -43,11 +45,23 @@ from stateweaver.contracts import (
     canonical_json_bytes,
     sha256_digest,
 )
-from stateweaver.policy import BudgetSnapshot, PolicyAuthorization, PolicyRequest, evaluate_policy
-from stateweaver_lab import LabStateCheckpoint
-from stateweaver_lab.asgi import lab_action_artifact
+from stateweaver.policy import (
+    BudgetSnapshot,
+    PolicyAuthorization,
+    PolicyAuthorizationDeniedError,
+    PolicyRequest,
+    evaluate_policy,
+)
+from stateweaver_lab import LabStateCheckpoint, create_app
+from stateweaver_lab.asgi import (
+    LabAsgiExecution,
+    execute_lab_action_asgi,
+    lab_action_artifact,
+    resolve_lab_http_action,
+)
 from stateweaver_lab.fixtures import FixtureBearer
 from stateweaver_lab.models import DocumentId, ReadDocumentLabAction, ReadDocumentRequest
+from stateweaver_lab.state import LabState
 
 _APP_IMAGE = f"sha256:{'a' * 64}"
 _BRIDGE_IMAGE = f"sha256:{'b' * 64}"
@@ -231,6 +245,23 @@ def _capture(checkpoint: LabStateCheckpoint) -> ProviderCheckpointCapture:
         checkpoint_digest=checkpoint.checkpoint_digest,
         checkpoint_bytes=raw,
         observations=observations,
+    )
+
+
+def _binding(*, source_revision: str = "0" * 40) -> runtime.ApplicationImageBinding:
+    values: dict[str, object] = {
+        "application_container_id": _APP_CONTAINER,
+        "application_image_id": _APP_IMAGE,
+        "application_source_revision": source_revision,
+        "bridge_container_id": _BRIDGE_CONTAINER,
+        "bridge_image_id": _BRIDGE_IMAGE,
+        "image_identity_provenance": "EXECUTED_COMPOSE_CONTAINERS",
+        "provider_image_refs": runtime._PROVIDER_IMAGE_REFS,
+        "provider_image_set_digest": sha256_digest(runtime._PROVIDER_IMAGE_REFS),
+        "provider_image_provenance": "PINNED_MANIFEST_REFS_NOT_RUNTIME_IMAGE_IDS",
+    }
+    return runtime.ApplicationImageBinding.model_validate(
+        {**values, "binding_digest": runtime._digest(values)}
     )
 
 
@@ -418,6 +449,120 @@ def test_control_plan_and_root_identifiers_accept_compiler_grammar() -> None:
     assert closed.plan_id.endswith("masked_response")
 
 
+def test_request_rejects_cardinality_duplicates_policy_and_mode_substitution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _request()
+    values = request.model_dump(mode="python")
+    with pytest.raises(ValueError, match="cardinality"):
+        MaterializedLabRunRequest.model_validate(
+            values | {"action_bytes": (*request.action_bytes, request.action_bytes[0])}
+        )
+
+    duplicated = {
+        "actions": (*request.actions, request.actions[0]),
+        "action_bytes": (*request.action_bytes, request.action_bytes[0]),
+        "lab_actions": (*request.lab_actions, request.lab_actions[0]),
+        "lab_action_bytes": (*request.lab_action_bytes, request.lab_action_bytes[0]),
+        "policy_authorizations": (
+            *request.policy_authorizations,
+            request.policy_authorizations[0],
+        ),
+        "policy_authorization_bytes": (
+            *request.policy_authorization_bytes,
+            request.policy_authorization_bytes[0],
+        ),
+        "policy_requests": (*request.policy_requests, request.policy_requests[0]),
+        "policy_request_bytes": (*request.policy_request_bytes, request.policy_request_bytes[0]),
+    }
+    with pytest.raises(ValueError, match="unique"):
+        MaterializedLabRunRequest.model_validate(values | duplicated)
+
+    monkeypatch.setattr(
+        runtime,
+        "evaluate_policy",
+        lambda _request: (_ for _ in ()).throw(ValueError("invalid policy")),
+    )
+    with pytest.raises(ValueError, match="policy binding"):
+        MaterializedLabRunRequest.model_validate(values)
+    monkeypatch.undo()
+
+    authorization = request.policy_authorizations[0].model_copy(
+        update={"envelope_hash": sha256_digest("other-envelope")}
+    )
+    with pytest.raises(ValueError, match="policy binding"):
+        MaterializedLabRunRequest.model_validate(
+            values
+            | {
+                "policy_authorizations": (authorization,),
+                "policy_authorization_bytes": (canonical_json_bytes(authorization),),
+            }
+        )
+    with pytest.raises(ValueError, match="mode are inconsistent"):
+        MaterializedLabRunRequest.model_validate(values | {"mode": "patched"})
+
+
+def test_image_checkpoint_and_trace_validators_reject_rehashed_tampering(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binding = _binding().model_dump(mode="python")
+    with pytest.raises(ValueError, match="binding digest"):
+        runtime.ApplicationImageBinding.model_validate(binding | {"bridge_container_id": "e" * 64})
+
+    from stateweaver_lab import create_app
+
+    witness = runtime._checkpoint_witness(
+        _capture(create_app("vulnerable").state.lab.export_checkpoint())
+    )
+    raw_observations = witness["observations"]
+    assert isinstance(raw_observations, list)
+    observations = list(raw_observations)
+    assert isinstance(observations[0], dict)
+    observations[0] = observations[0] | {"storage_digest": sha256_digest("wrong shard")}
+    with pytest.raises(ValueError, match="six exact shards"):
+        runtime.CheckpointWitness.model_validate(witness | {"observations": tuple(observations)})
+
+    trace_values: dict[str, object] = {
+        "action_id": "action.m5-runtime-01",
+        "action_digest": sha256_digest("action"),
+        "lab_action_digest": sha256_digest("lab-action"),
+        "policy_authorization_digest": sha256_digest("authorization"),
+        "policy_request_digest": sha256_digest("request"),
+        "method": "GET",
+        "path": "/v1/lab/documents/doc-a-owned",
+        "route": "/v1/lab/documents/{document_id}",
+        "response_status": 200,
+        "response_body": b"{}",
+        "response_body_digest": runtime._raw_digest(b"{}"),
+        "response_evidence_id": None,
+        "response_action_id": None,
+        "started_ns": 2,
+        "ended_ns": 1,
+    }
+    with pytest.raises(ValueError, match="timing"):
+        runtime.ApplicationRouteTrace.model_validate(
+            {**trace_values, "observation_digest": runtime._digest(trace_values)}
+        )
+    trace_values["ended_ns"] = 3
+    with pytest.raises(ValueError, match="observation digest"):
+        runtime.ApplicationRouteTrace.model_validate(
+            {**trace_values, "observation_digest": sha256_digest("wrong observation")}
+        )
+
+    monkeypatch.setattr(
+        LabState,
+        "from_checkpoint",
+        classmethod(lambda _cls, _checkpoint: (_ for _ in ()).throw(ValueError("invalid"))),
+    )
+    valid_witness = runtime.CheckpointWitness.model_validate(
+        witness | {"observations": tuple(raw_observations)}
+    )
+    with pytest.raises(ValueError, match="step checkpoint"):
+        runtime.MaterializedLabStepReceipt._bound(  # type: ignore[operator]
+            runtime.MaterializedLabStepReceipt.model_construct(after=valid_witness)
+        )
+
+
 @pytest.mark.asyncio
 async def test_timeout_occurs_before_checkpoint_visibility_cas(
     monkeypatch: pytest.MonkeyPatch,
@@ -433,6 +578,151 @@ async def test_timeout_occurs_before_checkpoint_visibility_cas(
         await runtime._execute_in_container(_request())
     assert store.active is not None
     assert len(store.staged) == 1
+
+
+@pytest.mark.asyncio
+async def test_container_rejects_checkpoint_cas_substitution_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from stateweaver_lab import create_app
+
+    alternate = _capture(create_app("patched").state.lab.export_checkpoint())
+
+    class _InitialReadbackMismatch(_ProviderStore):
+        def compare_and_swap(
+            self, expected: str | None, next_generation: str
+        ) -> ProviderCheckpointCapture:
+            super().compare_and_swap(expected, next_generation)
+            return alternate
+
+    monkeypatch.setattr(runtime, "RealProviderLabStateStore", _InitialReadbackMismatch)
+    with pytest.raises(ProviderCheckpointError, match="initial-checkpoint-readback"):
+        await runtime._execute_in_container(_request())
+
+    class _ActiveSubstitution(_ProviderStore):
+        def compare_and_swap(
+            self, expected: str | None, next_generation: str
+        ) -> ProviderCheckpointCapture:
+            assert self.active == expected
+            self.active = next_generation
+            return self.staged[next_generation]
+
+        def load_active(self) -> ProviderCheckpointCapture:
+            return alternate
+
+    monkeypatch.setattr(runtime, "RealProviderLabStateStore", _ActiveSubstitution)
+    with pytest.raises(ProviderCheckpointError, match="active-checkpoint-substitution"):
+        await runtime._execute_in_container(_request())
+
+    class _BadNextStage(_ProviderStore):
+        calls = 0
+
+        def stage(self, raw: bytes) -> ProviderCheckpointCapture:
+            self.calls += 1
+            capture = super().stage(raw)
+            return capture if self.calls == 1 else alternate
+
+    monkeypatch.setattr(runtime, "RealProviderLabStateStore", _BadNextStage)
+    with pytest.raises(ProviderCheckpointError, match="next-checkpoint-stage"):
+        await runtime._execute_in_container(_request())
+
+    class _BadNextReadback(_ProviderStore):
+        swaps = 0
+        substitute = False
+
+        def compare_and_swap(
+            self, expected: str | None, next_generation: str
+        ) -> ProviderCheckpointCapture:
+            self.swaps += 1
+            assert self.active == expected
+            self.active = next_generation
+            result = self.staged[next_generation]
+            self.substitute = self.swaps > 1
+            return result
+
+        def load_active(self) -> ProviderCheckpointCapture:
+            if self.substitute:
+                return alternate
+            return super().load_active()
+
+    monkeypatch.setattr(runtime, "RealProviderLabStateStore", _BadNextReadback)
+    with pytest.raises(ProviderCheckpointError, match="next-checkpoint-readback"):
+        await runtime._execute_in_container(_request())
+
+
+@pytest.mark.asyncio
+async def test_container_rejects_policy_request_and_authorization_substitution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _request()
+    incomplete_policy = request.policy_requests[0].model_copy(update={"budget": None})
+    incomplete = request.model_copy(update={"policy_requests": (incomplete_policy,)})
+    monkeypatch.setattr(runtime, "RealProviderLabStateStore", _ProviderStore)
+    with pytest.raises(ValueError, match="policy request is incomplete"):
+        await runtime._execute_in_container(incomplete)
+
+    budget = request.policy_requests[0].budget
+    assert budget is not None
+    reordered_policy = request.policy_requests[0].model_copy(
+        update={"budget": budget.model_copy(update={"requests_in_window": 7})}
+    )
+    reordered = request.model_copy(update={"policy_requests": (reordered_policy,)})
+    with pytest.raises(ValueError, match="policy budget order"):
+        await runtime._execute_in_container(reordered)
+
+    def deny(*_args: object, **_kwargs: object) -> None:
+        raise PolicyAuthorizationDeniedError("denied")
+
+    monkeypatch.setattr(runtime, "verify_policy_authorization", deny)
+    with pytest.raises(ValueError, match="authorization was denied"):
+        await runtime._execute_in_container(request)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fault", "message"),
+    (
+        ("status", "status was not admitted"),
+        ("state", "replaced retained state"),
+        ("evidence-count", "append exactly one evidence"),
+        ("response-shape", "not a JSON object"),
+        ("evidence-id", "does not bind its appended evidence"),
+        ("action-id", "does not bind its appended evidence"),
+    ),
+)
+async def test_container_rejects_actual_asgi_result_substitution(
+    monkeypatch: pytest.MonkeyPatch,
+    fault: str,
+    message: str,
+) -> None:
+    original = execute_lab_action_asgi
+
+    async def substituted(app: Any, lab_action: Any) -> LabAsgiExecution:
+        if fault == "evidence-count":
+            spec = resolve_lab_http_action(lab_action)
+            return LabAsgiExecution(
+                method=spec.method,
+                path=spec.path,
+                route=spec.route_template,
+                status=spec.expected_statuses[0],
+                body=b"{}",
+            )
+        execution = await original(app, lab_action)
+        if fault == "status":
+            return execution.model_copy(update={"status": 418})
+        if fault == "state":
+            app.state.lab = create_app("vulnerable").state.lab
+            return execution
+        if fault == "response-shape":
+            return execution.model_copy(update={"body": b"[]"})
+        response = json.loads(execution.body)
+        response["evidence_id" if fault == "evidence-id" else "action_id"] = "forged"
+        return execution.model_copy(update={"body": canonical_json_bytes(response)})
+
+    monkeypatch.setattr(runtime, "RealProviderLabStateStore", _ProviderStore)
+    monkeypatch.setattr(runtime, "execute_lab_action_asgi", substituted)
+    with pytest.raises(ValueError, match=message):
+        await runtime._execute_in_container(_request())
 
 
 def test_container_execute_serializes_exact_checkpoint_bytes(
@@ -572,6 +862,148 @@ async def test_receipt_independently_rejects_another_source_revision(
             request,
             binding,
         )
+
+
+@pytest.mark.asyncio
+async def test_receipt_rejects_digest_and_invalid_step_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _ProviderStore()
+    monkeypatch.setattr(runtime, "RealProviderLabStateStore", lambda: store)
+    request = _request()
+    output = await runtime._execute_in_container(request)
+    receipt = runtime._parse_runtime_result(
+        ProcessResult(returncode=0, stdout=json.dumps(runtime._json_compatible(output))),
+        request,
+        _binding(),
+    )
+    with pytest.raises(ValueError, match="receipt digest"):
+        runtime.MaterializedLabRunReceipt.model_validate(
+            receipt.model_dump(mode="python") | {"receipt_digest": sha256_digest("forged")}
+        )
+
+    step = receipt.steps[0]
+    monkeypatch.setattr(
+        LabState,
+        "from_checkpoint",
+        classmethod(lambda _cls, _checkpoint: (_ for _ in ()).throw(ValueError("invalid"))),
+    )
+    with pytest.raises(ValueError, match="step checkpoint"):
+        runtime.MaterializedLabStepReceipt.model_validate(step.model_dump(mode="python"))
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    (
+        "",
+        "[]",
+        '{"execution_backend":"fastapi-asgi","execution_backend":"forged"}',
+    ),
+)
+def test_parse_runtime_result_rejects_empty_scalar_and_duplicate_json(stdout: str) -> None:
+    with pytest.raises((ComposeAdapterError, ValueError), match=r"invalid|duplicate"):
+        runtime._parse_runtime_result(
+            ProcessResult(returncode=0, stdout=stdout), _request(), _binding()
+        )
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_invalid_request_and_missing_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _Runner({})
+    docker_runtime = MaterializedLabDockerRuntime(runner=runner)
+    with pytest.raises(ComposeAdapterError, match="request is invalid"):
+        await docker_runtime.run(object())  # type: ignore[arg-type]
+
+    async def no_binding(_project: str, _marker: str) -> None:
+        return None
+
+    monkeypatch.setattr(docker_runtime, "_executed_image_binding", no_binding)
+    monkeypatch.setattr(runtime, "_runtime_payload", lambda _request, _binding: b"{}")
+    with pytest.raises(ComposeAdapterError, match="produced no receipt"):
+        await docker_runtime.run(_request())
+
+
+@pytest.mark.asyncio
+async def test_image_identity_helpers_reject_aliases_and_malformed_ids() -> None:
+    runner = _Runner({})
+    docker_runtime = MaterializedLabDockerRuntime(runner=runner)
+    with pytest.raises(ValueError, match="service identity"):
+        await docker_runtime._service_container_id("swm2" + "1" * 32, "database")
+
+    @dataclass
+    class _MalformedContainerRunner(_Runner):
+        async def run(self, argv: tuple[str, ...], *, stdin: bytes | None = None) -> ProcessResult:
+            if argv[-3:] == ("ps", "--quiet", "materialized-lab"):
+                self.calls.append((argv, stdin))
+                return ProcessResult(returncode=0, stdout="short")
+            return await super().run(argv, stdin=stdin)
+
+    with pytest.raises(ComposeAdapterError, match="container identity"):
+        await MaterializedLabDockerRuntime(
+            runner=_MalformedContainerRunner({})
+        )._service_container_id("swm2" + "1" * 32, "materialized-lab")
+
+    @dataclass
+    class _AliasedContainerRunner(_Runner):
+        async def run(self, argv: tuple[str, ...], *, stdin: bytes | None = None) -> ProcessResult:
+            if argv[-3:] == ("ps", "--quiet", "provider-bridge"):
+                self.calls.append((argv, stdin))
+                return ProcessResult(returncode=0, stdout=_APP_CONTAINER)
+            return await super().run(argv, stdin=stdin)
+
+    with pytest.raises(ComposeAdapterError, match="container identity"):
+        await MaterializedLabDockerRuntime(
+            runner=_AliasedContainerRunner({})
+        )._executed_image_binding("swm2" + "1" * 32, "0" * 40)
+
+
+def test_compose_and_exact_envelope_reject_caller_controlled_values() -> None:
+    with pytest.raises(ValueError, match="Compose project"):
+        runtime._compose("../caller-project", "up")
+    envelope, lab_action, _request_value, _authorization = _inputs()
+    action = envelope.action
+    assert isinstance(action, HttpRequestAction)
+    assert action.target is not None
+    substituted = envelope.model_copy(
+        update={
+            "action": action.model_copy(
+                update={"target": action.target.model_copy(update={"path": "/v1/lab/forged"})}
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="no longer matches"):
+        runtime._require_exact_envelope(substituted, lab_action)
+
+
+def test_container_main_rejects_invalid_modes_and_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io
+
+    class _Input:
+        def __init__(self, raw: bytes) -> None:
+            self.buffer = io.BytesIO(raw)
+
+    assert runtime._container_main(("materialized_lab_runtime", "caller-mode")) == 64
+    assert runtime._container_main(("materialized_lab_runtime", "health")) == 0
+
+    monkeypatch.setattr(runtime, "create_app", lambda _mode: object())
+    monkeypatch.setattr(runtime, "seal_lab_asgi_app", lambda _app: None)
+    assert runtime._container_main(("materialized_lab_runtime", "health")) == 70
+
+    for raw in (b"", b"{}", b"{"):
+        monkeypatch.setattr(sys, "stdin", _Input(raw))
+        expected = 70 if raw == b"{" else 65
+        assert runtime._container_main(("materialized_lab_runtime", "execute")) == expected
+
+    def stop_serve(_seconds: float) -> None:
+        raise RuntimeError("serve-loop-entered")
+
+    monkeypatch.setattr(time, "sleep", stop_serve)
+    with pytest.raises(RuntimeError, match="serve-loop-entered"):
+        runtime._container_main(("materialized_lab_runtime", "serve"))
 
 
 @pytest.mark.asyncio

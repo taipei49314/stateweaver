@@ -18,7 +18,11 @@ from stateweaver.cli.hosted_qualification import (
     _MAX_FILE_BYTES,
     _MAX_PRODUCER_BYTES,
     _actual_materialized_m5,
+    _exact_sha_text,
     _hosted_artifact_role,
+    _json_model,
+    _junit,
+    _read_regular,
     _require_exact_tree,
     build_hosted_docker_qualification,
 )
@@ -147,6 +151,40 @@ def test_actual_m5_exact_tree_caps_and_artifact_role(tmp_path: Path) -> None:
     assert _MAX_FILE_BYTES <= _MAX_PRODUCER_BYTES <= 64 * 1_048_576
     assert _hosted_artifact_role("materialized-chain-replay.json") == ("qualification-receipt")
     assert _hosted_artifact_role("observed-chain-receipt.json") == "qualification-receipt"
+
+
+def test_hosted_ingestion_helpers_reject_malformed_files_and_junit(tmp_path: Path) -> None:
+    missing = tmp_path / "missing"
+    with pytest.raises(HostedQualificationError, match="regular file"):
+        _read_regular(missing)
+    empty = tmp_path / "empty"
+    empty.write_bytes(b"")
+    with pytest.raises(HostedQualificationError, match="size"):
+        _read_regular(empty)
+    assert _read_regular(empty, allow_empty=True) == b""
+
+    for raw in (b"{ }\n", b"\xff", b"[]\n"):
+        with pytest.raises(HostedQualificationError, match="JSON"):
+            _json_model(raw, ObservedChainQualificationReceipt)
+
+    invalid_junit = (
+        b"<broken",
+        b"<other />",
+        b'<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase /></testsuite>',
+        b'<testsuite tests="x" failures="0" errors="0" skipped="0" />',
+        b'<testsuite tests="2" failures="0" errors="0" skipped="0">'
+        b'<testcase classname="suite" name="case" /></testsuite>',
+        b'<testsuite tests="1" failures="1" errors="0" skipped="0">'
+        b'<testcase classname="suite" name="case"><failure /></testcase></testsuite>',
+    )
+    for raw in invalid_junit:
+        with pytest.raises(HostedQualificationError, match="JUnit"):
+            _junit(raw, artifact_path="junit.xml")
+
+    with pytest.raises(HostedQualificationError, match="Git identity"):
+        _exact_sha_text(b"\xff", _MARKER)
+    with pytest.raises(HostedQualificationError, match="expected SHA"):
+        _exact_sha_text(f"{'5' * 40}\n".encode("ascii"), _MARKER)
 
 
 def test_full_hosted_builder_retains_process_and_actual_m5_bytes(

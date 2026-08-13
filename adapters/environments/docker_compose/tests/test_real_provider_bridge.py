@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
+import runpy
 import socket
 import struct
 import sys
@@ -9,6 +11,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
+from urllib.error import HTTPError
 
 import pytest
 from stateweaver.adapters.docker_compose import real_provider_bridge as bridge
@@ -92,6 +95,44 @@ def _archive(marker: str = "baseline", *, tick: int = 0) -> dict[str, Any]:
         "target": {"target_id": "real-provider-demo", "target_version": "1.0.0"},
         "components": _components(marker, tick=tick),
     }
+
+
+def _m5_request(scenario: str, mode: str) -> dict[str, object]:
+    actions: list[dict[str, object]] = []
+    for sequence, ((method, path, identity), artifact) in enumerate(
+        zip(bridge._M5_ROUTES[scenario], bridge._M5_ARTIFACTS[scenario], strict=True),
+        start=1,
+    ):
+        envelope = {
+            "action_id": f"action.step-{sequence}",
+            "action": {
+                "type": "http.request",
+                "method": method,
+                "target": {
+                    "scheme": "http",
+                    "host": "localhost",
+                    "port": 80,
+                    "path": path,
+                },
+                "identity_handle": identity,
+                "body_artifact": artifact,
+                "query": [],
+                "headers": [],
+                "template_ref": None,
+            },
+            "idempotency_key": "sha256:" + f"{sequence:064x}",
+            "policy_decision_ref": f"policy:step-{sequence}",
+            "sequence": sequence,
+            "requested_by": {"type": "workflow", "role": "operator", "actor_id": None},
+        }
+        actions.append(
+            {
+                "envelope": envelope,
+                "action_digest": "sha256:"
+                + hashlib.sha256(bridge._canonical(envelope)).hexdigest(),
+            }
+        )
+    return {"scenario": scenario, "mode": mode, "actions": actions}
 
 
 def test_archive_validation_is_closed_and_canonical() -> None:
@@ -359,6 +400,32 @@ def test_http_json_converts_transport_and_shape_failures_to_closed_errors(
         bridge._http_json("GET", "http://provider.invalid/fixed")
 
 
+def test_http_json_handles_only_explicitly_accepted_http_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def http_error(code: int, payload: bytes) -> Callable[..., object]:
+        def fail(*_args: object, **_kwargs: object) -> object:
+            raise HTTPError(
+                "http://provider.invalid/fixed",
+                code,
+                "untrusted detail",
+                cast(Any, None),
+                io.BytesIO(payload),
+            )
+
+        return fail
+
+    monkeypatch.setattr(bridge, "urlopen", http_error(404, b'{"missing":true}'))
+    assert bridge._http_json_response(
+        "GET", "http://provider.invalid/fixed", accepted_statuses=(404,)
+    ) == (404, {"missing": True})
+
+    monkeypatch.setattr(bridge, "urlopen", http_error(503, b'{"secret":true}'))
+    with pytest.raises(bridge.ProviderBridgeError, match="HTTP request failed") as failure:
+        bridge._http_json_response("GET", "http://provider.invalid/fixed")
+    assert failure.value.__cause__ is None
+
+
 def test_low_level_protocol_boundaries_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(bridge.ProviderBridgeError, match="closed a reply early"):
         bridge._read_exact(cast(Any, _Socket(b"")), 1)
@@ -462,6 +529,97 @@ def test_provider_acknowledgement_and_readback_failures_are_rejected(
     bridge._CLOCK_PATH.write_bytes(b"[]")
     with pytest.raises(bridge.ProviderBridgeError, match="controlled-clock state"):
         bridge._clock_export()
+
+
+def test_provider_restore_readbacks_and_closed_reply_shapes_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        bridge,
+        "_http_json",
+        lambda method, url, *_args, **_kwargs: {} if method == "GET" else [],
+    )
+    with pytest.raises(bridge.ProviderBridgeError, match="queue capture"):
+        bridge._queue_export()
+
+    monkeypatch.setattr(bridge, "_http_json", lambda *_args, **_kwargs: {"unexpected": True})
+    with pytest.raises(bridge.ProviderBridgeError, match="queue deletion reply"):
+        bridge._queue_import(cast(dict[str, object], _components()["queue"]))
+
+    monkeypatch.setattr(bridge, "_http_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bridge, "_queue_create", lambda: None)
+    monkeypatch.setattr(bridge, "_queue_publish", lambda _marker: None)
+    monkeypatch.setattr(bridge, "_queue_export", lambda: _components("different")["queue"])
+    with pytest.raises(bridge.ProviderBridgeError, match="RabbitMQ restore read-back"):
+        bridge._queue_import(cast(dict[str, object], _components()["queue"]))
+
+    monkeypatch.setattr(
+        bridge,
+        "_browser_roundtrip",
+        lambda _marker: (cast(dict[str, object], _components("different")["session"]), "140"),
+    )
+    with pytest.raises(bridge.ProviderBridgeError, match="session restore read-back"):
+        bridge._session_import(cast(dict[str, object], _components()["session"]))
+
+    monkeypatch.setattr(
+        bridge, "_filesystem_export", lambda: _components("different")["filesystem"]
+    )
+    monkeypatch.setattr(bridge, "_atomic_write", lambda *_args: None)
+    with pytest.raises(bridge.ProviderBridgeError, match="filesystem restore read-back"):
+        bridge._filesystem_import(cast(dict[str, object], _components()["filesystem"]))
+
+    monkeypatch.setattr(bridge, "_clock_export", lambda: _components(tick=99)["clock"])
+    with pytest.raises(bridge.ProviderBridgeError, match="clock restore read-back"):
+        bridge._clock_import(cast(dict[str, object], _components()["clock"]))
+
+
+@pytest.mark.parametrize(
+    "session_reply",
+    [None, {"sessionId": "bad", "capabilities": {"browserVersion": "140"}}],
+)
+def test_browser_session_rejects_unbound_session_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    session_reply: object,
+) -> None:
+    monkeypatch.setattr(bridge, "_webdriver", lambda *_args, **_kwargs: session_reply)
+    with (
+        pytest.raises(bridge.ProviderBridgeError, match=r"session (reply|identity) was invalid"),
+        bridge._browser_session(),
+    ):
+        pytest.fail("invalid browser session yielded")
+
+
+def test_browser_roundtrip_rejects_cookie_or_storage_substitution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @contextmanager
+    def session() -> Iterator[tuple[str, str]]:
+        yield "a" * 32, "140"
+
+    def webdriver(method: str, path: str, _payload: object | None = None) -> object:
+        if method == "GET" and "/cookie/" in path:
+            return {"name": "sw_marker", "value": "substituted"}
+        if path.endswith("/execute/sync"):
+            return "baseline"
+        return None
+
+    monkeypatch.setattr(bridge, "_browser_session", session)
+    monkeypatch.setattr(bridge, "_webdriver", webdriver)
+    with pytest.raises(bridge.ProviderBridgeError, match="session read-back differed"):
+        bridge._browser_roundtrip("baseline")
+
+
+@pytest.mark.parametrize("tick", [0, True, 1_000_001])
+def test_mutated_archive_rejects_ticks_outside_closed_range(tick: object) -> None:
+    with pytest.raises(ValueError, match="mutation tick is invalid"):
+        bridge._mutated_archive("baseline", cast(int, tick))
+
+
+def test_canonical_encoder_and_exact_reader_enforce_size_boundaries() -> None:
+    with pytest.raises(ValueError, match="not JSON compliant"):
+        bridge._canonical(float("nan"))
+    with pytest.raises(bridge.ProviderBridgeError, match="fixed boundary"):
+        bridge._read_exact(cast(Any, _Socket(b"")), bridge._MAX_PROVIDER_REPLY_BYTES + 1)
 
 
 @pytest.mark.parametrize(
@@ -692,6 +850,201 @@ def test_main_dispatches_only_the_five_closed_commands(monkeypatch: pytest.Monke
         monkeypatch.setattr(bridge, f"_{command}", dispatch)
         assert bridge.main([command]) == 0
     assert called == ["serve", "health", "export", "import", "mutate"]
+
+
+@pytest.mark.parametrize(
+    ("scenario", "mode", "final_outcome", "final_status"),
+    [
+        ("primary_vulnerable", "vulnerable", "VIOLATED", 200),
+        ("primary_patched", "patched", "SATISFIED", 403),
+        ("masked_response", "vulnerable", "SATISFIED", 200),
+        ("mock_only_response", "vulnerable", "INCONCLUSIVE", 200),
+        ("fresh_session", "vulnerable", "SATISFIED", 403),
+        ("same_tenant_document", "vulnerable", "SATISFIED", 200),
+    ],
+)
+def test_m5_replay_traverses_every_action_and_emits_bound_witnesses(
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+    mode: str,
+    final_outcome: str,
+    final_status: int,
+) -> None:
+    request = _m5_request(scenario, mode)
+    current = _archive()
+    restorations: list[dict[str, object]] = []
+
+    def archive() -> dict[str, object]:
+        return current
+
+    def restore(next_archive: dict[str, object]) -> None:
+        nonlocal current
+        restorations.append(next_archive)
+        current = next_archive
+
+    output = _Output()
+    monkeypatch.setattr(bridge, "_archive", archive)
+    monkeypatch.setattr(bridge, "_restore", restore)
+    monkeypatch.setattr(sys, "stdin", _Input(bridge._canonical(request)))
+    monkeypatch.setattr(sys, "stdout", output)
+
+    assert bridge.main(["m5-replay"]) == 0
+
+    receipt = json.loads(output.text)
+    steps = receipt["steps"]
+    assert receipt["accepted"] is True
+    assert receipt["schema_version"] == "m5.1"
+    assert len(steps) == len(bridge._M5_ROUTES[scenario])
+    assert len(restorations) == len(steps)
+    assert [step["step_id"] for step in steps] == [
+        f"step.{sequence:02d}" for sequence in range(1, len(steps) + 1)
+    ]
+    assert steps[-1]["response_status"] == final_status
+    assert steps[-1]["oracle_outcome"] == final_outcome
+    assert all(step["before"] != step["after"] for step in steps)
+    assert steps[0]["before"] == _archive()
+    assert steps[-1]["after"] == restorations[-1]
+    request_actions = cast(list[dict[str, object]], request["actions"])
+    for sequence, (raw_action, step, restored) in enumerate(
+        zip(request_actions, steps, restorations, strict=True), start=1
+    ):
+        assert isinstance(raw_action, dict)
+        assert step["action_digest"] == raw_action["action_digest"]
+        marker = step["after"]["components"]["cache"]["entries"]["sw:marker"]
+        assert marker == bridge._m5_marker(raw_action, sequence=sequence)
+        restored_value = cast(dict[str, Any], restored)
+        assert restored_value["components"]["clock"] == bridge._clock_component(sequence)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda value: value.update(extra=True), "request shape"),
+        (lambda value: value.update(scenario="unknown"), "scenario"),
+        (lambda value: value.update(mode="patched"), "scenario"),
+        (lambda value: cast(list[object], value["actions"]).pop(), "scenario"),
+        (
+            lambda value: cast(dict[str, object], cast(list[object], value["actions"])[0]).update(
+                extra=True
+            ),
+            "action shape",
+        ),
+        (
+            lambda value: cast(dict[str, object], cast(list[object], value["actions"])[0]).update(
+                envelope=[]
+            ),
+            "envelope is invalid",
+        ),
+        (
+            lambda value: cast(
+                dict[str, object],
+                cast(dict[str, object], cast(list[object], value["actions"])[0])["envelope"],
+            ).update(sequence=7),
+            "outside the fixed provider scenario",
+        ),
+        (
+            lambda value: cast(dict[str, object], cast(list[object], value["actions"])[0]).update(
+                action_digest="sha256:" + ("0" * 64)
+            ),
+            "outside the fixed provider scenario",
+        ),
+    ],
+)
+def test_m5_replay_rejects_open_or_unbound_requests_before_provider_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    mutate: Callable[[dict[str, object]], object],
+    message: str,
+) -> None:
+    request = _m5_request("same_tenant_document", "vulnerable")
+    mutate(request)
+    monkeypatch.setattr(sys, "stdin", _Input(bridge._canonical(request)))
+    monkeypatch.setattr(bridge, "_restore", lambda _value: pytest.fail("provider state changed"))
+
+    with pytest.raises(ValueError, match=message):
+        bridge._m5_replay()
+
+
+def test_m5_replay_fails_closed_when_provider_state_does_not_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _m5_request("same_tenant_document", "vulnerable")
+    current = _archive()
+    monkeypatch.setattr(sys, "stdin", _Input(bridge._canonical(request)))
+    monkeypatch.setattr(bridge, "_archive", lambda: current)
+    monkeypatch.setattr(bridge, "_restore", lambda _value: None)
+
+    with pytest.raises(bridge.ProviderBridgeError, match="provider state did not change"):
+        bridge._m5_replay()
+
+
+def test_command_readback_mismatches_and_mutation_shape_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "stdin", _Input(bridge._canonical(_archive("requested", tick=1))))
+    monkeypatch.setattr(bridge, "_restore", lambda _value: None)
+    monkeypatch.setattr(bridge, "_archive", lambda: _archive("different", tick=2))
+    with pytest.raises(bridge.ProviderBridgeError, match="restore identity verification"):
+        bridge._import()
+
+    monkeypatch.setattr(sys, "stdin", _Input(b'{"wrong":true}'))
+    with pytest.raises(ValueError, match="mutation request shape"):
+        bridge._mutate()
+
+    monkeypatch.setattr(sys, "stdin", _Input(b'{"marker":"requested","tick":1}'))
+    with pytest.raises(bridge.ProviderBridgeError, match="mutation identity verification"):
+        bridge._mutate()
+
+
+@pytest.mark.filterwarnings("ignore:.*found in sys.modules.*:RuntimeWarning")
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        (b"", "fixed real-provider operation failed\n"),
+        (
+            bridge._canonical(_archive()),
+            "fixed real-provider operation failed:restore-database-failed\n",
+        ),
+    ],
+)
+def test_main_module_redacts_provider_and_value_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: bytes,
+    expected: str,
+) -> None:
+    module_name = "stateweaver.adapters.docker_compose.real_provider_bridge"
+    monkeypatch.setattr(sys, "argv", [module_name, "import"])
+    monkeypatch.setattr(sys, "stdin", _Input(payload))
+    monkeypatch.setattr(
+        socket,
+        "create_connection",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("secret")),
+    )
+    stderr = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", stderr)
+    with pytest.raises(SystemExit) as failure:
+        runpy.run_module(module_name, run_name="__main__")
+    assert failure.value.code == 65
+    assert stderr.getvalue() == expected
+
+
+def test_health_rejects_untrusted_provider_version_shapes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bridge, "_postgres_query", lambda _sql: ())
+    monkeypatch.setattr(bridge, "_redis_command", lambda *_parts: "missing")
+    monkeypatch.setattr(bridge, "_http_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bridge, "_session_export", lambda: _components()["session"])
+    monkeypatch.setattr(
+        bridge,
+        "_browser_roundtrip",
+        lambda _marker: (cast(dict[str, object], _components()["session"]), "140.0"),
+    )
+    monkeypatch.setattr(bridge, "_filesystem_export", lambda: _components()["filesystem"])
+    monkeypatch.setattr(bridge, "_clock_export", lambda: _components()["clock"])
+    monkeypatch.setattr(bridge, "_queue_export", lambda: _components()["queue"])
+    monkeypatch.setattr(bridge, "_cache_export", lambda: _components()["cache"])
+    with pytest.raises(bridge.ProviderBridgeError, match="version discovery"):
+        bridge._health()
 
 
 @pytest.mark.parametrize(
