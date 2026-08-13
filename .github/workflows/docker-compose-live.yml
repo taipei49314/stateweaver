@@ -1,4 +1,4 @@
-name: M2 Docker Compose observation
+name: M2-M5 Docker Compose qualification
 
 on:
   workflow_dispatch:
@@ -7,14 +7,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: m2-docker-compose-${{ github.ref }}
+  group: m2-m5-docker-compose-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   live-provider-worlds:
-    name: Synthetic and real-provider siblings
+    name: Hosted M2-M5 execution and cleanup
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
 
     steps:
       - name: Check out source
@@ -62,6 +62,12 @@ jobs:
             adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/RealDockerfile \
             adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/real_postgres_init.sql \
             adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/real_provider_bridge.py \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/MaterializedLabDockerfile \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/materialized_lab_requirements.txt \
+            adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/materialized_lab_runtime.py \
+            labs/multitenant-saas/stateweaver_lab/asgi.py \
+            labs/multitenant-saas/stateweaver_lab/provider_checkpoint.py \
+            labs/multitenant-saas/stateweaver_lab/state.py \
             > artifacts/m2-live/source-sha256.txt
 
       - name: Build the fixed digest-pinned fixture
@@ -72,8 +78,9 @@ jobs:
           docker image inspect stateweaver-synthetic-demo:local \
             > artifacts/m2-live/synthetic-image-inspect.json
 
-      - name: Acquire and bind the real provider images
+      - name: Acquire and bind the real provider and materialized application images
         run: |
+          set -euo pipefail
           docker compose \
             --file adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/real_compose.yaml \
             pull postgres redis rabbitmq selenium
@@ -81,8 +88,14 @@ jobs:
             --tag stateweaver-real-provider-bridge:local \
             --file adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/RealDockerfile \
             adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose
+          docker build \
+            --tag stateweaver-materialized-lab:local \
+            --build-arg STATEWEAVER_SOURCE_SHA=$GITHUB_SHA \
+            --file adapters/environments/docker_compose/src/stateweaver/adapters/docker_compose/MaterializedLabDockerfile \
+            .
           docker image inspect \
             stateweaver-real-provider-bridge:local \
+            stateweaver-materialized-lab:local \
             postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193 \
             redis:8-alpine@sha256:978f0e01593e65eed801f2402944efcd936d43b5027e4908a7897baf88ed6241 \
             rabbitmq:4-management-alpine@sha256:44bf7eb50fe1765885659e49ccfdc775f8e531964d979321aee380a071f49f94 \
@@ -124,7 +137,7 @@ jobs:
             --junitxml=artifacts/m4-live/junit.xml \
             -q
 
-      - name: Compile retained M4 bytes and replay five clean roots
+      - name: Compile retained M4 bytes and replay the observed chain over five clean roots
         run: |
           set -euo pipefail
           mkdir -p artifacts/m5-clean-root
@@ -133,14 +146,14 @@ jobs:
             --repository-marker "$GITHUB_SHA" \
             --output artifacts/m5-clean-root/observed-chain-receipt.json
 
-      - name: Retain bounded Docker provider witnesses for the exact M5 actions
+      - name: Execute and qualify the fixed ten-scenario actual-ASGI M5 chain
         run: |
           set -euo pipefail
           uv run stateweaver foundation qualify-materialized-chain \
             --m4-receipt artifacts/m4-live/materialized-search-receipt.json \
             --process-receipt artifacts/m5-clean-root/observed-chain-receipt.json \
             --repository-marker "$GITHUB_SHA" \
-            --output artifacts/m5-clean-root/materialized-provider-receipt.json
+            --output artifacts/m5-clean-root/materialized-chain-replay.json
 
       - name: Record and enforce cleanup inventory
         if: always()
@@ -169,7 +182,7 @@ jobs:
           test ! -s artifacts/m2-live/managed-processes-after.txt
           test ! -s artifacts/m2-live/dirty-after.txt
 
-      - name: Build hosted M2-M4 qualification with retained M5 receipt
+      - name: Build hosted M2-M5 qualification
         run: |
           set -euo pipefail
           mkdir -p artifacts/hosted-qualification
@@ -204,7 +217,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Retain M5 process replay and bounded provider witnesses
+      - name: Retain the M5 observed-chain and actual-ASGI replay
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -213,7 +226,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Retain hosted M2-M4 qualification with M5 receipt
+      - name: Retain the hosted M2-M5 qualification
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hosted-docker-qualification-${{ github.run_id }}-${{ github.run_attempt }}
@@ -222,7 +235,7 @@ jobs:
           retention-days: 90
 
   attest-hosted-qualification:
-    name: Attest hosted M2-M4 qualification and M5 receipt
+    name: Attest hosted M2-M5 qualification
     needs: live-provider-worlds
     runs-on: ubuntu-latest
     timeout-minutes: 8
