@@ -16,11 +16,11 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, mo
 from ._io import canonical_json_bytes
 
 SCHEMA_VERSION = "stateweaver-acceptance-registry-v2"
-REGISTRY_VERSION = "2026-08-09.3"
+REGISTRY_VERSION = "2026-08-09.4"
 ARCHITECTURE_BASELINE = "stateweaver-m0-m8-2026-08-09"
 MAX_REGISTRY_BYTES = 256 * 1024
 EXPECTED_ACCEPTANCE_REGISTRY_SHA256 = (
-    "616dab7af859bcbfd3bf8df35b46ae321dda5e116b40abce1eb6567acdc2bc48"
+    "be60b7934e38b09ad12bb39fa51f1e9bd54f27879e1a32a0d45f8bfbe4a8c9ba"
 )
 
 

@@ -175,6 +175,17 @@ def test_synthetic_four_way_selector_cannot_stand_for_real_provider_qualificatio
     )
 
 
+def test_sw_m5_admission_requires_the_actual_materialized_chain_receipt() -> None:
+    by_id = {requirement.id: requirement for requirement in load_acceptance_registry().requirements}
+
+    assert tuple(item.path for item in by_id["M5-X01"].evidence) == (
+        "qualification/m5/materialized-chain-replay.json",
+    )
+    assert tuple(item.path for item in by_id["SW-M5-CHAIN"].evidence) == (
+        "qualification/m5/materialized-chain-replay.json",
+    )
+
+
 def test_every_declared_selector_is_repo_relative_and_resolves() -> None:
     registry = load_acceptance_registry()
 

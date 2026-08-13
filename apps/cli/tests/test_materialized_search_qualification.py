@@ -50,8 +50,8 @@ from stateweaver.cli.hosted_qualification import (
     write_hosted_receipt,
 )
 from stateweaver.cli.materialized_chain_qualification import (
-    MaterializedChainQualificationReceipt,
-    qualify_materialized_chain,
+    ActualMaterializedChainQualificationReceipt,
+    qualify_actual_materialized_chain,
     write_materialized_chain_qualification,
 )
 from stateweaver.cli.materialized_search_qualification import (
@@ -197,14 +197,22 @@ def _hosted_roots(
         repository_marker=marker,
     )
     (m5_root / "observed-chain-receipt.json").write_bytes(canonical_json_bytes(m5) + b"\n")
-    materialized = qualify_materialized_chain(
-        m4_receipt_path=m4_root / "materialized-search-receipt.json",
-        process_receipt_path=m5_root / "observed-chain-receipt.json",
-        repository_marker=marker,
-        adapter=_MemoryM5ProviderAdapter(),
+    from test_actual_materialized_chain_qualification import (  # type: ignore[import-not-found]
+        _ActualApplicationAdapter,
     )
+
+    patcher = pytest.MonkeyPatch()
+    try:
+        materialized = qualify_actual_materialized_chain(
+            m4_receipt_path=m4_root / "materialized-search-receipt.json",
+            process_receipt_path=m5_root / "observed-chain-receipt.json",
+            repository_marker=marker,
+            adapter=_ActualApplicationAdapter(patcher),
+        )
+    finally:
+        patcher.undo()
     write_materialized_chain_qualification(
-        m5_root / "materialized-provider-receipt.json",
+        m5_root / "materialized-chain-replay.json",
         materialized,
     )
     return m2_root, m4_root, m5_root
@@ -599,7 +607,7 @@ def test_m5_rejects_action_and_root_substitution_before_state_change() -> None:
     asyncio.run(exercise())
 
 
-def test_hosted_receipt_admits_exact_m2_m4_rows_but_not_missing_clean_host(
+def test_hosted_receipt_admits_exact_m2_m5_rows_but_not_missing_clean_host(
     tmp_path: Path,
 ) -> None:
     chain = qualify_runtime_observation_chain(MARKER)
@@ -642,26 +650,10 @@ def test_hosted_receipt_admits_exact_m2_m4_rows_but_not_missing_clean_host(
 
     admitted_rows = hosted_qualification_admissions(admitted)
     assert len(hosted_qualification_payloads(admitted)) == 12
-    assert "SW-M5-CHAIN" not in admitted_rows
-
-    materialized = MaterializedChainQualificationReceipt.model_validate_json(
-        (m5_root / "materialized-provider-receipt.json").read_bytes()
+    materialized = ActualMaterializedChainQualificationReceipt.model_validate_json(
+        (m5_root / "materialized-chain-replay.json").read_bytes()
     )
-    substituted = materialized.model_dump(mode="python")
-    first_run = substituted["clean_root_runs"][0]
-    provider_receipt = first_run["provider_run_receipt"]
-    provider_request = provider_receipt["request"]
-    provider_request["plan_digest"] = f"sha256:{'0' * 64}"
-    provider_receipt["request_digest"] = sha256_digest(provider_request)
-    provider_receipt["receipt_digest"] = sha256_digest(
-        {key: value for key, value in provider_receipt.items() if key != "receipt_digest"}
-    )
-    first_run["provider_run_receipt_digest"] = provider_receipt["receipt_digest"]
-    substituted["receipt_digest"] = sha256_digest(
-        {key: value for key, value in substituted.items() if key != "receipt_digest"}
-    )
-    with pytest.raises(ValueError, match="provider composite is incoherent"):
-        MaterializedChainQualificationReceipt.model_validate(substituted)
+    assert materialized.cleanup_count == 10
     assert {
         "M2-W01",
         "M2-W02",
@@ -674,9 +666,10 @@ def test_hosted_receipt_admits_exact_m2_m4_rows_but_not_missing_clean_host(
         "SW-M2-CLEANUP",
         "M4-X01",
         "SW-M4-MATERIALIZED",
+        "M5-X01",
+        "SW-M5-CHAIN",
     } <= set(admitted_rows)
     assert "SW-M2-LIVE" not in admitted_rows
-    assert "SW-M5-CHAIN" not in admitted_rows
 
     (m2_root / "dirty-after.txt").write_bytes(b"untracked\n")
     with pytest.raises(HostedQualificationError, match="dirty state"):
@@ -759,7 +752,7 @@ def test_hosted_admission_runs_the_exact_constrained_attestation_command(
         expected_repository_marker=MARKER,
     )
 
-    assert admission.status == "HOSTED_QUALIFICATION_ADMITTED"
+    assert admission.status == "HOSTED_M2_M5_ADMITTED"
     assert len(observed_argv) == 1
     argv = observed_argv[0]
     assert argv[:3] == (str(fake_gh.resolve()), "attestation", "verify")
