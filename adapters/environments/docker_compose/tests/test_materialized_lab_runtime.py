@@ -790,7 +790,8 @@ async def test_runtime_uses_only_fixed_compose_argv_and_always_cleans_up(
     )
     assert identity_index > up_index
     assert any(
-        argv[-3:] == ("down", "--volumes", "--remove-orphans") for argv, _stdin in runner.calls
+        argv[-5:] == ("--profile", "m5-application", "down", "--volumes", "--remove-orphans")
+        for argv, _stdin in runner.calls
     )
     assert tuple(argv[1:3] for argv, _stdin in runner.calls[-3:]) == (
         ("ps", "--all"),
@@ -830,7 +831,8 @@ async def test_runtime_rejects_executed_app_with_another_source_revision() -> No
     with pytest.raises(ComposeAdapterError, match="source revision"):
         await MaterializedLabDockerRuntime(runner=runner).run(_request())
     assert any(
-        argv[-3:] == ("down", "--volumes", "--remove-orphans") for argv, _stdin in runner.calls
+        argv[-5:] == ("--profile", "m5-application", "down", "--volumes", "--remove-orphans")
+        for argv, _stdin in runner.calls
     )
 
 
@@ -1012,7 +1014,8 @@ async def test_static_or_provider_only_output_is_rejected_and_cleaned_up() -> No
     with pytest.raises(ComposeAdapterError, match="failed closed"):
         await MaterializedLabDockerRuntime(runner=runner).run(_request())
     assert any(
-        argv[-3:] == ("down", "--volumes", "--remove-orphans") for argv, _stdin in runner.calls
+        argv[-5:] == ("--profile", "m5-application", "down", "--volumes", "--remove-orphans")
+        for argv, _stdin in runner.calls
     )
 
 
@@ -1057,7 +1060,13 @@ async def test_cleanup_failure_takes_precedence_over_execution_failure() -> None
             if argv[-1] == "execute":
                 self.calls.append((argv, stdin))
                 raise ProcessBoundaryError("process-deadline-exceeded")
-            if argv[-3:] == ("down", "--volumes", "--remove-orphans"):
+            if argv[-5:] == (
+                "--profile",
+                "m5-application",
+                "down",
+                "--volumes",
+                "--remove-orphans",
+            ):
                 self.calls.append((argv, stdin))
                 return ProcessResult(returncode=1)
             return await super().run(argv, stdin=stdin)

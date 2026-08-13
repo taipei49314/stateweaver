@@ -340,6 +340,22 @@ def test_real_runner_accepts_only_the_fixed_start_diagnostic() -> None:
             _real_compose_argv("ps", "--format", "json", rejected)
 
 
+def test_real_runner_accepts_only_the_fixed_materialized_profile_cleanup() -> None:
+    expected = _real_compose_argv(
+        "--profile", "m5-application", "down", "--volumes", "--remove-orphans"
+    )
+    assert expected[-5:] == (
+        "--profile",
+        "m5-application",
+        "down",
+        "--volumes",
+        "--remove-orphans",
+    )
+    for rejected in ("other-profile", "--timeout", "provider-bridge"):
+        with pytest.raises(ValueError, match="fixed synthetic Compose argv"):
+            _real_compose_argv("--profile", rejected, "down", "--volumes", "--remove-orphans")
+
+
 def test_real_compose_fixture_is_digest_pinned_internal_and_unpublished() -> None:
     package = Path(runner_module.__file__).parent
     compose = (package / "real_compose.yaml").read_text(encoding="utf-8")

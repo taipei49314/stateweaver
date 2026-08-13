@@ -473,7 +473,16 @@ class MaterializedLabDockerRuntime:
             execution_error = error
         finally:
             try:
-                await self._run(_compose(project, "down", "--volumes", "--remove-orphans"))
+                await self._run(
+                    _compose(
+                        project,
+                        "--profile",
+                        "m5-application",
+                        "down",
+                        "--volumes",
+                        "--remove-orphans",
+                    )
+                )
                 await self._assert_project_clean(project)
             except BaseException as error:
                 cleanup_error = error
