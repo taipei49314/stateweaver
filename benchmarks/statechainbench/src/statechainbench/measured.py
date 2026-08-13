@@ -37,6 +37,8 @@ from .models import (
 )
 from .systems import BenchmarkSystem, LinearBaseline, StateWeaverTieredSystem
 
+_WINDOWS_CREATE_NEW_PROCESS_GROUP = 0x00000200
+
 
 class MeasuredRunKind(StrEnum):
     LINEAR = "linear"
@@ -530,7 +532,7 @@ class MeasuredSubprocessRunner:
                 cwd=workdir,
                 env=self.sanitized_environment(),
                 close_fds=True,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                creationflags=_WINDOWS_CREATE_NEW_PROCESS_GROUP,
             )
         return subprocess.Popen(
             tuple(command),
@@ -688,8 +690,12 @@ def _filetime_value(value: _FileTime) -> int:
 
 
 def _sample_windows_process(pid: int) -> _ProcessSample | None:
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    win_dll = cast(
+        Callable[..., ctypes.CDLL],
+        getattr(ctypes, "".join(("Win", "DLL"))),
+    )
+    kernel32 = win_dll("kernel32", use_last_error=True)
+    psapi = win_dll("psapi", use_last_error=True)
     open_process = kernel32.OpenProcess
     open_process.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
     open_process.restype = ctypes.c_void_p

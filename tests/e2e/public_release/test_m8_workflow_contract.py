@@ -11,6 +11,8 @@ def test_ci_runs_the_locked_retry_free_m8_browser_gate() -> None:
     )
 
     assert "working-directory: tests/e2e/public_release" in workflow
+    assert "Install uv for the fixed API server" in workflow
+    assert "uv sync --package stateweaver-api --locked" in workflow
     assert "run: npm ci" in workflow
     assert "run: npm run install:chromium" in workflow
     assert "run: npm run verify" in workflow
