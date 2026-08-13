@@ -336,10 +336,14 @@ def _verify_coherence(
                 raise AcceptanceEvidenceError(
                     "runtime observation qualification artifacts are inconsistent"
                 )
-            observed_evidence_paths = (
-                *observed_evidence_paths,
-                RUNTIME_OBSERVATION_QUALIFICATION_PATH,
-                OBSERVED_FRAGMENT_QUALIFICATION_PATH,
+            observed_evidence_paths = tuple(
+                dict.fromkeys(
+                    (
+                        *observed_evidence_paths,
+                        RUNTIME_OBSERVATION_QUALIFICATION_PATH,
+                        OBSERVED_FRAGMENT_QUALIFICATION_PATH,
+                    )
+                )
             )
             verified_admission_digests.update(
                 runtime_observation_admissions(expected_runtime_receipt)
