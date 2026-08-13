@@ -18,6 +18,7 @@ from stateweaver.adapters.in_process_lab import (
     FixedLabActionRegistry,
     InProcessLabEnvironment,
     LabAction,
+    LabCaptureRejectedError,
     LabExecutionRejectedError,
     LabExecutionTimeoutError,
     LabIdempotencyConflictError,
@@ -27,6 +28,7 @@ from stateweaver.adapters.in_process_lab import (
     UnknownLabActionError,
     lab_action_artifact,
     lab_http_action_spec,
+    state_capture_from_lab_checkpoint,
 )
 from stateweaver.contracts import (
     ActionEnvelope,
@@ -68,7 +70,7 @@ from stateweaver.replay import (
     StateCapture,
     canonical_sha256,
 )
-from stateweaver_lab import LabMode
+from stateweaver_lab import LabMode, create_app
 from stateweaver_lab.fixtures import FixtureBearer
 from stateweaver_lab.models import (
     AdvanceClockLabAction,
@@ -298,6 +300,22 @@ async def test_root_creation_reset_and_capture_contain_all_seven_redacted_layers
 
     with pytest.raises(AdapterConfigurationError, match="random seed"):
         await environment.create_root_seed(root_seed_id="root.invalid", random_seed=1)
+
+
+@pytest.mark.asyncio
+async def test_exact_lab_checkpoint_rebuilds_the_same_replay_root_capture() -> None:
+    action = RetainSessionLabAction()
+    envelope = _envelope("action.001", 1, action)
+    environment = InProcessLabEnvironment(
+        mode=LabMode.VULNERABLE,
+        registry=_registry(((envelope, action),)),
+    )
+    root = await _root(environment)
+    checkpoint = create_app("vulnerable").state.lab.export_checkpoint().canonical_bytes()
+
+    assert state_capture_from_lab_checkpoint(checkpoint) == root.capture
+    with pytest.raises(LabCaptureRejectedError, match="canonical replay root"):
+        state_capture_from_lab_checkpoint(checkpoint + b" ")
 
 
 @pytest.mark.asyncio

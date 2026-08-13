@@ -19,7 +19,11 @@ from stateweaver.adapters.docker_compose import (
     MaterializedLabRunRequest,
     RealDockerComposeEnvironmentAdapter,
 )
-from stateweaver.adapters.in_process_lab import FixedLabActionRegistry
+from stateweaver.adapters.in_process_lab import (
+    FixedLabActionRegistry,
+    LabCaptureRejectedError,
+    state_capture_from_lab_checkpoint,
+)
 from stateweaver.contracts import (
     ActionEnvelope,
     OracleOutcome,
@@ -434,6 +438,18 @@ class ActualMaterializedChainQualificationReceipt(_M5Model):
             item.image_binding.application_container_id for item in all_runs
         )
         bridge_container_ids = tuple(item.image_binding.bridge_container_id for item in all_runs)
+        try:
+            retained_root_captures = tuple(
+                state_capture_from_lab_checkpoint(item.initial_checkpoint.checkpoint_bytes)
+                for item in all_runs
+            )
+        except LabCaptureRejectedError:
+            raise ValueError("M5 actual materialized checkpoint root is invalid") from None
+        expected_root_captures = (
+            *(item.root.capture for item in runs),
+            self.patched_run.root.capture,
+            *(item.root.capture for item in self.negative_controls),
+        )
         expected_control_boundaries = {
             item.name: (item.expected_outcome, item.expected_status)
             for item in execution.negative_controls
@@ -481,6 +497,7 @@ class ActualMaterializedChainQualificationReceipt(_M5Model):
                     application_container_ids, bridge_container_ids, strict=True
                 )
             )
+            or retained_root_captures != expected_root_captures
             or len(runs) != 5
             or tuple(item.run_id for item in runs) != tuple(item.run_id for item in process.runs)
             or tuple(item.process_result_digest for item in runs)

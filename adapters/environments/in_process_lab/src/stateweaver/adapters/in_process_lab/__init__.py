@@ -8,6 +8,7 @@ from .environment import (
     CANONICAL_RANDOM_SEED,
     InProcessLabEnvironment,
     InProcessLabRuntimeExecution,
+    state_capture_from_lab_checkpoint,
 )
 from .errors import (
     AdapterConfigurationError,
@@ -57,4 +58,5 @@ __all__ = [
     "UnknownLabActionError",
     "lab_action_artifact",
     "lab_http_action_spec",
+    "state_capture_from_lab_checkpoint",
 ]

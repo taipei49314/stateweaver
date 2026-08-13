@@ -59,6 +59,8 @@ from stateweaver_lab.models import (
     RetainSessionLabAction,
     RoleDowngradeResponse,
 )
+from stateweaver_lab.provider_checkpoint import LabStateCheckpoint
+from stateweaver_lab.state import LabState
 
 from .errors import (
     AdapterConfigurationError,
@@ -215,6 +217,55 @@ def _assert_redacted(value: JsonValue, *, key: str = "") -> None:
     elif isinstance(value, list):
         for child in value:
             _assert_redacted(child, key=key)
+
+
+def _capture_from_layered_state(raw: LayeredStateCapture) -> StateCapture:
+    artifacts: list[StateArtifact] = []
+    for layer, field_name in _LAYER_FIELDS:
+        payload = _model_payload(getattr(raw, field_name))
+        if layer is CaptureLayer.APPLICATION:
+            payload["source_state_fingerprint"] = raw.fingerprint
+        _assert_redacted(payload)
+        artifacts.append(StateArtifact.from_payload(layer=layer, payload=payload))
+    capture_hash = canonical_sha256(
+        {
+            "source_fingerprint": raw.fingerprint,
+            "artifact_hashes": [artifact.content_hash for artifact in artifacts],
+        }
+    ).removeprefix("sha256:")
+    return StateCapture.from_artifacts(
+        capture_id=f"capture.{capture_hash[:24]}",
+        controlled_at=raw.clock.now,
+        artifacts=tuple(artifacts),
+    )
+
+
+def state_capture_from_lab_checkpoint(checkpoint_bytes: bytes) -> StateCapture:
+    """Rebuild the replay capture from retained exact canonical lab checkpoint bytes."""
+
+    try:
+        checkpoint = LabStateCheckpoint.from_canonical_bytes(checkpoint_bytes)
+        state = LabState.from_checkpoint(checkpoint)
+        raw = LabState.capture_layers(state)
+        digest = LabState.state_digest(state)
+        if (
+            raw.fingerprint != digest.fingerprint
+            or raw.configuration.mode is not digest.mode
+            or raw.clock.now != digest.now
+            or raw.database.policy_generation != digest.policy_generation
+            or raw.application.evidence_count != digest.evidence_count
+            or raw.configuration.seed != CANONICAL_SEED
+            or raw.configuration.network_scope != "in-process-only"
+            or raw.configuration.external_egress_enabled
+            or raw.configuration.arbitrary_actions_enabled
+            or raw.clock.mode != "controlled"
+        ):
+            raise ValueError
+        return _capture_from_layered_state(raw)
+    except (AttributeError, TypeError, ValueError):
+        raise LabCaptureRejectedError(
+            "retained lab checkpoint is not a canonical replay root"
+        ) from None
 
 
 class InProcessLabEnvironment:
@@ -624,25 +675,7 @@ class InProcessLabEnvironment:
     def _capture_unlocked(self) -> StateCapture:
         raw = DeterministicLabService.capture_layers(self._service)
         InProcessLabEnvironment._validate_source_capture(self, raw)
-        artifacts: list[StateArtifact] = []
-        for layer, field_name in _LAYER_FIELDS:
-            payload = _model_payload(getattr(raw, field_name))
-            if layer is CaptureLayer.APPLICATION:
-                payload["source_state_fingerprint"] = raw.fingerprint
-            _assert_redacted(payload)
-            artifacts.append(StateArtifact.from_payload(layer=layer, payload=payload))
-
-        capture_hash = canonical_sha256(
-            {
-                "source_fingerprint": raw.fingerprint,
-                "artifact_hashes": [artifact.content_hash for artifact in artifacts],
-            }
-        ).removeprefix("sha256:")
-        return StateCapture.from_artifacts(
-            capture_id=f"capture.{capture_hash[:24]}",
-            controlled_at=raw.clock.now,
-            artifacts=tuple(artifacts),
-        )
+        return _capture_from_layered_state(raw)
 
     def _validate_source_capture(self, raw: object) -> None:
         if not isinstance(raw, LayeredStateCapture):

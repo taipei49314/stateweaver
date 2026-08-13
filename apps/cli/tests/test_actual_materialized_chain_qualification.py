@@ -138,7 +138,9 @@ def _rehash(values: dict[str, object]) -> dict[str, object]:
 
 
 def _rehash_run_witness(witness: dict[str, object]) -> dict[str, object]:
-    receipt = dict(witness["materialized_run_receipt"])
+    retained = witness["materialized_run_receipt"]
+    assert isinstance(retained, dict)
+    receipt = dict(retained)
     receipt["receipt_digest"] = runtime._digest(
         {key: value for key, value in receipt.items() if key != "receipt_digest"}
     )
