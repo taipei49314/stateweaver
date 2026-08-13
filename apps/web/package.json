@@ -9,15 +9,20 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "preview": "vite preview",
     "test": "vitest run",
+    "test:e2e": "npm --prefix ../../tests/e2e/public_release run verify",
+    "test:e2e:ci": "npm ci --prefix ../../tests/e2e/public_release && npm run test:e2e:install && npm run test:e2e",
+    "test:e2e:install": "npm --prefix ../../tests/e2e/public_release run install:chromium",
+    "verify:public-release": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run test:e2e:ci",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@vitejs/plugin-react": "6.0.5",
-    "vite": "8.2.0",
-    "typescript": "6.0.3",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "typescript": "6.0.3",
+    "vite": "8.2.0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

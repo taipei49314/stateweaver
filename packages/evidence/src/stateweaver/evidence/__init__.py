@@ -52,6 +52,15 @@ from .hosted_qualification import (
     load_hosted_qualification_admission,
     validate_hosted_qualification_admission,
 )
+from .m7_preregistration import (
+    EXTERNAL_M7_REQUIREMENT_IDS,
+    M7ExternalBoundaryAssessment,
+    M7ExternalBoundaryRow,
+    M7ExternalEvidenceStatus,
+    M7Metric,
+    M7ProducerPreregistration,
+    external_m7_boundary_assessment,
+)
 from .reality import (
     RealityAdapterComponent,
     RealityAdapterLock,
@@ -70,6 +79,7 @@ from .reality import (
     RealityTargetLock,
     verify_reality_pre_receipt_bundle,
 )
+from .reality_broker import M6BrokerCandidateVerification, verify_m6_broker_candidate
 from .runtime_observation import (
     OBSERVED_FRAGMENT_QUALIFICATION_PATH,
     RUNTIME_OBSERVATION_QUALIFICATION_PATH,
@@ -108,6 +118,7 @@ __all__ = [
     "EXPECTED_ACCEPTANCE_REGISTRY_SHA256",
     "EXPECTED_REQUIREMENT_IDS",
     "EXPECTED_TESTLESS_REQUIREMENT_IDS",
+    "EXTERNAL_M7_REQUIREMENT_IDS",
     "HOSTED_QUALIFICATION_ADMISSION_PATH",
     "HOSTED_QUALIFICATION_DERIVED_PATHS",
     "M5_MATERIALIZED_CHAIN_QUALIFICATION_PATH",
@@ -133,6 +144,12 @@ __all__ = [
     "HostedDockerQualificationReceipt",
     "HostedQualificationAdmissionReceipt",
     "HostedQualificationError",
+    "M6BrokerCandidateVerification",
+    "M7ExternalBoundaryAssessment",
+    "M7ExternalBoundaryRow",
+    "M7ExternalEvidenceStatus",
+    "M7Metric",
+    "M7ProducerPreregistration",
     "RealityAdapterComponent",
     "RealityAdapterLock",
     "RealityArtifactRole",
@@ -174,6 +191,7 @@ __all__ = [
     "collect_from_json_file",
     "derive_acceptance_results",
     "derive_reality_trace_v2",
+    "external_m7_boundary_assessment",
     "hosted_qualification_admissions",
     "hosted_qualification_payloads",
     "hosted_qualification_test_identities",
@@ -190,6 +208,7 @@ __all__ = [
     "validate_hosted_qualification_admission",
     "validate_runtime_observation_qualification",
     "verify_acceptance_evidence",
+    "verify_m6_broker_candidate",
     "verify_reality_pre_receipt_bundle",
     "write_runtime_observation_qualification",
 ]

@@ -195,6 +195,15 @@ jobs:
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
 
+      - name: Install uv for the fixed API server
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: false
+          python-version: "3.13"
+
+      - name: Install the locked API workspace
+        run: uv sync --package stateweaver-api --locked
+
       - name: Install locked web dependencies
         run: npm ci
         working-directory: apps/web
@@ -222,6 +231,18 @@ jobs:
       - name: Reject high-severity web dependency advisories
         run: npm audit --audit-level=high
         working-directory: apps/web
+
+      - name: Install locked Playwright dependencies
+        run: npm ci
+        working-directory: tests/e2e/public_release
+
+      - name: Install the pinned Chromium browser
+        run: npm run install:chromium
+        working-directory: tests/e2e/public_release
+
+      - name: Run the local M8 browser implementation gate
+        run: npm run verify
+        working-directory: tests/e2e/public_release
 
       - name: Retain web distribution
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

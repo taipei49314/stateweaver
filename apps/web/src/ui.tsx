@@ -76,7 +76,7 @@ function Shell({
     <div className="app">
       <header>
         <div className="brand">
-          <svg className="icon" viewBox="0 0 24 24">
+          <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">
             <path d="m3 8 9-5 9 5-9 5zM3 12l9 5 9-5M3 16l9 5 9-5" />
           </svg>
           <strong>StateWeaver</strong>
@@ -87,9 +87,14 @@ function Shell({
         </div>
       </header>
       <aside className="nav">
-        <nav>
+        <nav aria-label="Primary workspace">
           {nav.map(([id, label]) => (
-            <button className={id === r ? 'chosen' : ''} key={id} onClick={() => set(id)}>
+            <button
+              aria-current={id === r ? 'page' : undefined}
+              className={id === r ? 'chosen' : ''}
+              key={id}
+              onClick={() => set(id)}
+            >
               <I n="nav" />
               {label}
             </button>
@@ -134,7 +139,7 @@ function OverviewPage({ d, set }: { d: Overview; set: (r: Route) => void }) {
           </article>
         ))}
       </div>
-      <section className="band counts">
+      <section className="band counts" aria-label="World tier summary" tabIndex={0}>
         <h2>World tiers</h2>
         {[
           ['24', 'World search'],

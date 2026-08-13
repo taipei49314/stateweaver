@@ -11,7 +11,15 @@ export default defineConfig({
       '/v1': { target: 'http://127.0.0.1:8000' },
     },
   },
-  preview: { host: '127.0.0.1', port: 4173, strictPort: true },
+  preview: {
+    host: '127.0.0.1',
+    port: 4173,
+    strictPort: true,
+    proxy: {
+      '/healthz': { target: 'http://127.0.0.1:8000' },
+      '/v1': { target: 'http://127.0.0.1:8000' },
+    },
+  },
   test: {
     // happy-dom provides the browser APIs this contract suite exercises while keeping the
     // worker startup comfortably inside Vitest's fixed 60-second handshake on Windows.

@@ -62,15 +62,14 @@ admitting its exact M2-M5 rows. `SW-M2-LIVE` remains blocked without a separate 
 The hosted Docker workflow retains exact-SHA synthetic and six-provider M2 diagnostics with zero
 managed residue. M4 now derives 24 Ghost candidates from an eight-observation M3 chain, materializes only the
 4-to-2-to-1 promoted subset in those fixed real-provider worlds, and retains a conserved-ledger,
-machine-oracle, winner, and cleanup receipt. The producer/attestation/consumer admission path is
-implemented; a new exact-merged-SHA hosted run is still required after these changes. M5 consumes
+machine-oracle, winner, and cleanup receipt. The producer/attestation/consumer admission path passed on exact merged SHA
+`6f74222bd3705b066cc8b6d048a2c10f9a123ffe`. M5 consumes
 the retained M4 bytes, compiles all eight observed fragments, freshly authorizes them, and retains
 five repeatable clean-root results, the matching fixed-mode boundary, and four controls. The hosted
 path now executes those exact authorized actions through the sealed FastAPI ASGI application over
 six immutable provider checkpoint shards, retains per-step state, response, evidence, oracle, image,
 source, restore, and cleanup bindings, and admits `SW-M5-CHAIN` only after exact-SHA attestation and
-fresh consumer verification. A new exact-merged-SHA hosted run is still required. Trusted broker,
-independently measured equal-work benchmark,
+fresh consumer verification. Trusted broker, independently owned equal-work benchmark,
 independent new-user, and clean-machine certification remain intentionally unclaimed. No PyPI
 package or versioned GitHub Release is offered yet.
 
@@ -82,13 +81,13 @@ Architecture baseline v1 ships milestone-by-milestone. Current implementation an
 | Area | Honest status |
 |---|---|
 | M0/M1 foundation proof | Synthetic proof and canonical 92-row registry exist; CI derives manifest-bound receipts and admits M0-C07 only from a clean wheel installation |
-| M2 world engine | Six-provider adapter and four-sibling capture/mutate/restore gate pass locally; typed hosted admission is implemented, with a new exact-SHA run pending |
+| M2 world engine | Six-provider adapter and four-sibling capture/mutate/restore gate passed in the exact-SHA hosted admission; a separate clean host remains pending |
 | M3 semantic twin | Clean-wheel runtime execution binds the repo-owned ASGI lifecycle, source, authorization, trace, captures, state delta, evidence, and one `OBSERVED` fragment; five M3 runtime rows are admitted only after independent semantic re-execution |
 | M4 tiered search | Eight-observation M3-derived 24-to-4-to-2-to-1 flow has a production six-provider materializer, seven bound provider receipts, peak-live cap four, and typed hosted proof admission |
 | M5 chain compiler | Exact retained M4 bytes compile eight `OBSERVED` fragments; the hosted qualifier runs five vulnerable roots, one patched boundary, and four controls through the sealed ASGI app over six provider checkpoint shards, with exact image/source/state/cleanup admission |
-| M6 reality receipt | Proof-bound non-promotable synthetic candidate; **no** trusted broker / clean-machine M6 cert |
-| M7 StateChainBench | Proof-bound deterministic built-in runner — not an independently measured equal-work benchmark |
-| M8 public UX | Fixed loopback API + simulated-DOM contract exists; no Playwright/new-user release journey |
+| M6 reality receipt | Strict external-policy/object-closure candidate verifier exists and remains non-promotable; **no** external issuer/store/consumer cert |
+| M7 StateChainBench | Fixed subprocess measured diagnostic and producer preregistration exist; not an independently measured protected-holdout benchmark |
+| M8 public UX | Fixed loopback API plus retry-free Chromium desktop/mobile, keyboard, WCAG, integrity, error, empty, and console gates exist; no external new-user release journey |
 
 The seven M3–M7 local-deliverable receipts are derived from exact passing test identities and the
 canonical registry. They are explicitly `authoritative=false`, `promotable=false`,
@@ -111,15 +110,15 @@ Full matrices: [docs/architecture/TRACEABILITY.md](docs/architecture/TRACEABILIT
 | M3 Semantic Twin | Application lifecycle, emitted trace, runtime captures, state delta, evidence, and `OBSERVED` fragment are bound in a reproducible clean-wheel receipt; M4/M5 materialization remains separate | `packages/twin/`, `adapters/telemetry/opentelemetry/`, `packages/evidence/src/stateweaver/evidence/runtime_observation.py`, `apps/cli/src/stateweaver/cli/runtime_qualification.py` |
 | M4 Search | Exactly 24 Ghost evaluations admit only 4, 2, and 1 real six-provider siblings; budget, provider-oracle, winner, and cleanup bindings are retained | `packages/search/`, `workflows/world/`, `apps/cli/src/stateweaver/cli/materialized_search_qualification.py`, `tests/integration/worlds/test_live_materialized_search.py` |
 | M5 Chain Compiler | Eight retained fragments execute five deterministic vulnerable roots, one patched boundary, and four controls through the Docker-backed sealed ASGI application over six immutable provider checkpoint shards | `packages/compiler/`, `apps/cli/src/stateweaver/cli/observed_chain_qualification.py`, `apps/cli/src/stateweaver/cli/materialized_chain_qualification.py` |
-| M6 Reality + Proof | V2 event reconstruction + traceable publication candidate exist; trusted broker absent | `packages/contracts/`, `packages/evidence/`, `packages/reporting/`, `tests/e2e/proof_bundle/` |
-| M7 StateChainBench | Trusted built-in synthetic runner hardened; not equal-work or public-certified | `benchmarks/statechainbench/` |
-| M8 Public UX | Read-only fixed API + four-workspace client have local simulated-DOM QA only | `apps/api/`, `apps/web/` |
+| M6 Reality + Proof | V2 reconstruction plus full immutable-object/source closure verifier exist; external authority/store/consumer absent | `packages/contracts/`, `packages/evidence/`, `packages/reporting/`, `tests/e2e/proof_bundle/` |
+| M7 StateChainBench | Fixed subprocess measured diagnostic retains all runs/failures under equal ceilings; protected custodian/evaluator accounting remains external | `benchmarks/statechainbench/` |
+| M8 Public UX | Read-only fixed API/client have simulated-DOM and real Chromium desktop/mobile QA; artifact-only external journey remains pending | `apps/api/`, `apps/web/`, `tests/e2e/public_release/` |
 
-The current M7 numbers are retained only as a deterministic prototype observation. The runner
-accepts only its two exact built-in solver types and closes dataset, evaluator, configuration,
-ledger, comparison, and ablation provenance. It still runs in one process and uses a deterministic
-tariff rather than equivalent measured compute, so the result is not an equal-work claim or a
-public benchmark result.
+The current M7 numbers remain producer-visible synthetic observations. A fixed subprocess boundary
+now applies the same CPU, RAM, wall, request, token, cost, and output ceilings and retains every
+primary, ablation, and failure record. Host sampling is not protected evaluator-owned final
+accounting, and the dataset is not an externally preregistered holdout, so this remains neither an
+independent equal-work claim nor a public benchmark result.
 
 ## Local development
 
