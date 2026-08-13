@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 from collections.abc import Callable
+from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
@@ -15,7 +16,8 @@ from stateweaver.adapters.docker_compose import (
     MaterializedProviderReceipt,
     RealDockerComposeEnvironmentAdapter,
 )
-from stateweaver.contracts import OracleOutcome, canonical_json_bytes, sha256_digest
+from stateweaver.contracts import OracleOutcome, ScopeMetadata, canonical_json_bytes, sha256_digest
+from stateweaver.policy import PolicyAuthorization, PolicyRequest, evaluate_policy
 from stateweaver.worlds import (
     EnvironmentHandle,
     ResourceQuotas,
@@ -153,6 +155,13 @@ def test_compile_m5_plan_is_exact_and_covers_observed_and_control_paths() -> Non
     )
     assert len({step.action.idempotency_key for step in first.replay_plan.steps}) == 8
     assert len({item.policy_decision_ref for item in first.policy_authorizations}) == 8
+    assert len(first.policy_requests) == 8
+    assert tuple(item.action_envelope for item in first.policy_requests) == tuple(
+        step.action for step in first.replay_plan.steps
+    )
+    assert tuple(item.fingerprint() for item in first.policy_requests) == tuple(
+        item.policy_request_hash for item in first.policy_authorizations
+    )
     assert tuple(item.action_id for item in first.policy_authorizations) == tuple(
         step.action.action_id for step in first.replay_plan.steps
     )
@@ -175,6 +184,7 @@ def _execution_bytes(plan: M5ExecutionPlan) -> dict[str, object]:
 
     return {
         "replay_plan": plan.replay_plan,
+        "policy_requests": plan.policy_requests,
         "policy_authorizations": plan.policy_authorizations,
         "controls": tuple(
             (
@@ -182,6 +192,7 @@ def _execution_bytes(plan: M5ExecutionPlan) -> dict[str, object]:
                 control.expected_outcome,
                 control.expected_status,
                 control.replay_plan,
+                control.policy_requests,
                 control.policy_authorizations,
             )
             for control in plan.negative_controls
@@ -201,6 +212,7 @@ def test_m5_execution_plan_rejects_plan_and_control_substitution() -> None:
             replay_plan=compiled.replay_plan.model_copy(
                 update={"root_seed_id": "root.substituted"}
             ),
+            policy_requests=compiled.policy_requests,
             policy_authorizations=compiled.policy_authorizations,
             registry=compiled.registry,
             negative_controls=compiled.negative_controls,
@@ -212,8 +224,100 @@ def test_m5_execution_plan_rejects_plan_and_control_substitution() -> None:
             expected_outcome=compiled.negative_controls[0].expected_outcome,
             expected_status=compiled.negative_controls[0].expected_status + 1,
             replay_plan=compiled.negative_controls[0].replay_plan,
+            policy_requests=compiled.negative_controls[0].policy_requests,
             policy_authorizations=compiled.negative_controls[0].policy_authorizations,
             registry=compiled.negative_controls[0].registry,
+        )
+
+
+def _rebuild_execution(
+    compiled: M5ExecutionPlan,
+    *,
+    policy_requests: tuple[PolicyRequest, ...],
+    policy_authorizations: tuple[PolicyAuthorization, ...] | None = None,
+) -> M5ExecutionPlan:
+    return M5ExecutionPlan(
+        m4_receipt_digest=compiled.m4_receipt_digest,
+        observed_chain_digest=compiled.observed_chain_digest,
+        compiler_admission=compiled.compiler_admission,
+        scope_manifest=compiled.scope_manifest,
+        replay_plan=compiled.replay_plan,
+        policy_requests=policy_requests,
+        policy_authorizations=(
+            compiled.policy_authorizations
+            if policy_authorizations is None
+            else policy_authorizations
+        ),
+        registry=compiled.registry,
+        negative_controls=compiled.negative_controls,
+    )
+
+
+def test_m5_execution_plan_rejects_policy_request_substitutions() -> None:
+    compiled = compile_m5_plan(_m4_receipt())
+    original = compiled.policy_requests[0]
+    assert original.scope_manifest is not None
+    assert original.budget is not None
+    assert original.evaluated_at is not None
+
+    substituted_scope = original.scope_manifest.model_copy(
+        update={"metadata": ScopeMetadata(name="m5-substituted")}
+    )
+    substitutions = (
+        original.model_copy(update={"scope_manifest": substituted_scope}),
+        original.model_copy(
+            update={
+                "budget": original.budget.model_copy(
+                    update={"requests_in_window": original.budget.requests_in_window + 1}
+                )
+            }
+        ),
+        original.model_copy(update={"evaluated_at": original.evaluated_at + timedelta(seconds=1)}),
+        original.model_copy(update={"action_envelope": compiled.replay_plan.steps[1].action}),
+    )
+    for substituted in substitutions:
+        requests = (substituted, *compiled.policy_requests[1:])
+        with pytest.raises(ValueError, match=r"policy request|registry content"):
+            _rebuild_execution(compiled, policy_requests=requests)
+
+    with pytest.raises(ValueError, match=r"policy request|registry content"):
+        _rebuild_execution(
+            compiled,
+            policy_requests=tuple(reversed(compiled.policy_requests)),
+        )
+
+
+def test_m5_execution_plan_rejects_rehashed_request_and_evaluator_substitution() -> None:
+    compiled = compile_m5_plan(_m4_receipt())
+    original = compiled.policy_requests[0]
+    assert original.budget is not None
+    substituted = original.model_copy(
+        update={"budget": original.budget.model_copy(update={"request_window_seconds": 2.0})}
+    )
+    decision = evaluate_policy(substituted)
+    rebound = PolicyAuthorization.bind(compiled.replay_plan.steps[0].action, substituted, decision)
+    requests = (substituted, *compiled.policy_requests[1:])
+    authorizations = (rebound, *compiled.policy_authorizations[1:])
+
+    with pytest.raises(ValueError, match="registry content"):
+        _rebuild_execution(
+            compiled,
+            policy_requests=requests,
+            policy_authorizations=authorizations,
+        )
+
+    substituted_decision = evaluate_policy(object())
+    substituted_authorization = compiled.policy_authorizations[0].model_copy(
+        update={"decision": substituted_decision}
+    )
+    with pytest.raises(ValueError, match="registry content"):
+        _rebuild_execution(
+            compiled,
+            policy_requests=compiled.policy_requests,
+            policy_authorizations=(
+                substituted_authorization,
+                *compiled.policy_authorizations[1:],
+            ),
         )
 
 

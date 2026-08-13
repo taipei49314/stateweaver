@@ -78,12 +78,18 @@ class M5ControlPlan(_M5PlanModel):
     expected_outcome: OracleOutcome
     expected_status: int
     replay_plan: ReplayPlan
+    policy_requests: tuple[PolicyRequest, ...]
     policy_authorizations: tuple[PolicyAuthorization, ...]
     registry: FixedLabActionRegistry
 
     @model_validator(mode="after")
     def _content_is_bound(self) -> M5ControlPlan:
-        _validate_plan_registry(self.replay_plan, self.policy_authorizations, self.registry)
+        _validate_plan_registry(
+            self.replay_plan,
+            self.policy_requests,
+            self.policy_authorizations,
+            self.registry,
+        )
         expected_boundaries: dict[M5ControlName, tuple[OracleOutcome, int]] = {
             "masked_response": (OracleOutcome.SATISFIED, 200),
             "mock_only_response": (OracleOutcome.INCONCLUSIVE, 200),
@@ -108,6 +114,7 @@ class M5ExecutionPlan(_M5PlanModel):
     compiler_admission: ObservedChainAdmission
     scope_manifest: ScopeManifest
     replay_plan: ReplayPlan
+    policy_requests: tuple[PolicyRequest, ...]
     policy_authorizations: tuple[PolicyAuthorization, ...]
     registry: FixedLabActionRegistry
     negative_controls: tuple[M5ControlPlan, ...]
@@ -124,7 +131,14 @@ class M5ExecutionPlan(_M5PlanModel):
             or not _fresh_plan_matches_admission(self.replay_plan, admission)
         ):
             raise ValueError("M5 execution plan is not bound to the admitted M4 chain")
-        _validate_plan_registry(self.replay_plan, self.policy_authorizations, self.registry)
+        _validate_plan_registry(
+            self.replay_plan,
+            self.policy_requests,
+            self.policy_authorizations,
+            self.registry,
+        )
+        if any(request.scope_manifest != self.scope_manifest for request in self.policy_requests):
+            raise ValueError("M5 policy request scope binding is invalid")
         expected_controls: tuple[M5ControlName, ...] = (
             "masked_response",
             "mock_only_response",
@@ -172,7 +186,9 @@ def compile_m5_plan(m4: MaterializedSearchQualificationReceipt) -> M5ExecutionPl
         raise M5PlanError("M5 input is not a validated M4 receipt") from error
     admission = _compiler_admission(closed_m4)
     scope = m5_scope()
-    replay_plan, policy_authorizations, registry = _fresh_plan(admission, scope=scope)
+    replay_plan, policy_requests, policy_authorizations, registry = _fresh_plan_with_requests(
+        admission, scope=scope
+    )
     controls = _compile_negative_controls(scope=scope)
     return M5ExecutionPlan(
         m4_receipt_digest=closed_m4.receipt_digest,
@@ -180,6 +196,7 @@ def compile_m5_plan(m4: MaterializedSearchQualificationReceipt) -> M5ExecutionPl
         compiler_admission=admission,
         scope_manifest=scope,
         replay_plan=replay_plan,
+        policy_requests=policy_requests,
         policy_authorizations=policy_authorizations,
         registry=registry,
         negative_controls=controls,
@@ -248,6 +265,22 @@ def _fresh_plan(
 ) -> tuple[ReplayPlan, tuple[PolicyAuthorization, ...], FixedLabActionRegistry]:
     """Reauthorize the admitted actions without altering their compiled semantics."""
 
+    plan, _, authorizations, registry = _fresh_plan_with_requests(admission, scope=scope)
+    return plan, authorizations, registry
+
+
+def _fresh_plan_with_requests(
+    admission: ObservedChainAdmission,
+    *,
+    scope: ScopeManifest | None = None,
+) -> tuple[
+    ReplayPlan,
+    tuple[PolicyRequest, ...],
+    tuple[PolicyAuthorization, ...],
+    FixedLabActionRegistry,
+]:
+    """Compile the fresh plan while retaining every exact policy issuance request."""
+
     compiled = admission.compiled_chain
     candidate = ReplayPlan(
         plan_id=M5_PLAN_ID,
@@ -283,8 +316,14 @@ def _authorize_existing_plan(
     *,
     lab_actions: tuple[LabAction, ...],
     scope: ScopeManifest,
-) -> tuple[ReplayPlan, tuple[PolicyAuthorization, ...], FixedLabActionRegistry]:
+) -> tuple[
+    ReplayPlan,
+    tuple[PolicyRequest, ...],
+    tuple[PolicyAuthorization, ...],
+    FixedLabActionRegistry,
+]:
     actions: list[ActionEnvelope] = []
+    requests: list[PolicyRequest] = []
     authorizations: dict[str, PolicyAuthorization] = {}
     write_requests_used = 0
     for index, step in enumerate(candidate.steps, start=1):
@@ -313,6 +352,7 @@ def _authorize_existing_plan(
         if not decision.allowed:
             raise M5PlanError("fresh M5 policy did not allow the plan")
         actions.append(action)
+        requests.append(request)
         authorizations[decision_ref] = PolicyAuthorization.bind(action, request, decision)
         typed_action = action.action
         if not isinstance(typed_action, HttpRequestAction) or typed_action.method is None:
@@ -340,7 +380,7 @@ def _authorize_existing_plan(
         policy_authorizations=authorizations,
     )
     ordered = tuple(authorizations[step.action.policy_decision_ref] for step in plan.steps)
-    return plan, ordered, registry
+    return plan, tuple(requests), ordered, registry
 
 
 def _compile_negative_controls(*, scope: ScopeManifest) -> tuple[M5ControlPlan, ...]:
@@ -368,7 +408,7 @@ def _compile_negative_controls(*, scope: ScopeManifest) -> tuple[M5ControlPlan, 
     controls: list[M5ControlPlan] = []
     for name in ordered_names:
         actions, expected_outcome, expected_status = selected[name]
-        plan, authorizations, registry = _build_control_plan(
+        plan, requests, authorizations, registry = _build_control_plan(
             name=name,
             actions=actions,
             allowed_final_outcomes=frozenset({expected_outcome.value}),
@@ -380,6 +420,7 @@ def _compile_negative_controls(*, scope: ScopeManifest) -> tuple[M5ControlPlan, 
                 expected_outcome=expected_outcome,
                 expected_status=expected_status,
                 replay_plan=plan,
+                policy_requests=requests,
                 policy_authorizations=authorizations,
                 registry=registry,
             )
@@ -393,7 +434,12 @@ def _build_control_plan(
     actions: tuple[LabAction, ...],
     allowed_final_outcomes: frozenset[str],
     scope: ScopeManifest,
-) -> tuple[ReplayPlan, tuple[PolicyAuthorization, ...], FixedLabActionRegistry]:
+) -> tuple[
+    ReplayPlan,
+    tuple[PolicyRequest, ...],
+    tuple[PolicyAuthorization, ...],
+    FixedLabActionRegistry,
+]:
     plan_id = f"plan.m5.control-{name}"
     candidate_actions: list[ActionEnvelope] = []
     for sequence, lab_action in enumerate(actions, start=1):
@@ -463,7 +509,12 @@ def _authorize_control_plan(
     *,
     actions: tuple[LabAction, ...],
     scope: ScopeManifest,
-) -> tuple[ReplayPlan, tuple[PolicyAuthorization, ...], FixedLabActionRegistry]:
+) -> tuple[
+    ReplayPlan,
+    tuple[PolicyRequest, ...],
+    tuple[PolicyAuthorization, ...],
+    FixedLabActionRegistry,
+]:
     return _authorize_existing_plan(
         candidate,
         lab_actions=actions,
@@ -473,11 +524,12 @@ def _authorize_control_plan(
 
 def _validate_plan_registry(
     plan: ReplayPlan,
+    requests: tuple[PolicyRequest, ...],
     authorizations: tuple[PolicyAuthorization, ...],
     registry: FixedLabActionRegistry,
 ) -> None:
-    if len(plan.steps) != len(authorizations):
-        raise ValueError("M5 plan does not retain one policy authorization per action")
+    if len(plan.steps) != len(requests) or len(plan.steps) != len(authorizations):
+        raise ValueError("M5 plan does not retain one policy request and authorization per action")
     if tuple(item.action_id for item in authorizations) != tuple(
         item.action.action_id for item in plan.steps
     ):
@@ -494,15 +546,38 @@ def _validate_plan_registry(
         item.policy_decision_ref for item in authorizations
     ):
         raise ValueError("M5 registry policy authorization binding is invalid")
-    for step, authorization in zip(plan.steps, authorizations, strict=True):
+    write_requests_used = 0
+    for index, (step, request, authorization) in enumerate(
+        zip(plan.steps, requests, authorizations, strict=True), start=1
+    ):
+        expected_request = PolicyRequest(
+            scope_manifest=m5_scope(),
+            action_envelope=step.action,
+            budget=BudgetSnapshot(
+                requests_in_window=index - 1,
+                request_window_seconds=1.0,
+                write_requests_used=write_requests_used,
+            ),
+            evaluated_at=M5_EVALUATED_AT,
+        )
+        decision = evaluate_policy(request)
+        expected_authorization = PolicyAuthorization.bind(step.action, request, decision)
         if (
-            authorization.action_id != step.action.action_id
+            request != expected_request
+            or not decision.allowed
+            or authorization != expected_authorization
+            or authorization.action_id != step.action.action_id
             or authorization.idempotency_key != step.action.idempotency_key
             or authorization.envelope_hash != sha256_digest(step.action)
             or registry.policy_authorizations.get(step.action.policy_decision_ref) != authorization
             or step.action.action_id not in registry.by_action_id
         ):
             raise ValueError("M5 plan registry content binding is invalid")
+        typed_action = step.action.action
+        if not isinstance(typed_action, HttpRequestAction) or typed_action.method is None:
+            raise ValueError("M5 plan action is not concrete HTTP")
+        if typed_action.method.value not in {"GET", "HEAD", "OPTIONS"}:
+            write_requests_used += 1
 
 
 def _fresh_plan_matches_admission(plan: ReplayPlan, admission: ObservedChainAdmission) -> bool:
