@@ -17,7 +17,7 @@ acceptance commands are intentionally local and do not require network access.
 | M2 — Materialized World Engine | Six-provider/four-way gate plus typed exact-SHA hosted receipt admission implemented; post-change hosted execution pending | `packages/worlds/`, `adapters/environments/docker_compose/`, `packages/evidence/src/stateweaver/evidence/hosted_qualification.py` |
 | M3 — Security Semantic Twin | Clean-wheel observed-flow receipt implemented and independently reproduced; M4/M5 materialized chain remains separate | `packages/twin/`, source/OTel adapters, `packages/evidence/src/stateweaver/evidence/runtime_observation.py`, `apps/cli/src/stateweaver/cli/runtime_qualification.py` |
 | M4 — Tiered Search Controller | Eight observed ASGI transitions feed the 24-to-4-to-2-to-1 materializer; exact-SHA producer/attestation/proof admission implemented | `packages/search/`, `workflows/world/`, `apps/cli/src/stateweaver/cli/materialized_search_qualification.py`, `packages/evidence/src/stateweaver/evidence/hosted_qualification.py` |
-| M5 — Chain Compiler | Exact retained M4 bytes compile eight steps and retain five actual-ASGI clean-root runs, the matching fixed-mode boundary, four controls, and a separate bounded six-provider witness; one Docker-backed application boundary remains pending | `packages/compiler/`, `apps/cli/src/stateweaver/cli/observed_chain_qualification.py`, `apps/cli/src/stateweaver/cli/materialized_chain_qualification.py` |
+| M5 — Chain Compiler | Exact retained M4 bytes compile eight steps; the hosted qualifier executes five vulnerable roots, one patched boundary, and four controls through the sealed ASGI app over six immutable provider checkpoint shards | `packages/compiler/`, `apps/cli/src/stateweaver/cli/observed_chain_qualification.py`, `apps/cli/src/stateweaver/cli/materialized_chain_qualification.py` |
 | M6 — Reality Anchor + Proof Bundle | V2 event reconstruction + immutable-byte candidate resolver implemented; trusted broker pending | `packages/contracts/`, `packages/evidence/`, `apps/cli/` |
 | M7 — StateChainBench | Trusted built-in synthetic runner hardened; equal-work/public audit pending | `benchmarks/statechainbench/` |
 | M8 — Web UI + Public Release | Fixed synthetic API/client have local simulated-DOM test coverage; browser/new-user/public release pending | `apps/api/`, `apps/web/` |
@@ -26,9 +26,8 @@ The acceptance collector derives seven local-deliverable receipts for 22 repo-co
 rows from exact passing JUnit identities, canonical registry statements and evidence roles, and
 the proof's source/run bindings. Together with valid clean-wheel package-install and independently
 reproduced runtime-observation receipts, the local projection is 58 `PASS`, zero `NOT_RUN`, and 34
-`BLOCKED`. A constrained exact-SHA hosted M2-M4 admission changes the candidate projection to
-69 `PASS` / 23 `BLOCKED` without admitting `SW-M2-LIVE` or `SW-M5-CHAIN`; the exact M5
-receipt is retained but not promoted. The seven local-deliverable receipts remain explicitly
+`BLOCKED`. A constrained exact-SHA hosted M2-M5 admission changes the candidate projection to
+71 `PASS` / 21 `BLOCKED` without admitting `SW-M2-LIVE`. The seven local-deliverable receipts remain explicitly
 non-authoritative, non-promotable, not release-eligible, and insufficient for their milestone exits.
 The distinct M3 receipt admits only five runtime-observation rows and remains non-release-eligible;
 the other 34 unresolved gates remain fail closed.
@@ -276,8 +275,8 @@ RabbitMQ, browser-session, filesystem, and controlled-clock semantic digests all
 receipt replays every stage, conserves the 4/2/1 reservation ledger, binds the winner's score, state,
 and fragment to M3, records a peak of four live allocations, and requires seven releases with zero
 residue. The hosted workflow now emits a strict producer receipt, attests it with its exact workflow
-identity, and the candidate independently downloads and admits its derived M2-M4 paths while
-retaining the exact M5 receipt without admitting its materialized-runtime row. A new
+identity, and the candidate independently downloads and admits its derived M2-M5 paths from the
+exact actual-ASGI composite. A new
 exact-merged-SHA run is still required after the code is committed; this is not a release claim.
 
 The older cross-milestone in-memory pipeline remains useful only for M5 compiler admission. It is no
@@ -322,11 +321,13 @@ eight-step plan requiring fresh authorization. `observed_chain_qualification.py`
 M4 file as exact canonical bytes, verifies its byte and semantic digests, compiles every observed
 fragment with explicit order, and executes the identical plan across five reset roots. It also
 retains the matching fixed-mode boundary result and four explicit controls. Byte drift, action
-substitution, root drift, or an incomplete fragment set fails closed. A distinct bounded Docker
-bridge validates the exact action envelopes and retains six-provider before/after transitions,
-restoration, and destruction for five vulnerable runs, one patched run, and four controls. It does
-not execute or trace FastAPI, so the hosted receipt retains it only as a prerequisite and
-`SW-M5-CHAIN` stays blocked pending one Docker-backed application/provider execution boundary.
+substitution, root drift, or an incomplete fragment set fails closed. The Docker-backed qualifier
+validates the exact action envelopes and policy requests, reconstructs each process root from
+retained canonical checkpoint bytes, executes every action once through the sealed FastAPI ASGI
+application, and retains six-provider before/after checkpoint shards, exact response bytes,
+evidence, oracle, source/image identity, restoration, and post-down empty project inventories for
+five vulnerable runs, one patched run, and four controls. The row is admitted only from the
+exact-SHA hosted composite after constrained attestation and fresh consumer verification.
 
 ## M6 — Reality Anchor + Proof Bundle
 

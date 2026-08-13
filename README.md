@@ -57,19 +57,19 @@ acceptance collector can derive 58 `PASS` rows from exact passing JUnit identiti
 bindings, a clean-wheel package-install receipt, a separately reproduced M3 runtime-observation
 receipt, and seven non-promotable M3–M7 implementation receipts. It keeps the remaining 34 rows
 `BLOCKED`; these developer checks are not a complete release qualification. A separately attested,
-exact-SHA hosted Docker receipt raises the candidate projection to 69 `PASS` / 23 `BLOCKED` by
-admitting only its exact M2-M4 rows; it also retains the exact process and bounded six-provider M5
-witnesses without admitting the materialized-runtime row. `SW-M2-LIVE` remains blocked without a
-separate clean host.
+exact-SHA hosted Docker receipt raises the candidate projection to 71 `PASS` / 21 `BLOCKED` by
+admitting its exact M2-M5 rows. `SW-M2-LIVE` remains blocked without a separate clean host.
 The hosted Docker workflow retains exact-SHA synthetic and six-provider M2 diagnostics with zero
 managed residue. M4 now derives 24 Ghost candidates from an eight-observation M3 chain, materializes only the
 4-to-2-to-1 promoted subset in those fixed real-provider worlds, and retains a conserved-ledger,
 machine-oracle, winner, and cleanup receipt. The producer/attestation/consumer admission path is
 implemented; a new exact-merged-SHA hosted run is still required after these changes. M5 consumes
 the retained M4 bytes, compiles all eight observed fragments, freshly authorizes them, and retains
-five repeatable clean-root results, the matching fixed-mode boundary, and four controls. A separate
-bounded bridge retains each exact action's six-provider transitions, restoration, and destruction;
-it is not the FastAPI execution/trace boundary, so `SW-M5-CHAIN` remains unadmitted. Trusted broker,
+five repeatable clean-root results, the matching fixed-mode boundary, and four controls. The hosted
+path now executes those exact authorized actions through the sealed FastAPI ASGI application over
+six immutable provider checkpoint shards, retains per-step state, response, evidence, oracle, image,
+source, restore, and cleanup bindings, and admits `SW-M5-CHAIN` only after exact-SHA attestation and
+fresh consumer verification. A new exact-merged-SHA hosted run is still required. Trusted broker,
 independently measured equal-work benchmark,
 independent new-user, and clean-machine certification remain intentionally unclaimed. No PyPI
 package or versioned GitHub Release is offered yet.
@@ -85,7 +85,7 @@ Architecture baseline v1 ships milestone-by-milestone. Current implementation an
 | M2 world engine | Six-provider adapter and four-sibling capture/mutate/restore gate pass locally; typed hosted admission is implemented, with a new exact-SHA run pending |
 | M3 semantic twin | Clean-wheel runtime execution binds the repo-owned ASGI lifecycle, source, authorization, trace, captures, state delta, evidence, and one `OBSERVED` fragment; five M3 runtime rows are admitted only after independent semantic re-execution |
 | M4 tiered search | Eight-observation M3-derived 24-to-4-to-2-to-1 flow has a production six-provider materializer, seven bound provider receipts, peak-live cap four, and typed hosted proof admission |
-| M5 chain compiler | Exact retained M4 bytes compile eight `OBSERVED` fragments and retain five clean-root runs plus the matching boundary, four controls, and bounded six-provider witnesses; one Docker-backed application execution/trace boundary is pending |
+| M5 chain compiler | Exact retained M4 bytes compile eight `OBSERVED` fragments; the hosted qualifier runs five vulnerable roots, one patched boundary, and four controls through the sealed ASGI app over six provider checkpoint shards, with exact image/source/state/cleanup admission |
 | M6 reality receipt | Proof-bound non-promotable synthetic candidate; **no** trusted broker / clean-machine M6 cert |
 | M7 StateChainBench | Proof-bound deterministic built-in runner — not an independently measured equal-work benchmark |
 | M8 public UX | Fixed loopback API + simulated-DOM contract exists; no Playwright/new-user release journey |
@@ -110,7 +110,7 @@ Full matrices: [docs/architecture/TRACEABILITY.md](docs/architecture/TRACEABILIT
 | M2 World Engine | Synthetic diagnostics plus a six-provider materialized path pass locally; exact-SHA hosted receipt admission is implemented | `packages/worlds/`, `tests/integration/worlds/`, `RealDockerComposeEnvironmentAdapter` |
 | M3 Semantic Twin | Application lifecycle, emitted trace, runtime captures, state delta, evidence, and `OBSERVED` fragment are bound in a reproducible clean-wheel receipt; M4/M5 materialization remains separate | `packages/twin/`, `adapters/telemetry/opentelemetry/`, `packages/evidence/src/stateweaver/evidence/runtime_observation.py`, `apps/cli/src/stateweaver/cli/runtime_qualification.py` |
 | M4 Search | Exactly 24 Ghost evaluations admit only 4, 2, and 1 real six-provider siblings; budget, provider-oracle, winner, and cleanup bindings are retained | `packages/search/`, `workflows/world/`, `apps/cli/src/stateweaver/cli/materialized_search_qualification.py`, `tests/integration/worlds/test_live_materialized_search.py` |
-| M5 Chain Compiler | Eight retained fragments execute five deterministic actual-ASGI clean roots plus fixed-mode and control runs; a distinct bounded bridge retains six-provider transitions, but one Docker-backed application execution/trace boundary remains pending | `packages/compiler/`, `apps/cli/src/stateweaver/cli/observed_chain_qualification.py`, `apps/cli/src/stateweaver/cli/materialized_chain_qualification.py` |
+| M5 Chain Compiler | Eight retained fragments execute five deterministic vulnerable roots, one patched boundary, and four controls through the Docker-backed sealed ASGI application over six immutable provider checkpoint shards | `packages/compiler/`, `apps/cli/src/stateweaver/cli/observed_chain_qualification.py`, `apps/cli/src/stateweaver/cli/materialized_chain_qualification.py` |
 | M6 Reality + Proof | V2 event reconstruction + traceable publication candidate exist; trusted broker absent | `packages/contracts/`, `packages/evidence/`, `packages/reporting/`, `tests/e2e/proof_bundle/` |
 | M7 StateChainBench | Trusted built-in synthetic runner hardened; not equal-work or public-certified | `benchmarks/statechainbench/` |
 | M8 Public UX | Read-only fixed API + four-workspace client have local simulated-DOM QA only | `apps/api/`, `apps/web/` |
