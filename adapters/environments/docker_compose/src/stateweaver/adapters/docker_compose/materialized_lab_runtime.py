@@ -455,7 +455,16 @@ class MaterializedLabDockerRuntime:
         execution_error: BaseException | None = None
         cleanup_error: BaseException | None = None
         try:
-            await self._run(_compose(project, "up", "--detach", "--wait", "--no-build"))
+            await self._run(
+                _compose(
+                    project,
+                    "up",
+                    "--detach",
+                    "--wait",
+                    "--no-build",
+                    "materialized-lab",
+                )
+            )
             binding = await self._executed_image_binding(project, closed.repository_marker)
             process = await self._run(
                 _compose(project, *_RUNTIME_PREFIX), stdin=_runtime_payload(closed, binding)

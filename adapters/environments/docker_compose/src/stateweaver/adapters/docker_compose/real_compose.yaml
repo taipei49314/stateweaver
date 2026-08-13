@@ -118,6 +118,10 @@ services:
       start_period: 5s
 
   materialized-lab:
+    # The four-sibling M2 provider gate must not pay for an unused application
+    # container in every world. M5 targets this service explicitly, which
+    # activates the profile and starts its fixed provider dependencies.
+    profiles: [m5-application]
     image: stateweaver-materialized-lab:local
     build:
       context: ../../../../../../../

@@ -65,6 +65,7 @@ _COMPOSE_OPERATIONS = frozenset(
 _REAL_COMPOSE_OPERATIONS = frozenset(
     {
         ("up", "--detach", "--wait", "--no-build"),
+        ("up", "--detach", "--wait", "--no-build", "materialized-lab"),
         ("down", "--volumes", "--remove-orphans"),
         ("ps", "--format", "json", "provider-bridge"),
         ("ps", "--quiet", "materialized-lab"),
@@ -210,12 +211,10 @@ class SubprocessRunner:
 
 
 def _deadline_seconds(exact_argv: tuple[str, ...]) -> float:
-    if exact_argv[4:6] == ("--file", str(_REAL_COMPOSE_FILE)) and exact_argv[6:] == (
-        "up",
-        "--detach",
-        "--wait",
-        "--no-build",
-    ):
+    if exact_argv[4:6] == ("--file", str(_REAL_COMPOSE_FILE)) and exact_argv[6:] in {
+        ("up", "--detach", "--wait", "--no-build"),
+        ("up", "--detach", "--wait", "--no-build", "materialized-lab"),
+    }:
         return REAL_PROVIDER_START_DEADLINE_SECONDS
     if (
         exact_argv[4:6] == ("--file", str(_REAL_COMPOSE_FILE))
