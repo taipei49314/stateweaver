@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - name: Check out fresh main
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/heads/main
           fetch-depth: 0
@@ -75,7 +75,7 @@ jobs:
 
     steps:
       - name: Check out the bound source in a fresh job
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
           fetch-depth: 0
@@ -142,7 +142,7 @@ jobs:
 
     steps:
       - name: Check out the bound source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
           persist-credentials: false
@@ -239,7 +239,7 @@ jobs:
 
     steps:
       - name: Check out the bound source in a fresh job
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
           fetch-depth: 0
@@ -581,7 +581,7 @@ jobs:
 
     steps:
       - name: Check out verifier source at the bound commit
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
           persist-credentials: false
@@ -635,7 +635,7 @@ jobs:
 
     steps:
       - name: Fresh checkout only for the verifier
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
           path: verifier-source
